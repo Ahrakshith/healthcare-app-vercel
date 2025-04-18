@@ -1,0 +1,40 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper function to check user role
+    function isRole(role) {
+      return request.auth != null && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == role;
+    }
+
+    // Patients collection
+    match /patients/{patientId} {
+      allow read: if isRole('admin') || isRole('doctor') || (isRole('patient') && request.auth.uid == patientId);
+      allow write: if isRole('admin') || (isRole('patient') && request.auth.uid == patientId);
+    }
+
+    // Chats collection
+    match /chats/{chatId} {
+      allow read, write: if isRole('admin') || request.auth.uid in resource.data.participants;
+      match /messages/{messageId} {
+        allow read, write: if isRole('admin') || request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants;
+      }
+    }
+
+    // Users collection
+    match /users/{userId} {
+      allow read, write: if request.auth != null && (request.auth.uid == userId || isRole('admin'));
+    }
+
+    // Doctors collection
+    match /doctors/{doctorId} {
+      allow read: if isRole('admin') || (isRole('doctor') && request.auth.uid == doctorId);
+      allow write: if isRole('admin');
+    }
+
+    // Doctor Assignments collection
+    match /doctor_assignments/{assignmentId} {
+      allow read: if isRole('admin') || (isRole('doctor') && request.auth.uid == resource.data.doctorId);
+      allow write: if isRole('admin'); // Only admins can assign patients to doctors
+    }
+  }
+}

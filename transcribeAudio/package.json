@@ -1,0 +1,10 @@
+{
+  "name": "transcribe-audio",
+  "version": "1.0.0",
+  "dependencies": {
+    "@google-cloud/functions-framework": "^3.0.0",
+    "@google-cloud/storage": "^6.0.0",
+    "@google-cloud/speech": "^5.0.0",
+    "uuid": "^9.0.0"
+  }
+}
