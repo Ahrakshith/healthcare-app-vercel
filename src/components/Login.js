@@ -57,6 +57,7 @@ function Login({ setUser, setRole, setPatientId, user }) {
       }
 
       const userData = await response.json();
+      console.log('User data received:', userData); // Debug log
       if (!userData || !userData.role) {
         throw new Error('Invalid user data received from server');
       }
@@ -103,7 +104,6 @@ function Login({ setUser, setRole, setPatientId, user }) {
     setIsLoggingOut(true);
 
     try {
-      // Update to use Vercel API endpoint (assuming a logout endpoint is added later)
       const response = await fetch(`${process.env.REACT_APP_API_URL}/logout`, {
         method: 'POST',
         headers: {
