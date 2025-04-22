@@ -51,7 +51,9 @@ function Login({ setUser, setRole, setPatientId, user }) {
       });
 
       if (!response.ok) {
-        throw new Error(`Failed to fetch user data: ${response.statusText}`);
+        const errorText = await response.text();
+        console.error('API Error:', response.status, errorText);
+        throw new Error(`HTTP error! status: ${response.status}, text: ${errorText}`);
       }
 
       const userData = await response.json();
@@ -86,8 +88,8 @@ function Login({ setUser, setRole, setPatientId, user }) {
         setError('User not found. Please register first.');
       } else if (error.code === 'auth/wrong-password') {
         setError('Incorrect password. Please try again.');
-      } else if (error.message.includes('fetch user data')) {
-        setError('Failed to fetch user data. Please check your server or try again later.');
+      } else if (error.message.includes('HTTP error')) {
+        setError('Failed to fetch user data. Please check the server or try again later.');
       } else {
         setError(`Login failed: ${error.message}`);
       }
@@ -112,7 +114,9 @@ function Login({ setUser, setRole, setPatientId, user }) {
       });
 
       if (!response.ok) {
-        throw new Error(`Logout request failed: ${response.statusText}`);
+        const errorText = await response.text();
+        console.error('Logout API Error:', response.status, errorText);
+        throw new Error(`Logout request failed: ${response.statusText}, text: ${errorText}`);
       }
 
       const logoutData = await response.json();
