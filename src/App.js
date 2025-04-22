@@ -1,6 +1,6 @@
 // src/App.js
 import React, { useState, useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { auth as firebaseAuth, db } from './services/firebase.js';
 import Login from './components/Login.js';
@@ -14,12 +14,12 @@ import './components/patient.css';
 
 // Custom 404 Component
 const NotFound = () => {
-  const location = useLocation();
+  const navigate = useNavigate();
   return (
     <div className="not-found-container">
       <h2>404 - Route Not Found</h2>
-      <p>The requested path <code>{location.pathname}</code> does not exist.</p>
-      <p>Go to <a href="/login">Login</a></p>
+      <p>The requested path <code>{window.location.pathname}</code> does not exist.</p>
+      <p>Go to <a href="#" onClick={() => navigate('/login')}>Login</a></p>
       <style>{`
         .not-found-container {
           min-height: 100vh;
@@ -113,6 +113,18 @@ function App() {
         );
 
         return () => unsubscribeFirestore();
+      } else if (user) {
+        // Sync with Login.js setUser
+        console.log('App.js: Syncing with Login.js user:', user);
+        setRole(user.role);
+        if (user.role === 'patient' && user.patientId) {
+          setPatientId(user.patientId);
+          localStorage.setItem('patientId', user.patientId);
+        } else {
+          setPatientId(null);
+          localStorage.removeItem('patientId');
+        }
+        setLoading(false);
       } else {
         console.log('App.js: No authenticated user or stored userId');
         handleUserNotFound();
@@ -120,7 +132,7 @@ function App() {
     });
 
     return () => unsubscribeAuth();
-  }, []);
+  }, [user]); // Added user as dependency to react to Login.js updates
 
   const handleUserNotFound = () => {
     setUser(null);
@@ -136,11 +148,11 @@ function App() {
     console.log('App.js: Logging out user');
     try {
       await firebaseAuth.signOut();
-      const response = await fetch('http://localhost:5005/logout', {
+      const response = await fetch(`${process.env.REACT_APP_API_URL}/logout`, {
         method: 'POST',
-        credentials: 'include',
         headers: {
           'Authorization': `Bearer ${await firebaseAuth.currentUser?.getIdToken()}`,
+          'Content-Type': 'application/json',
         },
       });
       if (!response.ok) throw new Error(`Logout failed on server: ${response.statusText}`);
