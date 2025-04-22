@@ -1,24 +1,17 @@
 import { Firestore } from '@google-cloud/firestore';
 import admin from 'firebase-admin';
 
-// Initialize with retry logic
 if (admin.apps.length === 0) {
   console.log('Initializing Firebase Admin at', new Date().toISOString());
-  let attempts = 0;
-  const maxAttempts = 3;
-  while (attempts < maxAttempts) {
-    try {
-      admin.initializeApp({
-        credential: admin.credential.cert(JSON.parse(process.env.REACT_APP_GCS_SERVICE_ACCOUNT_KEY || '{}')),
-      });
-      console.log('Firebase Admin initialized successfully at', new Date().toISOString());
-      break;
-    } catch (initError) {
-      attempts++;
-      console.error(`Initialization attempt ${attempts} failed:`, initError.message);
-      if (attempts === maxAttempts) throw initError;
-      await new Promise(resolve => setTimeout(resolve, 1000 * attempts)); // Exponential backoff
-    }
+  try {
+    admin.initializeApp({
+      credential: admin.credential.cert(JSON.parse(process.env.REACT_APP_GCS_SERVICE_ACCOUNT_KEY || '{}')),
+      projectId: process.env.REACT_APP_FIREBASE_PROJECT_ID || 'fir-project-vercel', // Match env var
+    });
+    console.log('Firebase Admin initialized successfully at', new Date().toISOString());
+  } catch (initError) {
+    console.error('Firebase initialization failed:', initError.message);
+    throw initError;
   }
 }
 
@@ -39,7 +32,7 @@ export default async function handler(req, res) {
     console.log(`Firestore query took ${duration}ms for UID ${uid}`);
 
     if (!userDoc.exists) {
-      console.log(`User ${uid} not found at`, new Date().toISOString());
+      console.log(`User ${uid} not found at', new Date().toISOString());
       return res.status(404).json({ error: 'User not found' });
     }
 
