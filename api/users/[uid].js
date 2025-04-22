@@ -20,11 +20,16 @@ if (!admin.apps.length) {
     // Handle private key with potential escaped newlines or single-line format
     let privateKey = process.env.FIREBASE_PRIVATE_KEY;
     if (typeof privateKey === 'string') {
-      // Try replacing escaped newlines first
+      // Log the raw private key for debugging (mask sensitive parts)
+      console.log('Raw FIREBASE_PRIVATE_KEY length:', privateKey.length, 'Sample:', privateKey.substring(0, 10) + '...');
+      // Replace escaped newlines and handle multi-line format
       privateKey = privateKey.replace(/\\n/g, '\n');
-      // If it still looks like a single line with newlines embedded, split and join
       if (!privateKey.includes('\n') && privateKey.includes('\\n')) {
         privateKey = privateKey.split('\\n').join('\n');
+      }
+      // Verify newlines are present
+      if (!privateKey.includes('\n')) {
+        console.warn('⚠️ Private key does not contain newlines after processing');
       }
     } else {
       throw new Error('FIREBASE_PRIVATE_KEY is not a valid string');
@@ -43,6 +48,14 @@ if (!admin.apps.length) {
       client_x509_cert_url: process.env.FIREBASE_CLIENT_CERT_URL,
     };
 
+    // Log service account details (mask sensitive data)
+    console.log('Service Account Config:', {
+      project_id: serviceAccount.project_id,
+      private_key_id: serviceAccount.private_key_id,
+      client_email: serviceAccount.client_email,
+      has_private_key: !!serviceAccount.private_key,
+    });
+
     admin.initializeApp({
       credential: admin.credential.cert(serviceAccount),
       projectId: process.env.FIREBASE_PROJECT_ID || 'fir-project-vercel',
@@ -56,6 +69,10 @@ if (!admin.apps.length) {
       envVars: {
         FIREBASE_PROJECT_ID: process.env.FIREBASE_PROJECT_ID ? 'set' : 'missing',
         FIREBASE_PRIVATE_KEY: process.env.FIREBASE_PRIVATE_KEY ? 'set' : 'missing',
+        FIREBASE_PRIVATE_KEY_ID: process.env.FIREBASE_PRIVATE_KEY_ID ? 'set' : 'missing',
+        FIREBASE_CLIENT_EMAIL: process.env.FIREBASE_CLIENT_EMAIL ? 'set' : 'missing',
+        FIREBASE_CLIENT_ID: process.env.FIREBASE_CLIENT_ID ? 'set' : 'missing',
+        FIREBASE_CLIENT_CERT_URL: process.env.FIREBASE_CLIENT_CERT_URL ? 'set' : 'missing',
       },
     });
     throw error; // Ensure the error propagates to Vercel
