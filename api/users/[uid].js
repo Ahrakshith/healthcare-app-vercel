@@ -1,5 +1,5 @@
-const { Firestore } = require('@google-cloud/firestore');
-const admin = require('firebase-admin');
+import { Firestore } from '@google-cloud/firestore';
+import admin from 'firebase-admin';
 
 if (admin.apps.length === 0) {
   admin.initializeApp({
