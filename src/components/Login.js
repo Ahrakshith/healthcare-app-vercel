@@ -27,21 +27,23 @@ function Login({ setUser, setRole, setPatientId, user }) {
     if (!email.trim()) {
       setError('Email is required.');
       setIsLoading(false);
+      console.error('Login validation error: Email is empty');
       return;
     }
 
     if (!email.endsWith('@gmail.com')) {
       setError('Please enter a valid Gmail address (e.g., example@gmail.com).');
       setIsLoading(false);
+      console.error('Login validation error: Invalid email domain, must end with @gmail.com');
       return;
     }
 
-    console.log('Attempting login with:', { email });
+    console.log('Attempting login with:', { email, password });
 
     try {
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       const firebaseUser = userCredential.user;
-      console.log('User logged in:', firebaseUser.uid);
+      console.log('User logged in successfully:', { uid: firebaseUser.uid, email: firebaseUser.email });
 
       const response = await fetch(`${process.env.REACT_APP_API_URL}/users/${firebaseUser.uid}`, {
         headers: {
@@ -50,16 +52,18 @@ function Login({ setUser, setRole, setPatientId, user }) {
         },
       });
 
+      console.log('API response status:', response.status);
       if (!response.ok) {
         const errorText = await response.text();
-        console.error('API Error:', response.status, errorText);
+        console.error('API Error:', { status: response.status, errorText });
         throw new Error(`HTTP error! status: ${response.status}, text: ${errorText}`);
       }
 
       const userData = await response.json();
-      console.log('User data received:', userData); // Debug log
+      console.log('User data received from API:', userData);
       if (!userData || !userData.role) {
-        throw new Error('Invalid user data received from server');
+        console.error('Invalid user data:', userData);
+        throw new Error('Invalid user data received from server, missing role');
       }
 
       const updatedUser = {
@@ -72,17 +76,20 @@ function Login({ setUser, setRole, setPatientId, user }) {
         age: userData.age || null,
       };
 
+      console.log('Setting user state:', updatedUser);
       setUser(updatedUser);
       setRole(userData.role);
       if (userData.role === 'patient' && userData.patientId) {
         setPatientId(userData.patientId);
         localStorage.setItem('patientId', userData.patientId);
+        console.log('Set patientId in localStorage:', userData.patientId);
       }
       localStorage.setItem('userId', firebaseUser.uid);
+      console.log('Set userId in localStorage:', firebaseUser.uid);
 
       redirectUser(userData.role);
     } catch (error) {
-      console.error('Login error:', error.message);
+      console.error('Login process error:', { message: error.message, code: error.code, stack: error.stack });
       if (error.code === 'auth/invalid-credential') {
         setError('Invalid email or password. Please try again.');
       } else if (error.code === 'auth/user-not-found') {
@@ -95,6 +102,7 @@ function Login({ setUser, setRole, setPatientId, user }) {
         setError(`Login failed: ${error.message}`);
       }
     } finally {
+      console.log('Login process completed, isLoading set to false');
       setIsLoading(false);
     }
   };
@@ -104,6 +112,11 @@ function Login({ setUser, setRole, setPatientId, user }) {
     setIsLoggingOut(true);
 
     try {
+      if (!user) {
+        console.error('Logout attempted with no user authenticated');
+        throw new Error('No user authenticated for logout');
+      }
+
       const response = await fetch(`${process.env.REACT_APP_API_URL}/logout`, {
         method: 'POST',
         headers: {
@@ -113,9 +126,10 @@ function Login({ setUser, setRole, setPatientId, user }) {
         },
       });
 
+      console.log('Logout API response status:', response.status);
       if (!response.ok) {
         const errorText = await response.text();
-        console.error('Logout API Error:', response.status, errorText);
+        console.error('Logout API Error:', { status: response.status, errorText });
         throw new Error(`Logout request failed: ${response.statusText}, text: ${errorText}`);
       }
 
@@ -123,19 +137,22 @@ function Login({ setUser, setRole, setPatientId, user }) {
       console.log('Server logout response:', logoutData);
 
       await signOut(auth);
+      console.log('Firebase sign-out completed');
 
       setUser(null);
       setRole(null);
       setPatientId(null);
       localStorage.removeItem('userId');
       localStorage.removeItem('patientId');
+      console.log('Cleared user state and localStorage');
 
       navigate('/login');
-      console.log('User logged out successfully');
+      console.log('Redirected to login page');
     } catch (error) {
-      console.error('Logout error:', error.message);
+      console.error('Logout process error:', { message: error.message, stack: error.stack });
       setError(`Failed to logout: ${error.message}`);
     } finally {
+      console.log('Logout process completed, isLoggingOut set to false');
       setIsLoggingOut(false);
     }
   };
