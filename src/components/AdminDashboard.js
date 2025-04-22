@@ -1,15 +1,14 @@
 // src/components/AdminDashboard.js
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import AdminDoctors from './AdminDoctors.js';
 import AdminPatients from './AdminPatients.js';
 import AdminCases from './AdminCases.js';
 import { SPECIALTIES } from '../constants/specialties.js';
-import { createUserWithEmailAndPassword } from 'firebase/auth';
-import { doc, setDoc, getDocs, query, collection, where } from 'firebase/firestore';
+import { doc, setDoc, getDoc, getDocs, query, collection, where } from 'firebase/firestore';
 import { auth, db } from '../services/firebase.js';
 
-function AdminDashboard({ user, role, handleLogout, setUser }) { // Added setUser as a prop
+function AdminDashboard({ user, role, handleLogout, setUser }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [currentView, setCurrentView] = useState('add-doctor');
   const [showAddForm, setShowAddForm] = useState(true);
@@ -38,7 +37,7 @@ function AdminDashboard({ user, role, handleLogout, setUser }) { // Added setUse
   const navigate = useNavigate();
 
   // Generate a unique 6-character alphanumeric doctorId
-  const generateDoctorId = async () => {
+  const generateDoctorId = useCallback(async () => {
     const characters = 'abcdefghijklmnopqrstuvwxyz0123456789';
     let generatedId = '';
     const doctorIdsRef = collection(db, 'doctors');
@@ -58,21 +57,26 @@ function AdminDashboard({ user, role, handleLogout, setUser }) { // Added setUse
 
     console.log('AdminDashboard.js: Generated unique doctorId:', generatedId);
     return generatedId;
-  };
+  }, []);
+
+  // Initialize doctorId on mount and view change
+  const initializeDoctorId = useCallback(async () => {
+    try {
+      const uniqueId = await generateDoctorId();
+      setNewDoctor((prev) => ({ ...prev, doctorId: uniqueId }));
+    } catch (err) {
+      console.error('AdminDashboard.js: Error generating doctorId:', err);
+      setAddDoctorError('Failed to generate doctor ID. Please try again.');
+    }
+  }, [generateDoctorId]);
 
   useEffect(() => {
     if (!user || role !== 'admin') {
       navigate('/login');
+      return;
     }
-    generateDoctorId()
-      .then((uniqueId) => {
-        setNewDoctor((prev) => ({ ...prev, doctorId: uniqueId }));
-      })
-      .catch((err) => {
-        console.error('AdminDashboard.js: Error generating doctorId:', err);
-        setAddDoctorError('Failed to generate doctor ID. Please try again.');
-      });
-  }, [user, role, navigate]);
+    initializeDoctorId();
+  }, [user, role, navigate, initializeDoctorId]);
 
   const toggleMenu = () => {
     setMenuOpen(!menuOpen);
@@ -85,9 +89,7 @@ function AdminDashboard({ user, role, handleLogout, setUser }) { // Added setUse
       setShowAddForm(true);
       setAddDoctorSuccess('');
       setAddDoctorError('');
-      generateDoctorId().then((uniqueId) => {
-        setNewDoctor((prev) => ({ ...prev, doctorId: uniqueId }));
-      });
+      initializeDoctorId();
     }
   };
 
@@ -105,23 +107,35 @@ function AdminDashboard({ user, role, handleLogout, setUser }) { // Added setUse
     console.log('AdminDashboard: Admin UID from localStorage:', adminId);
     if (!adminId) {
       setAddDoctorError('Admin ID not found. Please log in again.');
+      navigate('/login');
       return;
     }
 
-    if (
-      !newDoctor.name ||
-      !newDoctor.age ||
-      !newDoctor.sex ||
-      !newDoctor.experience ||
-      !newDoctor.specialty ||
-      !newDoctor.email ||
-      !newDoctor.password ||
-      !newDoctor.doctorId ||
-      !newDoctor.qualification ||
-      !newDoctor.address ||
-      !newDoctor.contactNumber
-    ) {
-      setAddDoctorError('Please fill in all fields.');
+    // Verify admin role
+    const userDocRef = doc(db, 'users', adminId);
+    const userDoc = await getDoc(userDocRef);
+    if (!userDoc.exists() || userDoc.data().role !== 'admin') {
+      setAddDoctorError('Insufficient permissions. Only admins can add doctors.');
+      return;
+    }
+
+    // Validate inputs
+    const requiredFields = [
+      'name',
+      'age',
+      'sex',
+      'experience',
+      'specialty',
+      'email',
+      'password',
+      'doctorId',
+      'qualification',
+      'address',
+      'contactNumber',
+    ];
+    const missingFields = requiredFields.filter((field) => !newDoctor[field]);
+    if (missingFields.length > 0) {
+      setAddDoctorError(`Please fill in all fields: ${missingFields.join(', ')}.`);
       return;
     }
 
@@ -146,14 +160,10 @@ function AdminDashboard({ user, role, handleLogout, setUser }) { // Added setUse
     }
 
     try {
-      const userCredential = await createUserWithEmailAndPassword(auth, newDoctor.email, newDoctor.password);
-      const firebaseUser = userCredential.user;
-      console.log('AdminDashboard: Doctor registered in Firebase Auth:', firebaseUser.uid);
-
-      const userDocRef = doc(db, 'users', firebaseUser.uid);
-      const userData = {
-        uid: firebaseUser.uid,
+      // Create doctor user via backend
+      const doctorData = {
         email: newDoctor.email,
+        password: newDoctor.password,
         role: 'doctor',
         name: newDoctor.name,
         age: parseInt(newDoctor.age),
@@ -166,56 +176,57 @@ function AdminDashboard({ user, role, handleLogout, setUser }) { // Added setUse
         contactNumber: newDoctor.contactNumber,
         createdAt: new Date().toISOString(),
       };
-      await setDoc(userDocRef, userData);
-      console.log('AdminDashboard: Doctor data stored in Firestore (users):', firebaseUser.uid);
 
-      const doctorDocRef = doc(db, 'doctors', newDoctor.doctorId);
-      const doctorData = {
-        uid: firebaseUser.uid,
-        name: newDoctor.name,
-        age: parseInt(newDoctor.age),
-        sex: newDoctor.sex,
-        experience: parseInt(newDoctor.experience),
-        specialty: newDoctor.specialty,
-        doctorId: newDoctor.doctorId,
-        qualification: newDoctor.qualification,
-        address: newDoctor.address,
-        contactNumber: newDoctor.contactNumber,
-        createdAt: new Date().toISOString(),
-      };
-      await setDoc(doctorDocRef, doctorData);
-      console.log('AdminDashboard: Doctor data stored in Firestore (doctors):', newDoctor.doctorId);
-
-      console.log('AdminDashboard: Sending request to /add-doctor with x-user-uid:', adminId);
-      const response = await fetch('http://localhost:5005/add-doctor', {
+      console.log('AdminDashboard: Sending request to /create-doctor with payload:', doctorData);
+      const createResponse = await fetch('http://localhost:5005/create-doctor', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'x-user-uid': adminId,
           'Authorization': `Bearer ${await auth.currentUser.getIdToken()}`,
         },
-        body: JSON.stringify({
-          id: newDoctor.doctorId,
-          name: newDoctor.name,
-          age: newDoctor.age,
-          sex: newDoctor.sex,
-          experience: newDoctor.experience,
-          specialty: newDoctor.specialty,
-          qualification: newDoctor.qualification,
-          address: newDoctor.address,
-          contactNumber: newDoctor.contactNumber,
-          createdAt: new Date().toISOString(),
-          uid: firebaseUser.uid,
-        }),
+        body: JSON.stringify(doctorData),
         credentials: 'include',
       });
 
-      const responseData = await response.json();
-      if (!response.ok) {
-        throw new Error(`Failed to add doctor to backend: ${responseData.error}`);
+      const createData = await createResponse.json();
+      if (!createResponse.ok) {
+        throw new Error(`Failed to create doctor user: ${createData.error}`);
       }
 
-      console.log('AdminDashboard: Doctor added to backend successfully:', responseData);
+      const doctorUid = createData.uid;
+      console.log('AdminDashboard: Doctor created with UID:', doctorUid);
+
+      // Store doctor data in Firestore (users collection)
+      const userDocRef = doc(db, 'users', doctorUid);
+      await setDoc(userDocRef, { ...doctorData, uid: doctorUid });
+      console.log('AdminDashboard: Doctor data stored in Firestore (users) for UID:', doctorUid);
+
+      // Store doctor data in Firestore (doctors collection)
+      const doctorDocRef = doc(db, 'doctors', newDoctor.doctorId);
+      await setDoc(doctorDocRef, { ...doctorData, uid: doctorUid });
+      console.log('AdminDashboard: Doctor data stored in Firestore (doctors) with doctorId:', newDoctor.doctorId);
+
+      // Notify backend (/add-doctor)
+      console.log('AdminDashboard: Sending request to /add-doctor with x-user-uid:', adminId);
+      const addResponse = await fetch('http://localhost:5005/add-doctor', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-uid': adminId,
+          'Authorization': `Bearer ${await auth.currentUser.getIdToken()}`,
+        },
+        body: JSON.stringify({ ...doctorData, uid: doctorUid }),
+        credentials: 'include',
+      });
+
+      const addData = await addResponse.json();
+      if (!addResponse.ok) {
+        throw new Error(`Failed to add doctor to backend: ${addData.error}`);
+      }
+
+      console.log('AdminDashboard: Doctor added to backend successfully:', addData);
+
       setAddDoctorSuccess('Doctor added successfully!');
       setNewDoctor({
         name: '',
@@ -232,13 +243,15 @@ function AdminDashboard({ user, role, handleLogout, setUser }) { // Added setUse
       });
       setShowAddForm(false);
     } catch (err) {
-      console.error('AdminDashboard: Error adding doctor:', err);
-      if (err.code === 'auth/email-already-in-use') {
+      console.error('AdminDashboard: Error adding doctor - Details:', err);
+      if (err.message.includes('email-already-in-use')) {
         setAddDoctorError('This email is already registered.');
-      } else if (err.code === 'auth/invalid-email') {
+      } else if (err.message.includes('invalid-email')) {
         setAddDoctorError('Please enter a valid Gmail address (e.g., example@gmail.com).');
-      } else if (err.code === 'auth/weak-password') {
+      } else if (err.message.includes('weak-password')) {
         setAddDoctorError('Password should be at least 6 characters long.');
+      } else if (err.message.includes('permission-denied')) {
+        setAddDoctorError('Insufficient permissions to add doctor. Verify Firestore rules and admin role.');
       } else {
         setAddDoctorError(`Error adding doctor: ${err.message}`);
       }
@@ -269,30 +282,47 @@ function AdminDashboard({ user, role, handleLogout, setUser }) { // Added setUse
     }
 
     try {
-      const userCredential = await createUserWithEmailAndPassword(auth, newAdmin.email, newAdmin.password);
-      const firebaseUser = userCredential.user;
-      console.log('AdminDashboard: New admin registered in Firebase Auth:', firebaseUser.uid);
-
-      const userDocRef = doc(db, 'users', firebaseUser.uid);
-      const userData = {
-        uid: firebaseUser.uid,
+      // Create admin via backend
+      const adminData = {
         email: newAdmin.email,
+        password: newAdmin.password,
         role: 'admin',
         createdAt: new Date().toISOString(),
       };
 
-      await setDoc(userDocRef, userData);
-      console.log('AdminDashboard: Admin data stored in Firestore:', firebaseUser.uid);
+      const response = await fetch('http://localhost:5005/create-admin', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-uid': localStorage.getItem('userId'),
+          'Authorization': `Bearer ${await auth.currentUser.getIdToken()}`,
+        },
+        body: JSON.stringify(adminData),
+        credentials: 'include',
+      });
+
+      const responseData = await response.json();
+      if (!response.ok) {
+        throw new Error(`Failed to create admin: ${responseData.error}`);
+      }
+
+      const adminUid = responseData.uid;
+      console.log('AdminDashboard: New admin created with UID:', adminUid);
+
+      // Store admin data in Firestore
+      const userDocRef = doc(db, 'users', adminUid);
+      await setDoc(userDocRef, { ...adminData, uid: adminUid });
+      console.log('AdminDashboard: Admin data stored in Firestore for UID:', adminUid);
 
       setAddAdminSuccess('Admin added successfully!');
       setNewAdmin({ email: '', password: '' });
     } catch (error) {
-      console.error('AdminDashboard: Add admin error:', error);
-      if (error.code === 'auth/email-already-in-use') {
+      console.error('AdminDashboard: Add admin error - Details:', error);
+      if (error.message.includes('email-already-in-use')) {
         setAddAdminError('This email is already registered.');
-      } else if (error.code === 'auth/invalid-email') {
+      } else if (error.message.includes('invalid-email')) {
         setAddAdminError('Please enter a valid Gmail address (e.g., example@gmail.com).');
-      } else if (error.code === 'auth/weak-password') {
+      } else if (error.message.includes('weak-password')) {
         setAddAdminError('Password should be at least 6 characters long.');
       } else {
         setAddAdminError(`Failed to add admin: ${error.message}`);
@@ -489,9 +519,7 @@ function AdminDashboard({ user, role, handleLogout, setUser }) { // Added setUse
                     onClick={() => {
                       setShowAddForm(true);
                       setAddDoctorSuccess('');
-                      generateDoctorId().then((uniqueId) => {
-                        setNewDoctor((prev) => ({ ...prev, doctorId: uniqueId }));
-                      });
+                      initializeDoctorId();
                     }}
                     className="submit-button"
                   >
@@ -824,4 +852,4 @@ function AdminDashboard({ user, role, handleLogout, setUser }) { // Added setUse
   );
 }
 
-export default AdminDashboard;
+export default React.memo(AdminDashboard);

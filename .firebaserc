@@ -1,5 +1,8 @@
 {
   "projects": {
-    "default": "healthcare-app-d8997"
-  }
+    "default": "fir-project-vercel",
+    "staging": "fir-project-vercel"
+  },
+  "targets": {},
+  "etags": {}
 }

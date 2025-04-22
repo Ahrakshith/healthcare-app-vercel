@@ -1,4 +1,3 @@
-// server.js
 require('dotenv').config();
 const express = require('express');
 const multer = require('multer');
@@ -21,17 +20,19 @@ process.env.DEBUG = 'socket.io:* engine:*';
 const app = express();
 const server = http.createServer(app);
 
-// Initialize Socket.IO with updated CORS
+// Initialize Socket.IO with optimized settings
 const io = new Server(server, {
   cors: {
     origin: ['http://localhost:3000'],
     methods: ['GET', 'POST', 'DELETE'],
-    allowedHeaders: ['Content-Type', 'Cache-Control', 'x-user-uid'],
+    allowedHeaders: ['Content-Type', 'Cache-Control', 'x-user-uid', 'authorization'],
     credentials: true,
   },
   transports: ['websocket'],
-  pingTimeout: 20000,
-  pingInterval: 25000,
+  pingTimeout: 60000,
+  pingInterval: 15000,
+  maxHttpBufferSize: 1e6,
+  allowEIO3: true,
 });
 
 // Log Socket.IO version
@@ -43,14 +44,14 @@ try {
 }
 
 // Initialize Firebase
-const firebaseServiceAccount = require('/Users/ah1/PycharmProjects/healthcare-app/server/healthcare-app-d8997-firebase-adminsdk-fbsvc-303655553e.json');
+const firebaseServiceAccount = require('/Users/ah1/PycharmProjects/healthcare-app-0/server/fir-project-vercel-firebase-adminsdk-fbsvc-7635e373aa.json');
 admin.initializeApp({
   credential: admin.credential.cert(firebaseServiceAccount),
 });
 const db = admin.firestore();
-const messaging = admin.messaging(); // For FCM push notifications
+const messaging = admin.messaging();
 
-// Enhanced Google Cloud Clients Initialization with better error handling
+// Google Cloud Clients Initialization
 let storage, speechClient, ttsClient, translateClient;
 let gcsAvailable = false;
 
@@ -76,17 +77,17 @@ try {
   console.log('Google Text-to-Speech client initialized successfully');
 } catch (error) {
   console.error('Failed to initialize Google Cloud services:', error.message);
-  process.exit(1); // Exit if initialization fails
+  process.exit(1);
 }
 
 // Multer configuration
 const upload = multer({ storage: multer.memoryStorage() });
 
-// Configure CORS for Express with updated headers
+// Configure CORS for Express
 app.use(cors({
   origin: 'http://localhost:3000',
-  methods: ['GET', 'POST', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'Cache-Control', 'x-user-uid'],
+  methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Cache-Control', 'x-user-uid', 'authorization'],
   credentials: true,
 }));
 app.use(express.json());
@@ -119,7 +120,7 @@ const testBucketAccess = async () => {
   }
 };
 
-// Enhanced upload with retry and fallback
+// Upload with retry logic
 const uploadWithRetry = async (file, buffer, metadata, retries = 3, backoff = 1000) => {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
@@ -147,7 +148,7 @@ const checkGoogleServices = (req, res, next) => {
   next();
 };
 
-// Middleware to check user role and fetch doctorId/patientId if applicable
+// Middleware to check user role with retry
 const checkRole = (requiredRole) => {
   return async (req, res, next) => {
     const userId = req.headers['x-user-uid'];
@@ -158,53 +159,64 @@ const checkRole = (requiredRole) => {
       return res.status(400).json({ error: 'Firebase UID is required in x-user-uid header' });
     }
 
-    try {
-      const userDoc = await db.collection('users').doc(userId).get({ source: 'server' });
-      if (!userDoc.exists) {
-        console.log(`User ${userId} not found in Firestore`);
-        return res.status(404).json({ error: 'User not found' });
-      }
-
-      const userData = userDoc.data();
-      if (userData.role !== requiredRole) {
-        console.log(`Access denied for UID=${userId}. Required role=${requiredRole}, Found role=${userData.role}`);
-        return res.status(403).json({ error: `Access denied. Required role: ${requiredRole}, User role: ${userData.role}` });
-      }
-
-      if (requiredRole === 'doctor') {
-        const doctorQuery = await db.collection('doctors').where('uid', '==', userId).get();
-        if (doctorQuery.empty) {
-          console.log(`No doctor profile found for UID=${userId}`);
-          return res.status(404).json({ error: 'Doctor profile not found for this user' });
+    const maxRetries = 2;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const userDoc = await db.collection('users').doc(userId).get({ source: 'server' });
+        if (!userDoc.exists) {
+          console.log(`User ${userId} not found in Firestore`);
+          return res.status(404).json({ error: 'User not found' });
         }
-        const doctorData = doctorQuery.docs[0].data();
-        req.doctorId = doctorData.doctorId;
-        console.log(`Doctor ID for UID=${userId} is ${req.doctorId}`);
-        if (!req.doctorId) {
-          console.log(`Doctor ID is missing in Firestore document for UID=${userId}:`, doctorData);
-          return res.status(500).json({ error: 'Doctor profile is missing doctorId field' });
-        }
-      } else if (requiredRole === 'patient') {
-        const patientQuery = await db.collection('patients').where('uid', '==', userId).get();
-        if (patientQuery.empty) {
-          console.log(`No patient profile found for UID=${userId}`);
-          return res.status(404).json({ error: 'Patient profile not found for this user' });
-        }
-        const patientData = patientQuery.docs[0].data();
-        req.patientId = patientData.patientId;
-        console.log(`Patient ID for UID=${userId} is ${req.patientId}`);
-      }
 
-      req.user = userData;
-      next();
-    } catch (error) {
-      console.error(`Error checking role for user ${userId}:`, error);
-      res.status(500).json({ error: 'Internal server error', details: error.message });
+        const userData = userDoc.data();
+        if (userData.role !== requiredRole) {
+          console.log(`Access denied for UID=${userId}. Required role=${requiredRole}, Found role=${userData.role}`);
+          return res.status(403).json({ error: `Access denied. Required role: ${requiredRole}, User role: ${userData.role}` });
+        }
+
+        if (requiredRole === 'doctor') {
+          const doctorQuery = await db.collection('doctors').where('uid', '==', userId).get();
+          if (doctorQuery.empty) {
+            console.log(`No doctor profile found for UID=${userId}`);
+            return res.status(404).json({ error: 'Doctor profile not found for this user' });
+          }
+          req.doctorId = doctorQuery.docs[0].data().doctorId;
+          console.log(`Doctor ID for UID=${userId} is ${req.doctorId}`);
+        } else if (requiredRole === 'patient') {
+          const patientQuery = await db.collection('patients').where('uid', '==', userId).get();
+          if (patientQuery.empty) {
+            console.log(`No patient profile found for UID=${userId}`);
+            return res.status(404).json({ error: 'Patient profile not found for this user' });
+          }
+          req.patientId = patientQuery.docs[0].data().patientId;
+          console.log(`Patient ID for UID=${userId} is ${req.patientId}`);
+        }
+
+        req.user = userData;
+        return next();
+      } catch (error) {
+        console.error(`Attempt ${attempt} failed checking role for user ${userId}:`, error.message);
+        if (attempt === maxRetries) {
+          return res.status(500).json({ error: 'Internal server error', details: error.message });
+        }
+        await setTimeout(500 * attempt);
+      }
     }
   };
 };
 
-// Health Check Endpoint with service status
+// Socket.IO authentication middleware
+io.use((socket, next) => {
+  const userId = socket.handshake.auth.uid;
+  if (!userId) {
+    console.error(`Socket.IO authentication failed for ${socket.id}: No UID provided`);
+    return next(new Error('Authentication error: Firebase UID is required'));
+  }
+  socket.userId = userId;
+  next();
+});
+
+// Health Check Endpoint
 app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'OK',
@@ -219,19 +231,32 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Socket.IO connection handling
+// Enhanced Socket.IO connection handling
 io.on('connection', (socket) => {
-  console.log(`User connected: ${socket.id}`);
+  console.log(`User connected: ${socket.id}, Auth: ${JSON.stringify(socket.handshake.auth)}`);
 
-  socket.on('joinRoom', (room) => {
+  socket.on('joinRoom', (data) => {
+    const { patientId, doctorId } = data;
+    const room = `${patientId}-${doctorId}`;
     socket.join(room);
     console.log(`User ${socket.id} joined room ${room}`);
   });
 
   socket.on('newMessage', (message) => {
     console.log(`New message from ${socket.id}:`, message);
-    const room = `${message.patientId}-${message.doctorId}`;
-    io.to(room).emit('newMessage', message);
+    const { patientId, doctorId } = message;
+    if (!patientId || !doctorId) {
+      console.error(`Invalid message data: missing patientId or doctorId`, message);
+      return;
+    }
+    const room = `${patientId}-${doctorId}`;
+    io.to(room).emit('newMessage', { ...message, senderId: socket.userId });
+  });
+
+  socket.on('assignmentUpdated', (assignment) => {
+    console.log(`Assignment updated from ${socket.id}:`, assignment);
+    const room = `${assignment.patientId}-*`;
+    io.to(room).emit('assignmentUpdated', assignment);
   });
 
   socket.on('disconnect', (reason) => {
@@ -245,9 +270,125 @@ io.on('connection', (socket) => {
   socket.on('connect_error', (error) => {
     console.error(`Connection error for ${socket.id}:`, error.message);
   });
+}); // Ensure proper closing of io.on block
+
+// Create Doctor (Admin only)
+app.post('/create-doctor', checkRole('admin'), async (req, res) => {
+  console.log('POST /create-doctor:', req.body);
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password are required' });
+    }
+
+    const userRecord = await admin.auth().createUser({
+      email,
+      password,
+    });
+
+    console.log(`Doctor user created with UID: ${userRecord.uid}`);
+    res.status(200).json({ uid: userRecord.uid });
+  } catch (error) {
+    console.error('Error in /create-doctor:', error);
+    if (error.code === 'auth/email-already-exists') {
+      return res.status(400).json({ error: 'Email already in use' });
+    }
+    res.status(500).json({ error: 'Failed to create doctor user', details: error.message });
+  }
 });
 
-// Updated Endpoint: Assign Doctor to Patient (Overwrites existing assignments)
+// Create Admin (Admin only)
+app.post('/create-admin', checkRole('admin'), async (req, res) => {
+  console.log('POST /create-admin:', req.body);
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password are required' });
+    }
+
+    const userRecord = await admin.auth().createUser({
+      email,
+      password,
+    });
+
+    console.log(`Admin user created with UID: ${userRecord.uid}`);
+    res.status(200).json({ uid: userRecord.uid });
+  } catch (error) {
+    console.error('Error in /create-admin:', error);
+    if (error.code === 'auth/email-already-exists') {
+      return res.status(400).json({ error: 'Email already in use' });
+    }
+    res.status(500).json({ error: 'Failed to create admin user', details: error.message });
+  }
+});
+
+// Add Doctor (Admin only)
+app.post('/add-doctor', checkRole('admin'), async (req, res) => {
+  console.log('POST /add-doctor:', req.body);
+  try {
+    const {
+      uid,
+      doctorId,
+      name,
+      age,
+      sex,
+      experience,
+      specialty,
+      qualification,
+      address,
+      contactNumber,
+      createdAt,
+      email,
+    } = req.body;
+
+    const requiredFields = [
+      'uid',
+      'doctorId',
+      'name',
+      'age',
+      'sex',
+      'experience',
+      'specialty',
+      'qualification',
+      'address',
+      'contactNumber',
+      'email',
+    ];
+    const missingFields = requiredFields.filter((field) => !req.body[field]);
+    if (missingFields.length > 0) {
+      return res.status(400).json({ error: `Missing required fields: ${missingFields.join(', ')}` });
+    }
+
+    const doctorData = {
+      uid,
+      doctorId,
+      name,
+      age: parseInt(age, 10),
+      sex,
+      experience: parseInt(experience, 10),
+      specialty,
+      qualification,
+      address,
+      contactNumber,
+      email,
+      createdAt: createdAt || new Date().toISOString(),
+    };
+
+    await db.collection('doctors').doc(doctorId).set(doctorData, { merge: true });
+    console.log(`Doctor ${doctorId} added to Firestore`);
+
+    const doctorFile = bucket.file(`doctors/${doctorId}.json`);
+    await uploadWithRetry(doctorFile, JSON.stringify(doctorData), { contentType: 'application/json' });
+    console.log(`Doctor ${doctorId} added to GCS`);
+
+    res.status(200).json({ message: 'Doctor added successfully', doctorId });
+  } catch (error) {
+    console.error('Error in /add-doctor:', error);
+    res.status(500).json({ error: 'Failed to add doctor', details: error.message });
+  }
+});
+
+// Assign Doctor to Patient
 app.post('/assign-doctor', checkRole('patient'), async (req, res) => {
   console.log('POST /assign-doctor:', req.body);
   try {
@@ -258,21 +399,18 @@ app.post('/assign-doctor', checkRole('patient'), async (req, res) => {
       return res.status(400).json({ error: 'patientId and doctorId are required' });
     }
 
-    // Verify patient matches the authenticated user
     const patientQuery = await db.collection('patients').where('uid', '==', userId).get();
     if (patientQuery.empty || patientQuery.docs[0].data().patientId !== patientId) {
       console.log(`Access denied: UID=${userId} does not match patientId=${patientId}`);
       return res.status(403).json({ error: 'You are not authorized to assign this patient' });
     }
 
-    // Verify doctor exists
     const doctorQuery = await db.collection('doctors').where('doctorId', '==', doctorId).get();
     if (doctorQuery.empty) {
       console.log(`Doctor ${doctorId} not found`);
       return res.status(404).json({ error: 'Doctor not found' });
     }
 
-    // Check for existing assignments and overwrite them
     const assignmentQuery = await db.collection('doctor_assignments')
       .where('patientId', '==', patientId)
       .get();
@@ -288,23 +426,19 @@ app.post('/assign-doctor', checkRole('patient'), async (req, res) => {
     };
 
     if (!assignmentQuery.empty) {
-      // Delete all existing assignments for this patient
+      console.log(`Existing assignment found for patient ${patientId}. Updating to doctor ${doctorId}`);
       await Promise.all(assignmentQuery.docs.map((doc) => doc.ref.delete()));
-      console.log(`Cleared ${assignmentQuery.size} existing assignments for patient ${patientId}`);
     }
 
-    // Create new assignment
-    const assignmentRef = await db.collection('doctor_assignments').add(assignmentData);
-    console.log(`Assigned patient ${patientId} to doctor ${doctorId} with assignment ID ${assignmentRef.id}`);
+    const assignmentRef = await db.collection('doctor_assignments').doc(`${patientId}_${doctorId}`).set(assignmentData);
+    console.log(`Assigned patient ${patientId} to doctor ${doctorId}`);
 
-    // Save to GCS (overwriting any existing file)
     const assignmentFile = bucket.file(`doctor_assignments/${patientId}-${doctorId}.json`);
     await uploadWithRetry(assignmentFile, JSON.stringify(assignmentData), { contentType: 'application/json' });
     console.log(`Assignment saved to GCS: ${assignmentFile.name}`);
 
-    // Emit WebSocket event for real-time update
-    const room = `${patientId}-${doctorId}`;
-    io.to(room).emit('assignmentUpdated', { ...assignmentData, assignmentId: assignmentRef.id });
+    const room = `${patientId}-*`;
+    io.to(room).emit('assignmentUpdated', { ...assignmentData, assignmentId: `${patientId}_${doctorId}` });
     console.log(`Emitted assignmentUpdated to room ${room}`);
 
     res.status(200).json({ message: 'Doctor assigned successfully', assignment: assignmentData });
@@ -314,7 +448,53 @@ app.post('/assign-doctor', checkRole('patient'), async (req, res) => {
   }
 });
 
-// Updated Endpoint: Notify Missed Dose with WebSocket Emission
+// New Endpoint: Fetch Patient Chats Based on Assignments
+app.get('/patient-chats/:patientId', checkRole('patient'), async (req, res) => {
+  console.log(`GET /patient-chats/${req.params.patientId}`);
+  try {
+    const { patientId } = req.params;
+    const userId = req.headers['x-user-uid'];
+
+    // Verify the patient
+    const patientQuery = await db.collection('patients').where('uid', '==', userId).get();
+    if (patientQuery.empty || patientQuery.docs[0].data().patientId !== patientId) {
+      console.log(`Access denied: UID=${userId} does not match patientId=${patientId}`);
+      return res.status(403).json({ error: 'You are not authorized to access this patient\'s chats' });
+    }
+
+    // Fetch all assignments for the patient
+    const assignmentsSnapshot = await db.collection('doctor_assignments')
+      .where('patientId', '==', patientId)
+      .get();
+
+    const chats = await Promise.all(
+      assignmentsSnapshot.docs.map(async (doc) => {
+        const { doctorId } = doc.data();
+        const chatFile = bucket.file(`chats/${patientId}-${doctorId}.json`);
+        const [exists] = await chatFile.exists();
+        if (!exists) return null;
+
+        const [contents] = await chatFile.download();
+        const chatData = JSON.parse(contents.toString('utf8'));
+        return {
+          doctorId,
+          messages: chatData.messages || [],
+          lastMessage: chatData.messages?.length > 0
+            ? chatData.messages[chatData.messages.length - 1]
+            : null,
+        };
+      })
+    );
+
+    const validChats = chats.filter((chat) => chat);
+    res.json({ chats: validChats });
+  } catch (error) {
+    console.error('Error in /patient-chats/:patientId:', error);
+    res.status(500).json({ error: 'Failed to fetch patient chats', details: error.message });
+  }
+});
+
+// Notify Missed Dose
 app.post('/notify-missed-dose', async (req, res) => {
   console.log('POST /notify-missed-dose:', req.body);
   try {
@@ -337,12 +517,10 @@ app.post('/notify-missed-dose', async (req, res) => {
     await uploadWithRetry(notificationFile, JSON.stringify(notificationData), { contentType: 'application/json' });
     console.log(`Missed dose notification ${notificationId} saved`);
 
-    // Emit WebSocket event for real-time alert
     const room = `${patientId}-${doctorId}`;
     io.to(room).emit('missedDoseAlert', notificationData);
     console.log(`Emitted missedDoseAlert to room ${room}`);
 
-    // Send FCM notification (optional, requires device tokens)
     const doctorRef = await db.collection('doctors').where('doctorId', '==', doctorId).get();
     if (!doctorRef.empty) {
       const doctorData = doctorRef.docs[0].data();
@@ -355,11 +533,21 @@ app.post('/notify-missed-dose', async (req, res) => {
           },
           token: fcmToken,
         };
-        await messaging.send(payload);
-        console.log(`FCM notification sent to doctor ${doctorId}`);
+        try {
+          await messaging.send(payload);
+          console.log(`FCM notification sent to doctor ${doctorId}`);
+        } catch (fcmError) {
+          console.error(`Failed to send FCM notification to doctor ${doctorId}:`, fcmError.message);
+        }
       } else {
-        console.warn(`No FCM token found for doctor ${doctorId}`);
+        console.warn(`No FCM token found for doctor ${doctorId}. Saving to admin_notifications as fallback.`);
+        await db.collection('admin_notifications').doc(notificationId).set(notificationData);
+        console.log(`Fallback: Saved notification ${notificationId} to Firestore admin_notifications`);
       }
+    } else {
+      console.warn(`Doctor ${doctorId} not found. Saving to admin_notifications as fallback.`);
+      await db.collection('admin_notifications').doc(notificationId).set(notificationData);
+      console.log(`Fallback: Saved notification ${notificationId} to Firestore admin_notifications`);
     }
 
     res.status(200).json({ message: 'Missed dose notification sent', notificationId });
@@ -369,7 +557,7 @@ app.post('/notify-missed-dose', async (req, res) => {
   }
 });
 
-// Enhanced Audio Upload and Transcription
+// Audio Upload and Transcription
 app.post('/upload-audio', upload.single('audio'), async (req, res) => {
   console.log('POST /upload-audio:', { language: req.body.language, uid: req.body.uid });
   try {
@@ -435,7 +623,7 @@ app.post('/upload-audio', upload.single('audio'), async (req, res) => {
   }
 });
 
-// Enhanced Text-to-Speech with fallback
+// Text-to-Speech
 app.post('/text-to-speech', checkGoogleServices, async (req, res) => {
   console.log('POST /text-to-speech:', req.body);
   try {
@@ -463,21 +651,15 @@ app.post('/text-to-speech', checkGoogleServices, async (req, res) => {
   }
 });
 
-// Fixed Translation Endpoint
+// Translation Endpoint
 app.post('/translate', checkGoogleServices, async (req, res) => {
   console.log('POST /translate:', req.body);
   try {
     const { text, sourceLanguageCode, targetLanguageCode } = req.body;
 
-    if (!text) {
-      return res.status(400).json({ error: 'Text is required' });
-    }
-    if (!sourceLanguageCode) {
-      return res.status(400).json({ error: 'Source language code is required' });
-    }
-    if (!targetLanguageCode) {
-      return res.status(400).json({ error: 'Target language code is required' });
-    }
+    if (!text) return res.status(400).json({ error: 'Text is required' });
+    if (!sourceLanguageCode) return res.status(400).json({ error: 'Source language code is required' });
+    if (!targetLanguageCode) return res.status(400).json({ error: 'Target language code is required' });
 
     console.log(`Translating "${text}" from ${sourceLanguageCode} to ${targetLanguageCode}`);
 
@@ -505,7 +687,7 @@ app.post('/translate', checkGoogleServices, async (req, res) => {
 // Serve local files
 app.use('/temp_audio', express.static(localStorageDir));
 
-// Store Patient Profile in GCS and Firestore
+// Store Patient Profile
 app.post('/store-patient-profile', async (req, res) => {
   console.log('POST /store-patient-profile:', req.body);
   try {
@@ -535,43 +717,6 @@ app.post('/store-patient-profile', async (req, res) => {
   } catch (error) {
     console.error('Error in /store-patient-profile:', error);
     res.status(500).json({ error: 'Failed to save patient profile', details: error.message });
-  }
-});
-
-// Add Doctor (Admin only) and sync with Firestore
-app.post('/add-doctor', checkRole('admin'), async (req, res) => {
-  console.log('POST /add-doctor:', req.body);
-  try {
-    const { id, name, age, sex, experience, specialty, qualification, address, contactNumber, createdAt, uid } = req.body;
-    if (!id || !name || !age || !sex || !experience || !specialty || !qualification || !address || !contactNumber) {
-      return res.status(400).json({ error: 'Missing required fields' });
-    }
-
-    const doctorData = {
-      doctorId: id,
-      name,
-      age: parseInt(age, 10),
-      sex,
-      experience: parseInt(experience, 10),
-      specialty,
-      qualification,
-      address,
-      contactNumber,
-      createdAt: createdAt || new Date().toISOString(),
-      uid: uid || null,
-    };
-
-    const doctorFile = bucket.file(`doctors/${id}.json`);
-    await uploadWithRetry(doctorFile, JSON.stringify(doctorData), { contentType: 'application/json' });
-    console.log(`Doctor ${id} added to GCS`);
-
-    await db.collection('doctors').doc(id).set(doctorData, { merge: true });
-    console.log(`Doctor ${id} added to Firestore`);
-
-    res.status(200).json({ message: 'Doctor added successfully', doctorId: id });
-  } catch (error) {
-    console.error('Error in /add-doctor:', error);
-    res.status(500).json({ error: 'Failed to add doctor', details: error.message });
   }
 });
 
@@ -776,7 +921,7 @@ app.post('/uploadImage/:patientId', checkRole('patient'), upload.single('image')
   }
 });
 
-// Fetch Chat Messages with Patient and Doctor Validation
+// Fetch Chat Messages
 app.get('/chats/:patientId/:doctorId', async (req, res) => {
   console.log(`GET /chats/${req.params.patientId}/${req.params.doctorId}`);
   try {
@@ -809,6 +954,16 @@ app.get('/chats/:patientId/:doctorId', async (req, res) => {
       return res.status(403).json({ error: 'You are not authorized to access this chat' });
     }
 
+    // Verify the assignment exists
+    const assignmentQuery = await db.collection('doctor_assignments')
+      .where('patientId', '==', patientId)
+      .where('doctorId', '==', doctorId)
+      .get();
+    if (assignmentQuery.empty) {
+      console.log(`No assignment found for patient ${patientId} and doctor ${doctorId}`);
+      return res.status(404).json({ error: 'No chat assignment found' });
+    }
+
     const file = bucket.file(`chats/${patientId}-${doctorId}.json`);
     const [exists] = await file.exists();
     if (!exists) {
@@ -825,7 +980,7 @@ app.get('/chats/:patientId/:doctorId', async (req, res) => {
   }
 });
 
-// Save Chat Message with Validation
+// Save Chat Message
 app.post('/chats/:patientId/:doctorId', async (req, res) => {
   console.log(`POST /chats/${req.params.patientId}/${req.params.doctorId}`, req.body);
   try {
@@ -858,6 +1013,16 @@ app.post('/chats/:patientId/:doctorId', async (req, res) => {
       return res.status(403).json({ error: `You are not authorized to send messages as this ${sender}` });
     }
 
+    // Verify the assignment exists
+    const assignmentQuery = await db.collection('doctor_assignments')
+      .where('patientId', '==', patientId)
+      .where('doctorId', '==', doctorId)
+      .get();
+    if (assignmentQuery.empty) {
+      console.log(`No assignment found for patient ${patientId} and doctor ${doctorId}`);
+      return res.status(404).json({ error: 'No chat assignment found' });
+    }
+
     const file = bucket.file(`chats/${patientId}-${doctorId}.json`);
     let chatData = { messages: [] };
     const [exists] = await file.exists();
@@ -866,7 +1031,7 @@ app.post('/chats/:patientId/:doctorId', async (req, res) => {
       chatData = JSON.parse(contents.toString('utf8'));
     }
 
-    const newMessage = { ...message, timestamp: message.timestamp || new Date().toISOString() };
+    const newMessage = { ...message, timestamp: message.timestamp || new Date().toISOString(), senderId: userId };
     chatData.messages.push(newMessage);
     await uploadWithRetry(file, JSON.stringify(chatData), { contentType: 'application/json' });
 
@@ -923,7 +1088,7 @@ app.get('/patients/:patientId', async (req, res) => {
   }
 });
 
-// Update Patient (Diagnosis/Prescription) (Doctor only)
+// Update Patient (Diagnosis/Prescription)
 app.post('/patients/:patientId', checkRole('doctor'), async (req, res) => {
   console.log(`POST /patients/${req.params.patientId}`, req.body);
   try {
@@ -954,8 +1119,7 @@ app.post('/patients/:patientId', checkRole('doctor'), async (req, res) => {
 
     const message = {
       sender: 'doctor',
-      diagnosis: diagnosis || patientData.diagnosis,
-      prescription: prescription || patientData.prescription,
+      text: `Diagnosis: ${diagnosis || patientData.diagnosis}, Prescription: ${prescription || patientData.prescription}`,
       timestamp: new Date().toISOString(),
       doctorId,
       patientId,
@@ -1058,7 +1222,7 @@ app.post('/admin_notifications', async (req, res) => {
   }
 });
 
-// Fetch Chat Metadata (for DoctorChat sidebar)
+// Fetch Chat Metadata
 app.get('/chats', async (req, res) => {
   console.log('GET /chats');
   try {
@@ -1222,30 +1386,53 @@ app.post('/doctors/:id', async (req, res) => {
   }
 });
 
-// Logout Endpoint with Assignment Cleanup (Optional)
-app.post('/logout', checkRole('patient'), async (req, res) => {
+// Logout Endpoint
+app.post('/logout', async (req, res) => {
   console.log('POST /logout');
   try {
     const userId = req.headers['x-user-uid'];
-    const patientId = req.patientId;
-
-    // Optionally clear assignments on logout
-    const assignmentsSnapshot = await db.collection('doctor_assignments')
-      .where('patientId', '==', patientId)
-      .get();
-    if (!assignmentsSnapshot.empty) {
-      await Promise.all(assignmentsSnapshot.docs.map((doc) => doc.ref.delete()));
-      console.log(`Cleared ${assignmentsSnapshot.size} assignments for patient ${patientId} on logout`);
+    if (!userId) {
+      console.log('No UID provided in x-user-uid header');
+      return res.status(400).json({ error: 'Firebase UID is required in x-user-uid header' });
     }
 
-    res.status(200).json({ message: 'Logged out successfully' });
+    const userDoc = await db.collection('users').doc(userId).get();
+    if (!userDoc.exists) {
+      console.log(`User ${userId} not found in Firestore`);
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const userData = userDoc.data();
+    const role = userData.role;
+    const clearAssignments = req.query.clearAssignments === 'true';
+
+    if (role === 'patient' && clearAssignments) {
+      const patientQuery = await db.collection('patients').where('uid', '==', userId).get();
+      if (!patientQuery.empty) {
+        const patientId = patientQuery.docs[0].data().patientId;
+        const assignmentsSnapshot = await db.collection('doctor_assignments')
+          .where('patientId', '==', patientId)
+          .get();
+        if (!assignmentsSnapshot.empty) {
+          await Promise.all(assignmentsSnapshot.docs.map((doc) => doc.ref.delete()));
+          console.log(`Cleared ${assignmentsSnapshot.size} assignments for patient ${patientId} on logout`);
+        } else {
+          console.log(`No assignments found for patient ${patientId} to clear on logout`);
+        }
+      }
+    } else {
+      console.log(`Preserving assignments for user ${userId} (role: ${role}) on logout`);
+    }
+
+    res.clearCookie('authToken');
+    res.status(200).json({ message: 'Logged out successfully', role, assignmentsCleared: clearAssignments });
   } catch (error) {
     console.error('Error in /logout:', error);
     res.status(500).json({ error: 'Failed to logout', details: error.message });
   }
 });
 
-// Start the server after verifying GCS
+// Start the server
 const startServer = async () => {
   gcsAvailable = await testBucketAccess();
   if (!gcsAvailable) {

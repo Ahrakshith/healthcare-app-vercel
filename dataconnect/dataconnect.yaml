@@ -1,12 +1,12 @@
 specVersion: "v1beta"
-serviceId: "healthcare-app"
-location: "asia-east1"
+serviceId: "healthcare-app-0"
+location: "us-central1"
 schema:
   source: "./schema"
   datasource:
     postgresql:
       database: "fdcdb"
       cloudSql:
-        instanceId: "healthcare-app-fdc"
+        instanceId: "healthcare-app-0-fdc"
       # schemaValidation: "COMPATIBLE"
 connectorDirs: ["./connector"]
