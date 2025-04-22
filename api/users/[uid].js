@@ -3,11 +3,38 @@ import admin from 'firebase-admin';
 if (!admin.apps.length) {
   console.log('Initializing Firebase Admin at', new Date().toISOString());
   try {
+    // Ensure all environment variables are present
+    const requiredEnvVars = [
+      'FIREBASE_PROJECT_ID',
+      'FIREBASE_PRIVATE_KEY_ID',
+      'FIREBASE_PRIVATE_KEY',
+      'FIREBASE_CLIENT_EMAIL',
+      'FIREBASE_CLIENT_ID',
+      'FIREBASE_CLIENT_CERT_URL',
+    ];
+    const missingVars = requiredEnvVars.filter(varName => !process.env[varName]);
+    if (missingVars.length > 0) {
+      throw new Error(`Missing environment variables: ${missingVars.join(', ')}`);
+    }
+
+    // Handle private key with potential escaped newlines or single-line format
+    let privateKey = process.env.FIREBASE_PRIVATE_KEY;
+    if (typeof privateKey === 'string') {
+      // Try replacing escaped newlines first
+      privateKey = privateKey.replace(/\\n/g, '\n');
+      // If it still looks like a single line with newlines embedded, split and join
+      if (!privateKey.includes('\n') && privateKey.includes('\\n')) {
+        privateKey = privateKey.split('\\n').join('\n');
+      }
+    } else {
+      throw new Error('FIREBASE_PRIVATE_KEY is not a valid string');
+    }
+
     const serviceAccount = {
       type: 'service_account',
       project_id: process.env.FIREBASE_PROJECT_ID,
       private_key_id: process.env.FIREBASE_PRIVATE_KEY_ID,
-      private_key: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'), // FIXED HERE
+      private_key: privateKey,
       client_email: process.env.FIREBASE_CLIENT_EMAIL,
       client_id: process.env.FIREBASE_CLIENT_ID,
       auth_uri: 'https://accounts.google.com/o/oauth2/auth',
@@ -23,8 +50,15 @@ if (!admin.apps.length) {
 
     console.log('✅ Firebase Admin initialized successfully at', new Date().toISOString());
   } catch (error) {
-    console.error('❌ Firebase initialization failed:', error.message);
-    throw error;
+    console.error('❌ Firebase initialization failed:', {
+      message: error.message,
+      stack: error.stack,
+      envVars: {
+        FIREBASE_PROJECT_ID: process.env.FIREBASE_PROJECT_ID ? 'set' : 'missing',
+        FIREBASE_PRIVATE_KEY: process.env.FIREBASE_PRIVATE_KEY ? 'set' : 'missing',
+      },
+    });
+    throw error; // Ensure the error propagates to Vercel
   }
 }
 
@@ -34,7 +68,7 @@ export default async function handler(req, res) {
   const { uid } = req.query;
 
   if (!uid || typeof uid !== 'string') {
-    console.warn('⚠️ Missing or invalid UID at', new Date().toISOString());
+    console.warn('⚠️ Missing or invalid UID at', new Date().toISOString(), { uid });
     return res.status(400).json({ error: 'UID is required and must be a string' });
   }
 
@@ -51,10 +85,14 @@ export default async function handler(req, res) {
     }
 
     const data = userDoc.data();
-    console.log('✅ User data retrieved:', data);
+    console.log('✅ User data retrieved:', { uid, data });
     return res.status(200).json(data);
   } catch (error) {
-    console.error('💥 Server error at', new Date().toISOString(), error);
+    console.error('💥 Server error at', new Date().toISOString(), {
+      message: error.message,
+      stack: error.stack,
+      code: error.code,
+    });
     return res.status(500).json({
       error: 'Internal server error',
       details: error.message || 'Unknown error',
