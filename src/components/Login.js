@@ -1,4 +1,3 @@
-// src/components/Login.js
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { signInWithEmailAndPassword, signOut } from 'firebase/auth';
@@ -44,11 +43,11 @@ function Login({ setUser, setRole, setPatientId, user }) {
       const firebaseUser = userCredential.user;
       console.log('User logged in:', firebaseUser.uid);
 
-      const response = await fetch(`http://localhost:5005/users/${firebaseUser.uid}`, {
+      const response = await fetch(`${process.env.REACT_APP_API_URL}/users/${firebaseUser.uid}`, {
         headers: {
-          'x-user-uid': firebaseUser.uid, // Added for server-side authentication
+          'Authorization': `Bearer ${await firebaseUser.getIdToken()}`,
+          'x-user-uid': firebaseUser.uid,
         },
-        credentials: 'include',
       });
 
       if (!response.ok) {
@@ -88,7 +87,7 @@ function Login({ setUser, setRole, setPatientId, user }) {
       } else if (error.code === 'auth/wrong-password') {
         setError('Incorrect password. Please try again.');
       } else if (error.message.includes('fetch user data')) {
-        setError('Failed to fetch user data. Please check your network or try again later.');
+        setError('Failed to fetch user data. Please check your server or try again later.');
       } else {
         setError(`Login failed: ${error.message}`);
       }
@@ -102,14 +101,14 @@ function Login({ setUser, setRole, setPatientId, user }) {
     setIsLoggingOut(true);
 
     try {
-      // Call the server-side logout endpoint to preserve doctor assignments
-      const response = await fetch('http://localhost:5005/logout', {
+      // Update to use Vercel API endpoint (assuming a logout endpoint is added later)
+      const response = await fetch(`${process.env.REACT_APP_API_URL}/logout`, {
         method: 'POST',
         headers: {
+          'Authorization': `Bearer ${await user.getIdToken()}`,
           'x-user-uid': user.uid,
           'Content-Type': 'application/json',
         },
-        credentials: 'include',
       });
 
       if (!response.ok) {
@@ -119,10 +118,8 @@ function Login({ setUser, setRole, setPatientId, user }) {
       const logoutData = await response.json();
       console.log('Server logout response:', logoutData);
 
-      // Clear Firebase auth session
       await signOut(auth);
 
-      // Clear local state and storage
       setUser(null);
       setRole(null);
       setPatientId(null);
