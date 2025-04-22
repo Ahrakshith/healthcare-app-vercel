@@ -1,9 +1,12 @@
 import admin from 'firebase-admin';
 
+console.log('Function loaded at', new Date().toISOString()); // Early log to confirm function load
+
 if (!admin.apps.length) {
   console.log('Initializing Firebase Admin at', new Date().toISOString());
   try {
-    // Ensure all environment variables are present
+    // Early validation of environment variables
+    console.log('Checking environment variables...');
     const requiredEnvVars = [
       'FIREBASE_PROJECT_ID',
       'FIREBASE_PRIVATE_KEY_ID',
@@ -12,27 +15,24 @@ if (!admin.apps.length) {
       'FIREBASE_CLIENT_ID',
       'FIREBASE_CLIENT_CERT_URL',
     ];
-    const missingVars = requiredEnvVars.filter(varName => !process.env[varName]);
-    if (missingVars.length > 0) {
-      throw new Error(`Missing environment variables: ${missingVars.join(', ')}`);
-    }
+    requiredEnvVars.forEach(varName => {
+      console.log(`${varName}: ${process.env[varName] ? 'set' : 'missing'}`, {
+        length: process.env[varName]?.length || 0,
+        sample: process.env[varName]?.substring(0, 10) || 'N/A',
+      });
+    });
 
-    // Handle private key with potential escaped newlines or single-line format
     let privateKey = process.env.FIREBASE_PRIVATE_KEY;
-    if (typeof privateKey === 'string') {
-      // Log the raw private key for debugging (mask sensitive parts)
-      console.log('Raw FIREBASE_PRIVATE_KEY length:', privateKey.length, 'Sample:', privateKey.substring(0, 10) + '...');
-      // Replace escaped newlines and handle multi-line format
-      privateKey = privateKey.replace(/\\n/g, '\n');
-      if (!privateKey.includes('\n') && privateKey.includes('\\n')) {
-        privateKey = privateKey.split('\\n').join('\n');
-      }
-      // Verify newlines are present
-      if (!privateKey.includes('\n')) {
-        console.warn('⚠️ Private key does not contain newlines after processing');
-      }
-    } else {
+    if (typeof privateKey !== 'string') {
       throw new Error('FIREBASE_PRIVATE_KEY is not a valid string');
+    }
+    console.log('Raw FIREBASE_PRIVATE_KEY length:', privateKey.length, 'Sample:', privateKey.substring(0, 10) + '...');
+    privateKey = privateKey.replace(/\\n/g, '\n');
+    if (!privateKey.includes('\n') && privateKey.includes('\\n')) {
+      privateKey = privateKey.split('\\n').join('\n');
+    }
+    if (!privateKey.includes('\n')) {
+      console.warn('⚠️ Private key does not contain newlines after processing');
     }
 
     const serviceAccount = {
@@ -48,12 +48,10 @@ if (!admin.apps.length) {
       client_x509_cert_url: process.env.FIREBASE_CLIENT_CERT_URL,
     };
 
-    // Log service account details (mask sensitive data)
-    console.log('Service Account Config:', {
+    console.log('Attempting Firebase initialization with:', {
       project_id: serviceAccount.project_id,
-      private_key_id: serviceAccount.private_key_id,
-      client_email: serviceAccount.client_email,
       has_private_key: !!serviceAccount.private_key,
+      client_email: serviceAccount.client_email,
     });
 
     admin.initializeApp({
@@ -66,14 +64,10 @@ if (!admin.apps.length) {
     console.error('❌ Firebase initialization failed:', {
       message: error.message,
       stack: error.stack,
-      envVars: {
-        FIREBASE_PROJECT_ID: process.env.FIREBASE_PROJECT_ID ? 'set' : 'missing',
-        FIREBASE_PRIVATE_KEY: process.env.FIREBASE_PRIVATE_KEY ? 'set' : 'missing',
-        FIREBASE_PRIVATE_KEY_ID: process.env.FIREBASE_PRIVATE_KEY_ID ? 'set' : 'missing',
-        FIREBASE_CLIENT_EMAIL: process.env.FIREBASE_CLIENT_EMAIL ? 'set' : 'missing',
-        FIREBASE_CLIENT_ID: process.env.FIREBASE_CLIENT_ID ? 'set' : 'missing',
-        FIREBASE_CLIENT_CERT_URL: process.env.FIREBASE_CLIENT_CERT_URL ? 'set' : 'missing',
-      },
+      envVars: requiredEnvVars.reduce((acc, varName) => ({
+        ...acc,
+        [varName]: process.env[varName] ? 'set' : 'missing',
+      }), {}),
     });
     throw error; // Ensure the error propagates to Vercel
   }
@@ -82,6 +76,7 @@ if (!admin.apps.length) {
 const db = admin.firestore();
 
 export default async function handler(req, res) {
+  console.log('Handler invoked at', new Date().toISOString(), { method: req.method, query: req.query });
   const { uid } = req.query;
 
   if (!uid || typeof uid !== 'string') {
