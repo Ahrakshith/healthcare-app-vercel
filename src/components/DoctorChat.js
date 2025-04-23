@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { collection, query, where, onSnapshot, getDocs, doc, getDoc } from 'firebase/firestore';
 import { db } from '../services/firebase.js';
-import io from 'socket.io-client';
+import Pusher from 'pusher-js';
 import { transcribeAudio, translateText, textToSpeechConvert } from '../services/speech.js';
 
 function DoctorChat({ user, role, handleLogout }) {
@@ -33,10 +33,7 @@ function DoctorChat({ user, role, handleLogout }) {
   const [showActionModal, setShowActionModal] = useState(false);
   const [actionType, setActionType] = useState('');
   const [patientMessageTimestamps, setPatientMessageTimestamps] = useState({});
-  const [isSocketConnected, setIsSocketConnected] = useState(false);
-  const [isSocketRetrying, setIsSocketRetrying] = useState(false);
   const audioRef = useRef(new Audio());
-  const socketRef = useRef(null);
   const messagesEndRef = useRef(null);
   const audioChunksRef = useRef([]);
   const streamRef = useRef(null);
@@ -117,79 +114,52 @@ function DoctorChat({ user, role, handleLogout }) {
     return () => unsubscribe();
   }, [doctorId, selectedPatientId]);
 
-  // WebSocket and Data Fetching
+  // Pusher and Data Fetching
   useEffect(() => {
     if (!selectedPatientId || !user?.uid || !doctorId) return;
 
-    const connectSocket = () => {
-      socketRef.current = io(process.env.REACT_APP_WEBSOCKET_URL || 'wss://healthcare-app-vercel.vercel.app', {
-        auth: { uid: user.uid },
-        transports: ['websocket', 'polling'],
-        reconnection: true,
-        reconnectionAttempts: 10,
-        reconnectionDelay: 1000,
-        reconnectionDelayMax: 5000,
-        withCredentials: true,
-      });
+    // Initialize Pusher
+    const pusher = new Pusher('2ed44c3ce3ef227d9924', {
+      cluster: 'ap2',
+      authEndpoint: `${process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api'}/pusher/auth`,
+      auth: {
+        headers: {
+          'x-user-uid': user.uid,
+        },
+      },
+    });
 
-      socketRef.current.on('connect', () => {
-        setIsSocketConnected(true);
-        setIsSocketRetrying(false);
-        setError('');
-        socketRef.current.emit('joinRoom', { patientId: selectedPatientId, doctorId });
-      });
+    // Subscribe to the chat channel for this patient-doctor pair
+    const channel = pusher.subscribe(`chat-${selectedPatientId}-${doctorId}`);
 
-      socketRef.current.on('connect_error', (error) => {
-        setIsSocketConnected(false);
-        setIsSocketRetrying(true);
-        setError('WebSocket connection failed. Retrying...');
-      });
-
-      socketRef.current.on('reconnect', () => {
-        setIsSocketConnected(true);
-        setIsSocketRetrying(false);
-        setError('');
-        socketRef.current.emit('joinRoom', { patientId: selectedPatientId, doctorId });
-      });
-
-      socketRef.current.on('reconnect_failed', () => {
-        setIsSocketConnected(false);
-        setIsSocketRetrying(false);
-        setError('Failed to reconnect to WebSocket. Please try again.');
-      });
-
-      socketRef.current.on('error', (error) => {
-        setError(`WebSocket error: ${error.message}`);
-      });
-
-      socketRef.current.on('newMessage', (message) => {
-        setMessages((prev) => {
-          if (!prev.some((msg) => msg.timestamp === message.timestamp && (!msg.text || msg.text === message.text))) {
-            const updatedMessages = [...prev, message].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-            if (message.sender === 'patient') {
-              setPatientMessageTimestamps((prevTimestamps) => ({
-                ...prevTimestamps,
-                [message.patientId]: {
-                  firstMessageTime: prevTimestamps[message.patientId]?.firstMessageTime || message.timestamp,
-                  lastMessageTime: message.timestamp,
-                },
-              }));
-            }
-            return updatedMessages;
+    // Listen for new messages
+    channel.bind('message', (message) => {
+      setMessages((prev) => {
+        if (!prev.some((msg) => msg.timestamp === message.timestamp && (!msg.text || msg.text === message.text))) {
+          const updatedMessages = [...prev, message].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+          if (message.sender === 'patient') {
+            setPatientMessageTimestamps((prevTimestamps) => ({
+              ...prevTimestamps,
+              [message.patientId]: {
+                firstMessageTime: prevTimestamps[message.patientId]?.firstMessageTime || message.timestamp,
+                lastMessageTime: message.timestamp,
+              },
+            }));
           }
-          return prev;
-        });
-      });
-
-      socketRef.current.on('missedDoseAlert', (alert) => {
-        if (alert.patientId === selectedPatientId) {
-          setMissedDoseAlerts((prev) => [...prev, { ...alert, id: Date.now().toString() }]);
+          return updatedMessages;
         }
+        return prev;
       });
-    };
+    });
 
-    connectSocket();
+    // Listen for missed dose alerts
+    channel.bind('missedDoseAlert', (alert) => {
+      if (alert.patientId === selectedPatientId) {
+        setMissedDoseAlerts((prev) => [...prev, { ...alert, id: Date.now().toString() }]);
+      }
+    });
 
+    // Fetch initial messages from Firestore via API
     const fetchMessages = async () => {
       setLoadingMessages(true);
       try {
@@ -276,17 +246,10 @@ function DoctorChat({ user, role, handleLogout }) {
     fetchLanguagePreference();
     fetchMissedDoseAlerts();
 
+    // Cleanup Pusher subscription on unmount
     return () => {
-      if (socketRef.current) {
-        socketRef.current.off('connect');
-        socketRef.current.off('connect_error');
-        socketRef.current.off('reconnect');
-        socketRef.current.off('reconnect_failed');
-        socketRef.current.off('error');
-        socketRef.current.off('newMessage');
-        socketRef.current.off('missedDoseAlert');
-        socketRef.current.disconnect();
-      }
+      pusher.unsubscribe(`chat-${selectedPatientId}-${doctorId}`);
+      pusher.disconnect();
     };
   }, [selectedPatientId, user?.uid, doctorId]);
 
@@ -355,7 +318,6 @@ function DoctorChat({ user, role, handleLogout }) {
             credentials: 'include',
           });
           if (!response.ok) throw new Error(`Failed to send message: ${response.statusText}`);
-          socketRef.current.emit('newMessage', message);
           setPatients((prev) => prev.filter((p) => p.patientId !== selectedPatientId));
           setSelectedPatientId(null);
           setSelectedPatientName('');
@@ -393,24 +355,9 @@ function DoctorChat({ user, role, handleLogout }) {
     [user.uid]
   );
 
-  const retrySocketConnection = useCallback(() => {
-    if (socketRef.current) {
-      socketRef.current.disconnect();
-    }
-    setIsSocketRetrying(true);
-    setError('Retrying WebSocket connection...');
-    setTimeout(() => {
-      socketRef.current.connect();
-    }, 1000);
-  }, []);
-
   const startRecording = useCallback(async () => {
     if (!selectedPatientId) {
       setError('No patient selected.');
-      return;
-    }
-    if (!isSocketConnected) {
-      setError('Cannot record: WebSocket connection is not active.');
       return;
     }
     try {
@@ -484,7 +431,6 @@ function DoctorChat({ user, role, handleLogout }) {
             credentials: 'include',
           });
           if (!response.ok) throw new Error(`Failed to save message: ${response.statusText}`);
-          socketRef.current.emit('newMessage', message);
           setMessages((prev) => {
             if (!prev.some((msg) => msg.timestamp === message.timestamp && msg.text === message.text)) {
               return [...prev, message].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
@@ -501,7 +447,7 @@ function DoctorChat({ user, role, handleLogout }) {
     } catch (err) {
       setError(`Failed to start recording: ${err.message}`);
     }
-  }, [selectedPatientId, languagePreference, user.uid, isSocketConnected]);
+  }, [selectedPatientId, languagePreference, user.uid]);
 
   const stopRecording = useCallback(() => {
     if (mediaRecorder) {
@@ -514,10 +460,6 @@ function DoctorChat({ user, role, handleLogout }) {
   const sendMessage = useCallback(async () => {
     if (!newMessage.trim() || !selectedPatientId || !user?.uid || !doctorId) {
       setError('Please type a message and select a patient.');
-      return;
-    }
-    if (!isSocketConnected) {
-      setError('Cannot send message: WebSocket connection is not active.');
       return;
     }
 
@@ -554,7 +496,6 @@ function DoctorChat({ user, role, handleLogout }) {
         credentials: 'include',
       });
       if (!response.ok) throw new Error(`Failed to send message: ${response.statusText}`);
-      socketRef.current.emit('newMessage', message);
       setMessages((prev) => {
         if (!prev.some((msg) => msg.timestamp === message.timestamp && msg.text === message.text)) {
           return [...prev, message].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
@@ -565,16 +506,12 @@ function DoctorChat({ user, role, handleLogout }) {
     } catch (err) {
       setError(`Failed to send message: ${err.message}`);
     }
-  }, [newMessage, selectedPatientId, user?.uid, doctorId, languagePreference, isSocketConnected]);
+  }, [newMessage, selectedPatientId, user?.uid, doctorId, languagePreference]);
 
   const sendAction = useCallback(
     async () => {
       if (!selectedPatientId) {
         setError('No patient selected.');
-        return;
-      }
-      if (!isSocketConnected) {
-        setError('Cannot send action: WebSocket connection is not active.');
         return;
       }
 
@@ -629,7 +566,6 @@ function DoctorChat({ user, role, handleLogout }) {
           credentials: 'include',
         });
         if (!chatResponse.ok) throw new Error(`Failed to send message: ${chatResponse.statusText}`);
-        socketRef.current.emit('newMessage', message);
         setMessages((prev) => {
           if (!prev.some((msg) => msg.timestamp === message.timestamp)) {
             return [...prev, message].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
@@ -678,7 +614,7 @@ function DoctorChat({ user, role, handleLogout }) {
         setError(`Failed to send action: ${err.message}`);
       }
     },
-    [actionType, diagnosis, prescription, selectedPatientId, doctorId, user.uid, selectedPatientName, patients, messages, isSocketConnected]
+    [actionType, diagnosis, prescription, selectedPatientId, doctorId, user.uid, selectedPatientName, patients, messages]
   );
 
   const readAloud = useCallback(
@@ -997,22 +933,14 @@ function DoctorChat({ user, role, handleLogout }) {
                         Retry Upload
                       </button>
                     )}
-                    {!isSocketConnected && !isSocketRetrying && (
-                      <button onClick={retrySocketConnection} className="retry-button">
-                        Retry Connection
-                      </button>
-                    )}
-                    {isSocketRetrying && (
-                      <div className="spinner"></div>
-                    )}
                   </div>
                 )}
                 <div className="controls">
                   <div className="recording-buttons">
                     <button
                       onClick={startRecording}
-                      disabled={recording || !isSocketConnected}
-                      className={recording || !isSocketConnected ? 'disabled-button' : 'start-button'}
+                      disabled={recording}
+                      className={recording ? 'disabled-button' : 'start-button'}
                     >
                       🎙️ Record
                     </button>
@@ -1025,8 +953,7 @@ function DoctorChat({ user, role, handleLogout }) {
                     </button>
                     <button
                       onClick={() => setShowActionModal(true)}
-                      disabled={!isSocketConnected}
-                      className={!isSocketConnected ? 'disabled-button' : 'action-button'}
+                      className="action-button"
                     >
                       ⚕️ Diagnosis/Prescription
                     </button>
@@ -1038,13 +965,11 @@ function DoctorChat({ user, role, handleLogout }) {
                       onChange={(e) => setNewMessage(e.target.value)}
                       placeholder="Type a message (English only)..."
                       onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
-                      disabled={!isSocketConnected}
                       aria-label="Type a message to the patient"
                     />
                     <button
                       onClick={sendMessage}
-                      disabled={!isSocketConnected}
-                      className={!isSocketConnected ? 'disabled-button' : 'send-button'}
+                      className="send-button"
                     >
                       Send
                     </button>
@@ -1422,7 +1347,7 @@ function DoctorChat({ user, role, handleLogout }) {
         .decline-button {
           padding: 10px 25px;
           background: #E74C3C;
-          color:suit: #FFFFFF;
+          color: #FFFFFF;
           border: none;
           border-radius: 20px;
           font-size: 1rem;
@@ -1448,7 +1373,9 @@ function DoctorChat({ user, role, handleLogout }) {
           border-radius: 15px;
           padding: 20px;
           margin-bottom: 20px;
-          border: 1px solid rgba(255, 255, 255, 0.1);
+          border: 1px solid rgba(255, 255, 255,
+
+ 0.1);
         }
 
         .missed-dose-alerts h3 {
@@ -1682,20 +1609,6 @@ function DoctorChat({ user, role, handleLogout }) {
         .retry-button:hover {
           background: #E67E22;
           transform: scale(1.05);
-        }
-
-        .spinner {
-          width: 20px;
-          height: 20px;
-          border: 3px solid #F39C12;
-          border-top: 3px solid transparent;
-          border-radius: 50%;
-          animation: spin 1s linear infinite;
-        }
-
-        @keyframes spin {
-          0% { transform: rotate(0deg); }
-          100% { transform: rotate(360deg); }
         }
 
         .controls {
