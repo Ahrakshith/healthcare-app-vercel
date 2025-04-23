@@ -1,4 +1,6 @@
 // src/services/speech.js
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
+
 async function transcribeAudio(audioBlob, languageCode = 'en-US', userId) {
   if (!audioBlob || !(audioBlob instanceof Blob)) {
     throw new Error('Invalid audio blob provided: Must be a valid Blob object.');
@@ -19,7 +21,7 @@ async function transcribeAudio(audioBlob, languageCode = 'en-US', userId) {
 
   try {
     console.log('transcribeAudio: Sending request to /upload-audio with uid:', userId);
-    const response = await fetch('http://localhost:5005/upload-audio', {
+    const response = await fetch(`${API_BASE_URL}/upload-audio`, {
       method: 'POST',
       body: formData,
       credentials: 'include',
@@ -49,7 +51,7 @@ async function transcribeAudio(audioBlob, languageCode = 'en-US', userId) {
     }
 
     const data = await response.json();
-    console.log('transcribeAudio: Server response:', data); // Log full response for debugging
+    console.log('transcribeAudio: Server response:', data);
     const { transcription, languageCode: returnedLanguageCode, detectedLanguage, audioUrl, translatedText } = data;
 
     if (!transcription || !audioUrl) {
@@ -88,7 +90,7 @@ async function fallbackTranscription(audioBlob, languageCode) {
   formData.append('language', languageCode);
 
   try {
-    const response = await fetch('http://localhost:5005/upload-audio-fallback', {
+    const response = await fetch(`${API_BASE_URL}/upload-audio-fallback`, {
       method: 'POST',
       body: formData,
       credentials: 'include',
@@ -101,7 +103,7 @@ async function fallbackTranscription(audioBlob, languageCode) {
     }
 
     const data = await response.json();
-    console.log('transcribeAudio: Fallback server response:', data); // Log full response
+    console.log('transcribeAudio: Fallback server response:', data);
     const { audioUrl, transcription, translatedText, languageCode: returnedLanguageCode } = data;
 
     if (!transcription || !audioUrl) {
@@ -137,7 +139,7 @@ async function detectLanguage(text) {
   console.log(`detectLanguage: Detecting language for text="${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`);
 
   try {
-    const response = await fetch('http://localhost:5005/translate', {
+    const response = await fetch(`${API_BASE_URL}/translate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text, sourceLanguageCode: 'auto' }),
@@ -203,7 +205,7 @@ async function translateText(text, sourceLanguageCode, targetLanguageCode) {
     };
     console.log('translateText: Sending payload:', JSON.stringify(payload));
 
-    const response = await fetch('http://localhost:5005/translate', {
+    const response = await fetch(`${API_BASE_URL}/translate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -246,7 +248,7 @@ async function textToSpeechConvert(text, languageCode = 'en-US') {
 
   try {
     const normalizedLanguageCode = languageCode.toLowerCase().startsWith('kn') ? 'kn-IN' : 'en-US';
-    const response = await fetch('http://localhost:5005/text-to-speech', {
+    const response = await fetch(`${API_BASE_URL}/text-to-speech`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text, language: normalizedLanguageCode }),
