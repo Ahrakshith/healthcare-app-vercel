@@ -1,6 +1,5 @@
-// src/App.js
 import React, { useState, useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { auth as firebaseAuth, db } from './services/firebase.js';
 import Login from './components/Login.js';
@@ -14,12 +13,12 @@ import './components/patient.css';
 
 // Custom 404 Component
 const NotFound = () => {
-  const navigate = useNavigate();
+  const location = useLocation();
   return (
     <div className="not-found-container">
-      <h2>404 - Route Not Found</h2>
-      <p>The requested path <code>{window.location.pathname}</code> does not exist.</p>
-      <p>Go to <a href="#" onClick={() => navigate('/login')}>Login</a></p>
+      <h2>404 - Page Not Found</h2>
+      <p>The requested path <code>{location.pathname}</code> does not exist.</p>
+      <p>Go to <a href="/login">Login</a></p>
       <style>{`
         .not-found-container {
           min-height: 100vh;
@@ -27,9 +26,9 @@ const NotFound = () => {
           flex-direction: column;
           justify-content: center;
           align-items: center;
-          background: linear-gradient(135deg, #6e48aa, #9d50bb);
-          color: #fff;
-          font-family: 'Arial', sans-serif;
+          background: linear-gradient(135deg, #2C1A3D, #3E2A5A);
+          color: #E0E0E0;
+          font-family: 'Poppins', sans-serif;
           text-align: center;
           padding: 20px;
         }
@@ -47,11 +46,11 @@ const NotFound = () => {
           border-radius: 4px;
         }
         a {
-          color: #fff;
+          color: #6E48AA;
           text-decoration: underline;
         }
         a:hover {
-          color: #e0e0e0;
+          color: #9D50BB;
         }
       `}</style>
     </div>
@@ -63,26 +62,29 @@ function App() {
   const [role, setRole] = useState(null);
   const [patientId, setPatientId] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const navigate = useNavigate();
 
   useEffect(() => {
-    const storedUserId = localStorage.getItem('userId');
-    console.log('App.js: Stored userId from localStorage:', storedUserId);
-
     const unsubscribeAuth = firebaseAuth.onAuthStateChanged(async (firebaseUser) => {
-      if (firebaseUser && storedUserId) {
-        console.log(`App.js: Authenticated user detected, UID=${storedUserId}`);
+      if (firebaseUser) {
+        const userId = firebaseUser.uid;
+        if (process.env.NODE_ENV !== 'production') {
+          console.log('App.js: Authenticated user detected, UID:', userId);
+        }
 
-        const userRef = doc(db, 'users', storedUserId);
+        const userRef = doc(db, 'users', userId);
         const unsubscribeFirestore = onSnapshot(
           userRef,
           (docSnapshot) => {
             if (docSnapshot.exists()) {
               const userData = docSnapshot.data();
-              console.log('App.js: Fetched Firestore user data:', userData);
+              if (process.env.NODE_ENV !== 'production') {
+                console.log('App.js: Fetched Firestore user data:', userData);
+              }
 
               const updatedUser = {
-                uid: storedUserId,
+                uid: userId,
                 email: firebaseUser.email,
                 ...userData,
               };
@@ -91,50 +93,46 @@ function App() {
               setRole(userData.role);
 
               if (userData.role === 'patient') {
-                const pid = userData.patientId || storedUserId;
+                const pid = userData.patientId || userId;
                 setPatientId(pid);
                 localStorage.setItem('patientId', pid);
-                console.log(`App.js: Set patientId=${pid} for patient role`);
+                if (process.env.NODE_ENV !== 'production') {
+                  console.log(`App.js: Set patientId=${pid} for patient role`);
+                }
               } else {
                 setPatientId(null);
                 localStorage.removeItem('patientId');
               }
 
+              localStorage.setItem('userId', userId);
               setLoading(false);
             } else {
-              console.log('App.js: User document not found in Firestore');
-              handleUserNotFound();
+              if (process.env.NODE_ENV !== 'production') {
+                console.log('App.js: User document not found in Firestore');
+              }
+              handleAuthFailure();
             }
           },
           (error) => {
             console.error('App.js: Firestore fetch error:', error.message);
-            handleUserNotFound();
+            setError(`Failed to fetch user data: ${error.message}`);
+            handleAuthFailure();
           }
         );
 
         return () => unsubscribeFirestore();
-      } else if (user) {
-        // Sync with Login.js setUser
-        console.log('App.js: Syncing with Login.js user:', user);
-        setRole(user.role);
-        if (user.role === 'patient' && user.patientId) {
-          setPatientId(user.patientId);
-          localStorage.setItem('patientId', user.patientId);
-        } else {
-          setPatientId(null);
-          localStorage.removeItem('patientId');
-        }
-        setLoading(false);
       } else {
-        console.log('App.js: No authenticated user or stored userId');
-        handleUserNotFound();
+        if (process.env.NODE_ENV !== 'production') {
+          console.log('App.js: No authenticated user');
+        }
+        handleAuthFailure();
       }
     });
 
     return () => unsubscribeAuth();
-  }, [user]); // Added user as dependency to react to Login.js updates
+  }, []);
 
-  const handleUserNotFound = () => {
+  const handleAuthFailure = () => {
     setUser(null);
     setRole(null);
     setPatientId(null);
@@ -145,18 +143,48 @@ function App() {
   };
 
   const handleLogout = async () => {
-    console.log('App.js: Logging out user');
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('App.js: Initiating logout');
+    }
     try {
+      // Define API base URL with fallback
+      const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:5005';
+      if (process.env.NODE_ENV !== 'production') {
+        console.log(`App.js: Using API URL: ${apiUrl}`);
+      }
+
+      // Send logout request to server before signing out
+      if (firebaseAuth.currentUser) {
+        const token = await firebaseAuth.currentUser.getIdToken();
+        try {
+          const response = await fetch(`${apiUrl}/logout`, {
+            method: 'POST',
+            credentials: 'include',
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+          });
+          if (!response.ok) {
+            console.warn(`App.js: Server logout failed: ${response.status} ${response.statusText}`);
+          } else {
+            if (process.env.NODE_ENV !== 'production') {
+              console.log('App.js: Server logout successful');
+            }
+          }
+        } catch (serverError) {
+          console.warn('App.js: Server logout request failed:', serverError.message);
+          // Continue with Firebase sign-out even if server logout fails
+        }
+      }
+
+      // Sign out from Firebase
       await firebaseAuth.signOut();
-      const response = await fetch(`${process.env.REACT_APP_API_URL}/logout`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${await firebaseAuth.currentUser?.getIdToken()}`,
-          'Content-Type': 'application/json',
-        },
-      });
-      if (!response.ok) throw new Error(`Logout failed on server: ${response.statusText}`);
-      console.log('App.js: User logged out successfully');
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('App.js: User logged out successfully from Firebase');
+      }
+
+      // Clear client-side state
       setUser(null);
       setRole(null);
       setPatientId(null);
@@ -164,7 +192,8 @@ function App() {
       localStorage.removeItem('patientId');
       navigate('/login');
     } catch (err) {
-      console.error('App.js: Error during logout:', err.message);
+      console.error('App.js: Logout error:', err.message);
+      setError(`Failed to log out: ${err.message}`);
       setUser(null);
       setRole(null);
       setPatientId(null);
@@ -175,7 +204,9 @@ function App() {
   };
 
   if (loading) {
-    console.log('App.js: Rendering loading state');
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('App.js: Rendering loading state');
+    }
     return (
       <div className="loading-container">
         <p>Loading...</p>
@@ -185,9 +216,9 @@ function App() {
             display: flex;
             justify-content: center;
             align-items: center;
-            background: linear-gradient(135deg, #6e48aa, #9d50bb);
-            color: #fff;
-            font-family: 'Arial', sans-serif;
+            background: linear-gradient(135deg, #2C1A3D, #3E2A5A);
+            color: #E0E0E0;
+            font-family: 'Poppins', sans-serif;
             font-size: 1.2rem;
           }
         `}</style>
@@ -195,12 +226,16 @@ function App() {
     );
   }
 
-  console.log('App.js: Rendering app with user:', user);
-  console.log('App.js: Current role:', role);
-  console.log('App.js: Current patientId:', patientId);
-
   return (
     <div className="app-container">
+      {error && (
+        <div className="error-message">
+          {error}
+          <button onClick={() => setError('')} className="dismiss-error">
+            Dismiss
+          </button>
+        </div>
+      )}
       <Routes>
         {/* Public Routes */}
         <Route
@@ -329,17 +364,58 @@ function App() {
       </Routes>
 
       <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap');
+
         .app-container {
           min-height: 100vh;
-          background: linear-gradient(135deg, #6e48aa, #9d50bb);
-          font-family: 'Arial', sans-serif;
+          background: linear-gradient(135deg, #2C1A3D, #3E2A5A);
+          font-family: 'Poppins', sans-serif;
         }
         a {
-          color: #6e48aa;
+          color: #6E48AA;
           text-decoration: none;
         }
         a:hover {
           text-decoration: underline;
+          color: #9D50BB;
+        }
+        .error-message {
+          position: fixed;
+          top: 20px;
+          right: 20px;
+          background: rgba(231, 76, 60, 0.9);
+          color: #FFFFFF;
+          padding: 15px 20px;
+          border-radius: 10px;
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          z-index: 1000;
+          font-size: 0.9rem;
+          animation: slideIn 0.3s ease;
+        }
+        .dismiss-error {
+          padding: 6px 12px;
+          background: #FFFFFF;
+          color: #E74C3C;
+          border: none;
+          border-radius: 20px;
+          font-size: 0.8rem;
+          cursor: pointer;
+          transition: background 0.3s ease;
+        }
+        .dismiss-error:hover {
+          background: #E0E0E0;
+        }
+        @keyframes slideIn {
+          from {
+            transform: translateX(100%);
+            opacity: 0;
+          }
+          to {
+            transform: translateX(0);
+            opacity: 1;
+          }
         }
       `}</style>
     </div>
@@ -348,7 +424,7 @@ function App() {
 
 export default function AppWrapper() {
   return (
-    <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+    <Router>
       <App />
     </Router>
   );
