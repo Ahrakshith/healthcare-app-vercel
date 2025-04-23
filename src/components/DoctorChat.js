@@ -32,7 +32,7 @@ function DoctorChat({ user, role, handleLogout }) {
   const [doctorProfile, setDoctorProfile] = useState(null);
   const [showActionModal, setShowActionModal] = useState(false);
   const [actionType, setActionType] = useState('');
-  const [patientMessageTimestamps, setPatientMessageTimestamps] = useState({}); // New state to track message timestamps
+  const [patientMessageTimestamps, setPatientMessageTimestamps] = useState({});
   const audioRef = useRef(new Audio());
   const socketRef = useRef(null);
   const messagesEndRef = useRef(null);
@@ -119,13 +119,13 @@ function DoctorChat({ user, role, handleLogout }) {
   useEffect(() => {
     if (!selectedPatientId || !user?.uid || !doctorId) return;
 
-    socketRef.current = io(process.env.REACT_APP_WEBSOCKET_URL || 'http://localhost:5005', {
+    socketRef.current = io(process.env.REACT_APP_WEBSOCKET_URL || 'wss://healthcare-app-vercel.vercel.app', {
       auth: { uid: user.uid },
       transports: ['websocket', 'polling'],
       reconnection: true,
       reconnectionAttempts: 5,
       reconnectionDelay: 1000,
-      withCredentials: true, // Ensure cookies are sent in incognito
+      withCredentials: true,
     });
 
     socketRef.current.on('connect', () => {
@@ -147,10 +147,8 @@ function DoctorChat({ user, role, handleLogout }) {
     socketRef.current.on('newMessage', (message) => {
       console.log('DoctorChat.js: Received new message:', { ...message, audioUrl: message.audioUrl ? '[Audio URL]' : null });
       setMessages((prev) => {
-        // Enhanced deduplication: Check timestamp and text
-        if (!prev.some((msg) => msg.timestamp === message.timestamp && msg.text === message.text)) {
+        if (!prev.some((msg) => msg.timestamp === message.timestamp && (!msg.text || msg.text === message.text))) {
           const updatedMessages = [...prev, message].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-          // Update patient message timestamps if the message is from the patient
           if (message.sender === 'patient') {
             setPatientMessageTimestamps((prevTimestamps) => ({
               ...prevTimestamps,
@@ -176,7 +174,8 @@ function DoctorChat({ user, role, handleLogout }) {
     const fetchMessages = async () => {
       setLoadingMessages(true);
       try {
-        const response = await fetch(`http://localhost:5005/chats/${selectedPatientId}/${doctorId}`, {
+        const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
+        const response = await fetch(`${apiUrl}/chats/${selectedPatientId}/${doctorId}`, {
           headers: { 'x-user-uid': user.uid },
           credentials: 'include',
         });
@@ -208,7 +207,6 @@ function DoctorChat({ user, role, handleLogout }) {
         const sortedMessages = validatedMessages.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
         setMessages(sortedMessages);
 
-        // Initialize patient message timestamps from fetched messages
         const patientMessages = sortedMessages.filter((msg) => msg.sender === 'patient');
         if (patientMessages.length > 0) {
           setPatientMessageTimestamps((prev) => ({
@@ -238,7 +236,8 @@ function DoctorChat({ user, role, handleLogout }) {
 
     const fetchMissedDoseAlerts = async () => {
       try {
-        const response = await fetch('http://localhost:5005/admin_notifications', {
+        const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
+        const response = await fetch(`${apiUrl}/admin_notifications`, {
           headers: { 'x-user-uid': user.uid },
           credentials: 'include',
         });
@@ -281,7 +280,6 @@ function DoctorChat({ user, role, handleLogout }) {
     const timestamps = patientMessageTimestamps[selectedPatientId];
     const now = new Date();
 
-    // If no patient messages exist, check if within 24 hours of assignment
     if (!timestamps || !timestamps.firstMessageTime) {
       const hoursSinceAssignment = (now - new Date(patientAssignment.timestamp)) / (1000 * 60 * 60);
       if (hoursSinceAssignment <= 24) {
@@ -292,7 +290,6 @@ function DoctorChat({ user, role, handleLogout }) {
       return;
     }
 
-    // Check time since first and last patient messages
     const hoursSinceFirstMessage = (now - new Date(timestamps.firstMessageTime)) / (1000 * 60 * 60);
     const hoursSinceLastMessage = (now - new Date(timestamps.lastMessageTime)) / (1000 * 60 * 60);
 
@@ -330,7 +327,8 @@ function DoctorChat({ user, role, handleLogout }) {
           patientId: selectedPatientId,
         };
         try {
-          const response = await fetch(`http://localhost:5005/chats/${selectedPatientId}/${doctorId}`, {
+          const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
+          const response = await fetch(`${apiUrl}/chats/${selectedPatientId}/${doctorId}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
             body: JSON.stringify(message),
@@ -443,7 +441,8 @@ function DoctorChat({ user, role, handleLogout }) {
         };
 
         try {
-          const response = await fetch(`http://localhost:5005/chats/${selectedPatientId}/${doctorId}`, {
+          const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
+          const response = await fetch(`${apiUrl}/chats/${selectedPatientId}/${doctorId}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
             body: JSON.stringify(message),
@@ -508,7 +507,8 @@ function DoctorChat({ user, role, handleLogout }) {
         patientId: selectedPatientId,
       };
 
-      const response = await fetch(`http://localhost:5005/chats/${selectedPatientId}/${doctorId}`, {
+      const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
+      const response = await fetch(`${apiUrl}/chats/${selectedPatientId}/${doctorId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
         body: JSON.stringify(message),
@@ -577,8 +577,9 @@ function DoctorChat({ user, role, handleLogout }) {
       };
 
       try {
+        const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
         // Send message to chat
-        const chatResponse = await fetch(`http://localhost:5005/chats/${selectedPatientId}/${doctorId}`, {
+        const chatResponse = await fetch(`${apiUrl}/chats/${selectedPatientId}/${doctorId}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
           body: JSON.stringify(message),
@@ -594,7 +595,7 @@ function DoctorChat({ user, role, handleLogout }) {
         });
 
         // Update patient record
-        await fetch(`http://localhost:5005/patients/${selectedPatientId}`, {
+        await fetch(`${apiUrl}/patients/${selectedPatientId}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
           body: JSON.stringify({
@@ -610,7 +611,7 @@ function DoctorChat({ user, role, handleLogout }) {
         const disease = actionType === 'Prescription' ? messages
           .filter((msg) => msg.sender === 'doctor' && msg.diagnosis)
           .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0]?.diagnosis : diagnosis;
-        await fetch('http://localhost:5005/admin_notifications', {
+        await fetch(`${apiUrl}/admin_notifications`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
           body: JSON.stringify({
@@ -669,6 +670,17 @@ function DoctorChat({ user, role, handleLogout }) {
     );
   }, []);
 
+  // Handle Logout with Debugging
+  const onLogout = () => {
+    console.log('DoctorChat.js: Logout button clicked, calling handleLogout');
+    if (handleLogout) {
+      handleLogout();
+    } else {
+      console.error('DoctorChat.js: handleLogout function is not defined');
+    }
+    navigate('/login'); // Fallback navigation
+  };
+
   return (
     <div className="doctor-chat-container">
       <div className="chat-header">
@@ -680,7 +692,7 @@ function DoctorChat({ user, role, handleLogout }) {
           <button onClick={() => setDoctorProfile(doctorProfile)} className="profile-button">
             Profile
           </button>
-          <button onClick={handleLogout} className="logout-button">
+          <button onClick={onLogout} className="logout-button">
             Logout
           </button>
         </div>
