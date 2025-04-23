@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { auth as firebaseAuth, db } from './services/firebase.js';
 import Login from './components/Login.js';
@@ -13,11 +13,10 @@ import './components/patient.css';
 
 // Custom 404 Component
 const NotFound = () => {
-  const location = useLocation();
   return (
     <div className="not-found-container">
       <h2>404 - Page Not Found</h2>
-      <p>The requested path <code>{location.pathname}</code> does not exist.</p>
+      <p>The requested path does not exist.</p>
       <p>Go to <a href="/login">Login</a></p>
       <style>{`
         .not-found-container {
@@ -64,7 +63,6 @@ function App() {
   const [patientId, setPatientId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const navigate = useNavigate();
 
   useEffect(() => {
     const unsubscribeAuth = firebaseAuth.onAuthStateChanged(async (authUser) => {
@@ -142,7 +140,6 @@ function App() {
     localStorage.removeItem('userId');
     localStorage.removeItem('patientId');
     setLoading(false);
-    navigate('/login');
   };
 
   const handleLogout = async () => {
@@ -150,6 +147,18 @@ function App() {
       console.log('App.js: Initiating logout');
     }
     try {
+      // Call the server-side logout endpoint
+      const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
+      const response = await fetch(`${apiUrl}/misc/logout`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-user-uid': firebaseUser?.uid || '' },
+        credentials: 'include',
+      });
+
+      if (!response.ok) {
+        throw new Error(`Logout failed: ${response.statusText}`);
+      }
+
       // Sign out from Firebase
       await firebaseAuth.signOut();
       if (process.env.NODE_ENV !== 'production') {
@@ -163,17 +172,9 @@ function App() {
       setPatientId(null);
       localStorage.removeItem('userId');
       localStorage.removeItem('patientId');
-      navigate('/login');
     } catch (err) {
       console.error('App.js: Logout error:', err.message);
       setError(`Failed to log out: ${err.message}`);
-      setFirebaseUser(null);
-      setUser(null);
-      setRole(null);
-      setPatientId(null);
-      localStorage.removeItem('userId');
-      localStorage.removeItem('patientId');
-      navigate('/login');
     }
   };
 
@@ -204,7 +205,7 @@ function App() {
     <div className="app-container">
       {error && (
         <div className="error-message">
-          {error}
+          <span>{error}</span>
           <button onClick={() => setError('')} className="dismiss-error">
             Dismiss
           </button>
@@ -220,6 +221,7 @@ function App() {
               setRole={setRole}
               setPatientId={setPatientId}
               user={user}
+              setError={setError}
             />
           }
         />
@@ -231,6 +233,7 @@ function App() {
               setRole={setRole}
               setPatientId={setPatientId}
               user={user}
+              setError={setError}
             />
           }
         />
@@ -241,7 +244,7 @@ function App() {
           element={
             user && role === 'patient' ? (
               <SelectDoctor
-                firebaseUser={firebaseUser} // Pass Firebase Auth user
+                firebaseUser={firebaseUser}
                 user={user}
                 role={role}
                 patientId={patientId}
@@ -259,6 +262,7 @@ function App() {
               <LanguagePreference
                 user={user}
                 role={role}
+                patientId={patientId}
               />
             ) : (
               <Navigate to="/login" replace />
@@ -368,6 +372,9 @@ function App() {
           z-index: 1000;
           font-size: 0.9rem;
           animation: slideIn 0.3s ease;
+        }
+        .error-message span {
+          flex: 1;
         }
         .dismiss-error {
           padding: 6px 12px;
