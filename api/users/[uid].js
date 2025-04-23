@@ -34,25 +34,50 @@ if (!admin.apps.length) {
 const db = admin.firestore();
 
 export default async function handler(req, res) {
-  console.log('Handler invoked at', new Date().toISOString(), { query: req.query });
-  const { uid } = req.query;
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Authorization, x-user-uid, Content-Type, Accept');
+  res.setHeader('Content-Type', 'application/json');
 
-  if (!uid || typeof uid !== 'string') {
-    console.warn('Missing or invalid UID', { uid });
-    return res.status(400).json({ error: 'UID is required and must be a string' });
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
   }
 
+  console.log('Handler invoked at', new Date().toISOString(), { query: req.query, headers: req.headers });
+
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    console.warn('Missing or invalid Authorization header', { authHeader });
+    return res.status(401).json({ error: 'Unauthorized: Missing or invalid token' });
+  }
+
+  const idToken = authHeader.split('Bearer ')[1];
   try {
+    const decodedToken = await admin.auth().verifyIdToken(idToken);
+    console.log('Token verified, UID:', decodedToken.uid);
+
+    const { uid } = req.query;
+    if (!uid || typeof uid !== 'string') {
+      console.warn('Missing or invalid UID', { uid });
+      return res.status(400).json({ error: 'UID is required and must be a string' });
+    }
+
+    if (uid !== decodedToken.uid) {
+      console.warn('UID mismatch', { queryUid: uid, tokenUid: decodedToken.uid });
+      return res.status(403).json({ error: 'Forbidden: UID does not match token' });
+    }
+
     const userDoc = await db.collection('users').doc(uid).get();
     if (!userDoc.exists) {
       console.warn('User not found', { uid });
       return res.status(404).json({ error: 'User not found' });
     }
+
     const data = userDoc.data();
     console.log('User data retrieved:', { uid, data });
     return res.status(200).json(data);
   } catch (error) {
-    console.error('Server error:', error.message);
-    return res.status(500).json({ error: 'Internal server error', details: error.message });
+    console.error('Token verification failed:', error.message);
+    return res.status(401).json({ error: 'Unauthorized: Invalid token', details: error.message });
   }
 }
