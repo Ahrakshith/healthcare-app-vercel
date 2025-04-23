@@ -168,26 +168,47 @@ function DoctorChat({ user, role, handleLogout }) {
           headers: { 'x-user-uid': user.uid },
           credentials: 'include',
         });
-        if (!response.ok && response.status !== 404) {
-          throw new Error(`Failed to fetch messages: ${response.statusText}`);
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`Failed to fetch messages: ${response.status} - ${errorText}`);
         }
-        const data = await response.json();
+
+        let data;
+        try {
+          data = await response.json();
+        } catch (jsonError) {
+          throw new Error(`Failed to parse response as JSON: ${jsonError.message}`);
+        }
+
         const fetchedMessages = data.messages || [];
 
         const validatedMessages = await Promise.all(
           fetchedMessages.map(async (msg) => {
             const updatedMsg = { ...msg };
             if (msg.audioUrl) {
-              const response = await fetch(msg.audioUrl, { method: 'HEAD' });
-              if (!response.ok) updatedMsg.audioUrl = null;
+              try {
+                const response = await fetch(msg.audioUrl, { method: 'HEAD' });
+                if (!response.ok) updatedMsg.audioUrl = null;
+              } catch {
+                updatedMsg.audioUrl = null;
+              }
             }
             if (msg.audioUrlEn) {
-              const response = await fetch(msg.audioUrlEn, { method: 'HEAD' });
-              if (!response.ok) updatedMsg.audioUrlEn = null;
+              try {
+                const response = await fetch(msg.audioUrlEn, { method: 'HEAD' });
+                if (!response.ok) updatedMsg.audioUrlEn = null;
+              } catch {
+                updatedMsg.audioUrlEn = null;
+              }
             }
             if (msg.audioUrlKn) {
-              const response = await fetch(msg.audioUrlKn, { method: 'HEAD' });
-              if (!response.ok) updatedMsg.audioUrlKn = null;
+              try {
+                const response = await fetch(msg.audioUrlKn, { method: 'HEAD' });
+                if (!response.ok) updatedMsg.audioUrlKn = null;
+              } catch {
+                updatedMsg.audioUrlKn = null;
+              }
             }
             return updatedMsg;
           })
@@ -226,14 +247,30 @@ function DoctorChat({ user, role, handleLogout }) {
     const fetchMissedDoseAlerts = async () => {
       try {
         const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
-        const response = await fetch(`${apiUrl}/admin_notifications`, {
+        const response = await fetch(`${apiUrl}/admin/admin_notifications`, {
           headers: { 'x-user-uid': user.uid },
           credentials: 'include',
         });
-        if (!response.ok) throw new Error('Failed to fetch alerts');
-        const notifications = await response.json();
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`Failed to fetch alerts: ${response.status} - ${errorText}`);
+        }
+
+        let notifications;
+        try {
+          notifications = await response.json();
+        } catch (jsonError) {
+          throw new Error(`Failed to parse alerts response as JSON: ${jsonError.message}`);
+        }
+
+        // Ensure the response has the expected structure
+        if (!Array.isArray(notifications.notifications)) {
+          throw new Error('Invalid response format: Expected "notifications" array');
+        }
+
         setMissedDoseAlerts(
-          notifications
+          notifications.notifications
             .filter((n) => n.patientId === selectedPatientId)
             .map((n) => ({ ...n, id: n.id || Date.now().toString() }))
         );
@@ -590,7 +627,7 @@ function DoctorChat({ user, role, handleLogout }) {
         const disease = actionType === 'Prescription' ? messages
           .filter((msg) => msg.sender === 'doctor' && msg.diagnosis)
           .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0]?.diagnosis : diagnosis;
-        await fetch(`${apiUrl}/admin_notifications`, {
+        await fetch(`${apiUrl}/admin/admin_notifications`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
           body: JSON.stringify({
@@ -639,6 +676,11 @@ function DoctorChat({ user, role, handleLogout }) {
     setMissedDoseAlerts((prev) => prev.filter((alert) => alert.id !== alertId));
   }, []);
 
+  const dismissError = useCallback(() => {
+    setError('');
+    setFailedUpload(null);
+  }, []);
+
   const isValidPrescription = useCallback((prescription) => {
     return (
       prescription &&
@@ -649,11 +691,26 @@ function DoctorChat({ user, role, handleLogout }) {
     );
   }, []);
 
-  const onLogout = () => {
-    if (handleLogout) {
-      handleLogout();
+  const onLogout = async () => {
+    try {
+      const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
+      const response = await fetch(`${apiUrl}/misc/logout`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
+        credentials: 'include',
+      });
+
+      if (!response.ok) {
+        throw new Error(`Logout failed: ${response.statusText}`);
+      }
+
+      if (handleLogout) {
+        handleLogout();
+      }
+      navigate('/login');
+    } catch (err) {
+      setError(`Failed to log out: ${err.message}`);
     }
-    navigate('/login');
   };
 
   return (
@@ -924,7 +981,7 @@ function DoctorChat({ user, role, handleLogout }) {
                 </div>
                 {error && (
                   <div className="error-message">
-                    {error}
+                    <span>{error}</span>
                     {failedUpload && (
                       <button
                         onClick={() => retryUpload(failedUpload.audioBlob, failedUpload.language)}
@@ -933,6 +990,9 @@ function DoctorChat({ user, role, handleLogout }) {
                         Retry Upload
                       </button>
                     )}
+                    <button onClick={dismissError} className="dismiss-error-button">
+                      Dismiss
+                    </button>
                   </div>
                 )}
                 <div className="controls">
@@ -1373,9 +1433,7 @@ function DoctorChat({ user, role, handleLogout }) {
           border-radius: 15px;
           padding: 20px;
           margin-bottom: 20px;
-          border: 1px solid rgba(255, 255, 255,
-
- 0.1);
+          border: 1px solid rgba(255, 255, 255, 0.1);
         }
 
         .missed-dose-alerts h3 {
@@ -1595,6 +1653,11 @@ function DoctorChat({ user, role, handleLogout }) {
           flex-wrap: wrap;
         }
 
+        .error-message span {
+          flex: 1;
+          text-align: center;
+        }
+
         .retry-button {
           padding: 6px 12px;
           background: #F39C12;
@@ -1608,6 +1671,22 @@ function DoctorChat({ user, role, handleLogout }) {
 
         .retry-button:hover {
           background: #E67E22;
+          transform: scale(1.05);
+        }
+
+        .dismiss-error-button {
+          padding: 6px 12px;
+          background: #6E48AA;
+          color: #FFFFFF;
+          border: none;
+          border-radius: 20px;
+          font-size: 0.9rem;
+          cursor: pointer;
+          transition: background 0.3s ease, transform 0.3s ease;
+        }
+
+        .dismiss-error-button:hover {
+          background: #5A3E8B;
           transform: scale(1.05);
         }
 
