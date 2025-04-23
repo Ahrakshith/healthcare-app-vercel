@@ -1,4 +1,3 @@
-// src/components/PatientChat.js
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import io from 'socket.io-client';
@@ -24,12 +23,14 @@ function PatientChat({ user, role, patientId, handleLogout }) {
   const [reminders, setReminders] = useState([]);
   const [adherenceRate, setAdherenceRate] = useState(0);
   const [missedDoses, setMissedDoses] = useState(0);
+  const [missedDoseAlerts, setMissedDoseAlerts] = useState([]);
   const audioChunksRef = useRef([]);
   const audioRef = useRef(new Audio());
   const streamRef = useRef(null);
   const socketRef = useRef(null);
   const messagesEndRef = useRef(null);
   const reminderTimeoutsRef = useRef(new Map());
+  const errorTimeoutRef = useRef(null);
   const navigate = useNavigate();
 
   const effectiveUserId = user?.uid;
@@ -42,6 +43,27 @@ function PatientChat({ user, role, patientId, handleLogout }) {
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  // Auto-dismiss alerts after 3 seconds
+  useEffect(() => {
+    if (error) {
+      errorTimeoutRef.current = setTimeout(() => {
+        setError('');
+        setFailedUpload(null);
+      }, 3000);
+    }
+    return () => clearTimeout(errorTimeoutRef.current);
+  }, [error]);
+
+  // Auto-dismiss missed dose alerts after 3 seconds
+  useEffect(() => {
+    const timers = missedDoseAlerts.map((alert) =>
+      setTimeout(() => {
+        setMissedDoseAlerts((prev) => prev.filter((a) => a.id !== alert.id));
+      }, 3000)
+    );
+    return () => timers.forEach(clearTimeout);
+  }, [missedDoseAlerts]);
 
   useEffect(() => {
     if (!effectiveUserId || !effectivePatientId || !doctorId || role !== 'patient') {
@@ -111,18 +133,27 @@ function PatientChat({ user, role, patientId, handleLogout }) {
     fetchReminders();
 
     return () => {
-      if (socketRef.current) socketRef.current.disconnect();
+      if (socketRef.current) {
+        socketRef.current.off('connect');
+        socketRef.current.off('connect_error');
+        socketRef.current.off('error');
+        socketRef.current.off('newMessage');
+        socketRef.current.off('missedDoseAlert');
+        socketRef.current.disconnect();
+        console.log('PatientChat.js: WebSocket disconnected');
+      }
       reminderTimeoutsRef.current.forEach((timeoutId) => clearTimeout(timeoutId));
       reminderTimeoutsRef.current.clear();
     };
   }, [effectiveUserId, effectivePatientId, doctorId, role, navigate]);
 
   useEffect(() => {
-    if (messages.some(msg => msg.sender === 'doctor' && msg.prescription)) {
+    if (messages.some((msg) => msg.sender === 'doctor' && msg.prescription)) {
       const latestPrescription = messages
-        .filter(msg => msg.sender === 'doctor' && msg.prescription)
+        .filter((msg) => msg.sender === 'doctor' && msg.prescription)
         .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0]?.prescription;
       if (latestPrescription) {
+        console.log('Processing prescription:', latestPrescription, typeof latestPrescription);
         setupMedicationSchedule(latestPrescription);
       }
     }
@@ -131,29 +162,49 @@ function PatientChat({ user, role, patientId, handleLogout }) {
   useEffect(() => {
     if (languagePreference === null) return;
 
-    socketRef.current = io('http://localhost:5005', {
-      transports: ['websocket'],
+    socketRef.current = io(process.env.REACT_APP_WEBSOCKET_URL || 'http://localhost:5005', {
+      auth: { uid: effectiveUserId },
+      transports: ['websocket', 'polling'],
       reconnection: true,
       reconnectionAttempts: 5,
       reconnectionDelay: 1000,
+      withCredentials: true, // Ensure cookies are sent in incognito
     });
 
     socketRef.current.on('connect', () => {
-      const room = `${effectivePatientId}-${doctorId}`;
-      socketRef.current.emit('joinRoom', room);
+      console.log('PatientChat.js: WebSocket connected, socket ID:', socketRef.current.id);
+      socketRef.current.emit('joinRoom', { patientId: effectivePatientId, doctorId });
+      console.log(`PatientChat.js: Emitted joinRoom for patientId=${effectivePatientId}, doctorId=${doctorId}`);
+    });
+
+    socketRef.current.on('connect_error', (error) => {
+      console.error('PatientChat.js: WebSocket connection error:', error.message);
+      setError(`WebSocket connection failed: ${error.message}`);
+    });
+
+    socketRef.current.on('error', (error) => {
+      console.error('PatientChat.js: WebSocket error:', error.message, error.receivedData || '');
+      setError(`WebSocket error: ${error.message}`);
     });
 
     socketRef.current.on('newMessage', (message) => {
+      console.log('PatientChat.js: Received new message:', { ...message, audioUrl: message.audioUrl ? '[Audio URL]' : null });
       setMessages((prev) => {
-        if (!prev.some((msg) => msg.timestamp === message.timestamp)) {
+        // Enhanced deduplication: Check timestamp and text
+        if (!prev.some((msg) => msg.timestamp === message.timestamp && (!msg.text || msg.text === message.text))) {
           return [...prev, message].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
         }
+        console.log('PatientChat.js: Skipped duplicate message:', message.timestamp, message.text);
         return prev;
       });
 
       if (message.sender === 'doctor' && (message.diagnosis || message.prescription)) {
         validatePrescription(message.diagnosis, message.prescription, message.timestamp);
       }
+    });
+
+    socketRef.current.on('missedDoseAlert', (alert) => {
+      setMissedDoseAlerts((prev) => [...prev, { ...alert, id: Date.now().toString() }]);
     });
 
     const fetchMessages = async () => {
@@ -198,14 +249,22 @@ function PatientChat({ user, role, patientId, handleLogout }) {
           validatePrescription(latestDiagnosis, latestPrescription, 'latest');
         }
       } catch (err) {
-        setError('Error fetching messages: ' + err.message);
+        setError(`Error fetching messages: ${err.message}`);
       }
     };
 
     fetchMessages();
 
     return () => {
-      if (socketRef.current) socketRef.current.disconnect();
+      if (socketRef.current) {
+        socketRef.current.off('connect');
+        socketRef.current.off('connect_error');
+        socketRef.current.off('error');
+        socketRef.current.off('newMessage');
+        socketRef.current.off('missedDoseAlert');
+        socketRef.current.disconnect();
+        console.log('PatientChat.js: WebSocket disconnected');
+      }
     };
   }, [effectiveUserId, effectivePatientId, doctorId, languagePreference]);
 
@@ -221,16 +280,54 @@ function PatientChat({ user, role, patientId, handleLogout }) {
   };
 
   const setupMedicationSchedule = async (prescription) => {
-    const regex = /(.+?),\s*(\d+mg),\s*(\d{1,2}[:.]\d{2}\s*(?:AM|PM))\s*and\s*(\d{1,2}[:.]\d{2}\s*(?:AM|PM)),\s*(\d+)\s*days?/i;
-    const match = prescription.match(regex);
+    console.log('setupMedicationSchedule: Received prescription:', prescription, typeof prescription);
 
-    if (!match) {
-      setError('Invalid prescription format. Expected: "Medicine, dosage, time1 and time2, duration days"');
+    if (!prescription) {
+      setError('Prescription is missing or undefined.');
+      console.error('setupMedicationSchedule: Prescription is undefined or null');
       return;
     }
 
-    const [, medicine, dosage, time1Str, time2Str, durationDays] = match;
+    let medicine, dosage, time1Str, time2Str, durationDays;
+
+    // Handle prescription as object
+    if (typeof prescription === 'object') {
+      medicine = prescription.medicine;
+      dosage = prescription.dosage;
+      const frequency = prescription.frequency || '';
+      durationDays = prescription.duration || '5';
+      const times = frequency.split(' and ').map((t) => t.trim());
+      time1Str = times[0] || '8:00 AM';
+      time2Str = times[1] || '8:00 PM';
+
+      if (!medicine || !dosage || !time1Str || !time2Str || !durationDays) {
+        setError('Invalid prescription object format. Missing required fields.');
+        console.error('setupMedicationSchedule: Invalid prescription object:', prescription);
+        return;
+      }
+    } else if (typeof prescription === 'string') {
+      const regex = /(.+?),\s*(\d+mg),\s*(\d{1,2}[:.]\d{2}\s*(?:AM|PM))\s*and\s*(\d{1,2}[:.]\d{2}\s*(?:AM|PM)),\s*(\d+)\s*days?/i;
+      const match = prescription.match(regex);
+
+      if (!match) {
+        setError('Invalid prescription string format. Expected: "Medicine, dosage, time1 and time2, duration days"');
+        console.error('setupMedicationSchedule: Invalid prescription string:', prescription);
+        return;
+      }
+
+      [, medicine, dosage, time1Str, time2Str, durationDays] = match;
+    } else {
+      setError('Unsupported prescription format. Must be a string or object.');
+      console.error('setupMedicationSchedule: Unsupported prescription type:', typeof prescription);
+      return;
+    }
+
     const days = parseInt(durationDays, 10);
+    if (isNaN(days) || days <= 0) {
+      setError('Invalid duration in prescription.');
+      console.error('setupMedicationSchedule: Invalid duration:', durationDays);
+      return;
+    }
 
     const parseTime = (timeStr) => {
       const cleanTimeStr = timeStr.replace('.', ':');
@@ -262,10 +359,16 @@ function PatientChat({ user, role, patientId, handleLogout }) {
           status: 'pending',
           snoozeCount: 0,
           createdAt: new Date().toISOString(),
+          patientId: effectivePatientId,
         };
-        const remindersRef = collection(db, `patients/${effectivePatientId}/reminders`);
-        const docRef = await addDoc(remindersRef, reminder1);
-        newReminders.push({ id: docRef.id, ...reminder1 });
+        try {
+          const remindersRef = collection(db, `patients/${effectivePatientId}/reminders`);
+          const docRef = await addDoc(remindersRef, reminder1);
+          newReminders.push({ id: docRef.id, ...reminder1 });
+        } catch (err) {
+          console.error('setupMedicationSchedule: Failed to add reminder1:', err);
+          setError(`Failed to add reminder: ${err.message}`);
+        }
       }
 
       const scheduledDate2 = new Date(currentDate);
@@ -278,10 +381,16 @@ function PatientChat({ user, role, patientId, handleLogout }) {
           status: 'pending',
           snoozeCount: 0,
           createdAt: new Date().toISOString(),
+          patientId: effectivePatientId,
         };
-        const remindersRef = collection(db, `patients/${effectivePatientId}/reminders`);
-        const docRef = await addDoc(remindersRef, reminder2);
-        newReminders.push({ id: docRef.id, ...reminder2 });
+        try {
+          const remindersRef = collection(db, `patients/${effectivePatientId}/reminders`);
+          const docRef = await addDoc(remindersRef, reminder2);
+          newReminders.push({ id: docRef.id, ...reminder2 });
+        } catch (err) {
+          console.error('setupMedicationSchedule: Failed to add reminder2:', err);
+          setError(`Failed to add reminder: ${err.message}`);
+        }
       }
 
       currentDate.setDate(currentDate.getDate() + 1);
@@ -289,6 +398,7 @@ function PatientChat({ user, role, patientId, handleLogout }) {
 
     setReminders((prev) => [...prev, ...newReminders]);
     scheduleReminders(newReminders);
+    console.log('setupMedicationSchedule: Added reminders:', newReminders);
   };
 
   const scheduleReminders = (remindersToSchedule) => {
@@ -362,7 +472,10 @@ function PatientChat({ user, role, patientId, handleLogout }) {
         'Missed Doses Alert',
         `Patient has missed 3 consecutive doses.`
       );
-      setError('Alert: You have missed 3 consecutive doses. Notified your doctor.');
+      setMissedDoseAlerts((prev) => [
+        ...prev,
+        { id: Date.now().toString(), message: 'Alert: You have missed 3 consecutive doses. Notified your doctor.' },
+      ]);
     } catch (err) {
       setError(`Failed to send missed dose alert: ${err.message}`);
     }
@@ -579,7 +692,13 @@ function PatientChat({ user, role, patientId, handleLogout }) {
           userId: effectivePatientId,
         };
 
-        setMessages((prev) => [...prev, newMessage].sort((a, b) => a.timestamp.localeCompare(b.timestamp)));
+        setMessages((prev) => {
+          if (!prev.some((msg) => msg.timestamp === newMessage.timestamp && msg.text === newMessage.text)) {
+            return [...prev, newMessage].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+          }
+          console.log('PatientChat.js: Skipped duplicate message:', newMessage.timestamp, newMessage.text);
+          return prev;
+        });
 
         try {
           const response = await fetch(`http://localhost:5005/chats/${effectivePatientId}/${doctorId}`, {
@@ -617,43 +736,107 @@ function PatientChat({ user, role, patientId, handleLogout }) {
   };
 
   const handleImageUpload = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
+  const file = e.target.files[0];
+  if (!file) {
+    setError('No file selected. Please choose an image.');
+    return;
+  }
 
-    const formData = new FormData();
-    formData.append('image', file);
-    formData.append('uid', effectiveUserId);
+  if (!effectiveUserId || !effectivePatientId || !doctorId) {
+    setError('Authentication or patient/doctor ID missing. Please log in again.');
+    navigate('/login');
+    return;
+  }
 
-    try {
-      const response = await fetch(`http://localhost:5005/uploadImage/${effectivePatientId}`, {
-        method: 'POST',
-        body: formData,
-        headers: {
-          'x-user-uid': effectiveUserId,
-        },
-        credentials: 'include',
-      });
+  // Log file details for debugging
+  console.log('Selected file:', {
+    name: file.name,
+    type: file.type,
+    size: file.size,
+  });
 
-      if (!response.ok) {
-        if (response.status === 503) {
-          setError('Image upload to cloud failed. Saved locally on server. Please try again later.');
-          return;
-        }
-        throw new Error('Failed to upload image');
+  // Validate file type and size
+  const validTypes = ['image/jpeg', 'image/png', 'image/gif'];
+  if (!validTypes.includes(file.type)) {
+    setError('Invalid file type. Please upload a JPEG, PNG, or GIF image.');
+    setFailedUpload({ file, type: 'image' });
+    return;
+  }
+  const maxSize = 5 * 1024 * 1024; // 5MB
+  if (file.size > maxSize) {
+    setError('File too large. Maximum size is 5MB.');
+    setFailedUpload({ file, type: 'image' });
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append('image', file);
+  formData.append('uid', effectiveUserId);
+  formData.append('patientId', effectivePatientId);
+
+  try {
+    const response = await fetch(`http://localhost:5005/uploadImage/${effectivePatientId}`, {
+      method: 'POST',
+      body: formData,
+      headers: {
+        'x-user-uid': effectiveUserId,
+      },
+      credentials: 'include',
+    });
+
+    if (!response.ok) {
+      let errorMessage = `Image upload failed: ${response.statusText}`;
+      if (response.status === 503) {
+        errorMessage = 'Image upload to cloud failed. Saved locally on server. Please try again later.';
+      } else if (response.status === 400) {
+        errorMessage = 'Bad request. Please check the file and try again.';
+      } else if (response.status === 401) {
+        errorMessage = 'Unauthorized. Please log in again.';
+        navigate('/login');
       }
+      throw new Error(errorMessage);
+    }
 
-      const { imageUrl } = await response.json();
-      const imageMessage = {
-        sender: 'patient',
-        imageUrl,
-        timestamp: new Date().toISOString(),
-        doctorId,
-        userId: effectivePatientId,
-      };
+    const { imageUrl } = await response.json();
+    if (!imageUrl) {
+      throw new Error('Image upload succeeded, but no image URL was returned.');
+    }
 
-      setMessages((prev) => [...prev, imageMessage].sort((a, b) => a.timestamp.localeCompare(b.timestamp)));
+    // Verify the image URL is accessible
+    const responseHead = await fetch(imageUrl, { method: 'HEAD' });
+    if (!responseHead.ok) {
+      throw new Error(`Image URL inaccessible: ${imageUrl} (Status: ${responseHead.status})`);
+    }
 
-      await fetch(`http://localhost:5005/chats/${effectivePatientId}/${doctorId}`, {
+    const imageMessage = {
+      sender: 'patient',
+      imageUrl,
+      text: null,
+      translatedText: null,
+      language: 'en',
+      recordingLanguage: null,
+      audioUrl: null,
+      audioUrlEn: null,
+      audioUrlKn: null,
+      timestamp: new Date().toISOString(),
+      doctorId,
+      userId: effectiveUserId,
+      patientId: effectivePatientId,
+      messageType: 'image',
+    };
+
+    // Save to local state
+    setMessages((prev) => {
+      if (!prev.some((msg) => msg.timestamp === imageMessage.timestamp && msg.imageUrl === imageMessage.imageUrl)) {
+        return [...prev, imageMessage].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+      }
+      console.log('PatientChat.js: Skipped duplicate image message:', imageMessage.timestamp);
+      return prev;
+    });
+
+    // Save to server
+    try {
+      const chatResponse = await fetch(`http://localhost:5005/chats/${effectivePatientId}/${doctorId}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -662,12 +845,20 @@ function PatientChat({ user, role, patientId, handleLogout }) {
         body: JSON.stringify(imageMessage),
         credentials: 'include',
       });
+      if (!chatResponse.ok) {
+        throw new Error(`Failed to save image message: ${chatResponse.statusText}`);
+      }
       socketRef.current.emit('newMessage', imageMessage);
     } catch (err) {
-      setError(`Error uploading image: ${err.message}`);
+      setError(`Failed to save image message: ${err.message}`);
+      setMessages((prev) => prev.filter((msg) => msg.timestamp !== imageMessage.timestamp));
+      setFailedUpload({ file, type: 'image' });
     }
-  };
-
+  } catch (err) {
+    setError(err.message);
+    setFailedUpload({ file, type: 'image' });
+  }
+};
   const readAloud = async (audioUrl, lang, fallbackText) => {
     try {
       if (!audioUrl && (!fallbackText || typeof fallbackText !== 'string' || fallbackText.trim() === '')) {
@@ -697,7 +888,13 @@ function PatientChat({ user, role, patientId, handleLogout }) {
       userId: effectivePatientId,
     };
 
-    setMessages((prev) => [...prev, newMessage].sort((a, b) => a.timestamp.localeCompare(b.timestamp)));
+    setMessages((prev) => {
+      if (!prev.some((msg) => msg.timestamp === newMessage.timestamp && msg.text === newMessage.text)) {
+        return [...prev, newMessage].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+      }
+      console.log('PatientChat.js: Skipped duplicate text message:', newMessage.timestamp, newMessage.text);
+      return prev;
+    });
     setTextInput('');
 
     try {
@@ -713,7 +910,7 @@ function PatientChat({ user, role, patientId, handleLogout }) {
       if (!response.ok) throw new Error(`Failed to save text message: ${response.statusText}`);
       socketRef.current.emit('newMessage', newMessage);
     } catch (err) {
-      setError(`Failed to save text message: ${err.message}`);
+      //set藏1st.com/doctorchat.js setError(`Failed to save text message: ${err.message}`);
     }
   };
 
@@ -729,7 +926,13 @@ function PatientChat({ user, role, patientId, handleLogout }) {
       userId: effectivePatientId,
     };
 
-    setMessages((prev) => [...prev, quickMessage].sort((a, b) => a.timestamp.localeCompare(b.timestamp)));
+    setMessages((prev) => {
+      if (!prev.some((msg) => msg.timestamp === quickMessage.timestamp && msg.text === quickMessage.text)) {
+        return [...prev, quickMessage].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+      }
+      console.log('PatientChat.js: Skipped duplicate quick reply:', quickMessage.timestamp, quickMessage.text);
+      return prev;
+    });
 
     try {
       const response = await fetch(`http://localhost:5005/chats/${effectivePatientId}/${doctorId}`, {
@@ -841,6 +1044,15 @@ function PatientChat({ user, role, patientId, handleLogout }) {
               <h3>Medication Reminders</h3>
               <p><strong>Adherence Rate:</strong> {adherenceRate}% (Taken {reminders.filter((r) => r.status === 'taken').length} of {reminders.length})</p>
               <p><strong>Missed Doses:</strong> {missedDoses}</p>
+              {missedDoseAlerts.length > 0 && (
+                <div className="missed-dose-alerts">
+                  {missedDoseAlerts.map((alert) => (
+                    <div key={alert.id} className="alert-item">
+                      <p>{alert.message}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
               {reminders.length > 0 ? (
                 <div className="reminders-table">
                   <div className="table-header">
@@ -892,12 +1104,21 @@ function PatientChat({ user, role, patientId, handleLogout }) {
           {activeMenuOption === 'recommendations' && (
             <div className="recommendations-section">
               <h3>Doctor's Recommendations</h3>
-              {messages.filter(msg => msg.sender === 'doctor' && (msg.diagnosis || msg.prescription)).length > 0 ? (
+              {missedDoseAlerts.length > 0 && (
+                <div className="missed-dose-alerts">
+                  {missedDoseAlerts.map((alert) => (
+                    <div key={alert.id} className="alert-item">
+                      <p>{alert.message}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {messages.filter((msg) => msg.sender === 'doctor' && (msg.diagnosis || msg.prescription)).length > 0 ? (
                 messages
-                  .filter(msg => msg.sender === 'doctor' && (msg.diagnosis || msg.prescription))
+                  .filter((msg) => msg.sender === 'doctor' && (msg.diagnosis || msg.prescription))
                   .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
                   .map((msg, index) => (
-                    <div key={index}>
+                    <div key={`${msg.timestamp}-${index}`}>
                       {msg.diagnosis && (
                         <div className="recommendation-item">
                           <strong>Diagnosis:</strong>{' '}
@@ -957,10 +1178,19 @@ function PatientChat({ user, role, patientId, handleLogout }) {
           )}
           {activeMenuOption === null && (
             <div className="messages-container">
+              {missedDoseAlerts.length > 0 && (
+                <div className="missed-dose-alerts">
+                  {missedDoseAlerts.map((alert) => (
+                    <div key={alert.id} className="alert-item">
+                      <p>{alert.message}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
               {messages.length === 0 && <p className="no-messages">No messages yet.</p>}
               {messages.map((msg, index) => (
                 <div
-                  key={index}
+                  key={`${msg.timestamp}-${index}`}
                   className={`message ${msg.sender === 'patient' ? 'patient-message' : 'doctor-message'}`}
                 >
                   <div className="message-content">
@@ -1125,13 +1355,13 @@ function PatientChat({ user, role, patientId, handleLogout }) {
                   🛑 Stop Recording
                 </button>
                 <label className="image-upload">
-                  📷 Upload Image
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={handleImageUpload}
-                    style={{ display: 'none' }}
-                  />
+                   📷 Upload Image
+                   <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/gif"
+                      onChange={handleImageUpload}
+                      style={{ display: 'none' }}
+                   />
                 </label>
               </div>
               <div className="text-input-container">
@@ -1443,6 +1673,27 @@ function PatientChat({ user, role, patientId, handleLogout }) {
           background: #E67E22;
         }
 
+        .missed-dose-alerts {
+          background: rgba(231, 76, 60, 0.1);
+          border-radius: 10px;
+          padding: 15px;
+          margin-bottom: 20px;
+          border: 1px solid rgba(231, 76, 60, 0.3);
+        }
+
+        .alert-item {
+          background: rgba(231, 76, 60, 0.2);
+          border-radius: 8px;
+          padding: 10px;
+          margin-bottom: 10px;
+          animation: fadeIn 0.5s ease-in-out;
+        }
+
+        .alert-item p {
+          font-size: 1rem;
+          color: #E74C3C;
+        }
+
         .recommendation-item {
           background: rgba(255, 255, 255, 0.1);
           border-radius: 10px;
@@ -1573,7 +1824,7 @@ function PatientChat({ user, role, patientId, handleLogout }) {
           border: 1px solid rgba(255, 255, 255, 0.2);
           border-radius: 20px;
           font-size: 0.9rem;
-          cursor: pointer;
+          cursor: pig;
           transition: background 0.3s ease, transform 0.3s ease;
         }
 
@@ -1633,6 +1884,10 @@ function PatientChat({ user, role, patientId, handleLogout }) {
           align-items: center;
           justify-content: center;
           gap: 10px;
+          background: rgba(231, 76, 60, 0.2);
+          padding: 10px;
+          border-radius: 8px;
+          border: 1px solid rgba(231, 76, 60, 0.3);
         }
 
         .retry-button {
@@ -1827,23 +2082,14 @@ function PatientChat({ user, role, patientId, handleLogout }) {
         }
 
         @keyframes shake {
-          0%,
-          100% {
-            transform: translateX(0);
-          }
-          10%,
-          30%,
-          50%,
-          70%,
-          90% {
-            transform: translateX(-5px);
-          }
-          20%,
-          40%,
-          60%,
-          80% {
-            transform: translateX(5px);
-          }
+          0%, 100% { transform: translateX(0); }
+          10%, 30%, 50%, 70%, 90% { transform: translateX(-5px); }
+          20%, 40%, 60%, 80% { transform: translateX(5px); }
+        }
+
+        @keyframes fadeIn {
+          from { opacity: 0; transform: translateY(-10px); }
+          to { opacity: 1; transform: translateY(0); }
         }
       `}</style>
     </div>
