@@ -28,7 +28,7 @@ const io = new Server(server, {
     allowedHeaders: ['Content-Type', 'Cache-Control', 'x-user-uid', 'authorization'],
     credentials: true,
   },
-  transports: ['websocket'],
+  transports: ['websocket', 'polling'], // Allow both websocket and polling as fallback
   pingTimeout: 60000,
   pingInterval: 15000,
   maxHttpBufferSize: 1e6,
@@ -44,7 +44,7 @@ try {
 }
 
 // Initialize Firebase
-const firebaseServiceAccount = require('/Users/ah1/PycharmProjects/healthcare-app-0/server/fir-project-vercel-firebase-adminsdk-fbsvc-7635e373aa.json');
+const firebaseServiceAccount = require('./healthcare-app-d8997-firebase-adminsdk-fbsvc-303655553e.json');
 admin.initializeApp({
   credential: admin.credential.cert(firebaseServiceAccount),
 });
@@ -79,9 +79,30 @@ try {
   console.error('Failed to initialize Google Cloud services:', error.message);
   process.exit(1);
 }
+// Multer configuration for image uploads
+const uploadImage = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+  fileFilter: (req, file, cb) => {
+    const validTypes = ['image/jpeg', 'image/png', 'image/gif'];
+    if (!validTypes.includes(file.mimetype)) {
+      return cb(new Error('Invalid file type. Only JPEG, PNG, and GIF are allowed.'));
+    }
+    cb(null, true);
+  },
+});
 
-// Multer configuration
-const upload = multer({ storage: multer.memoryStorage() });
+// Multer configuration for audio uploads
+const uploadAudio = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+  fileFilter: (req, file, cb) => {
+    if (!file.mimetype.includes('audio/webm')) {
+      return cb(new Error('Invalid file type. Only audio/webm is allowed.'));
+    }
+    cb(null, true);
+  },
+});
 
 // Configure CORS for Express
 app.use(cors({
@@ -205,15 +226,200 @@ const checkRole = (requiredRole) => {
   };
 };
 
-// Socket.IO authentication middleware
-io.use((socket, next) => {
+// Socket.IO authentication middleware with role validation
+io.use(async (socket, next) => {
   const userId = socket.handshake.auth.uid;
   if (!userId) {
     console.error(`Socket.IO authentication failed for ${socket.id}: No UID provided`);
     return next(new Error('Authentication error: Firebase UID is required'));
   }
-  socket.userId = userId;
-  next();
+
+  // Validate user role and fetch user data
+  try {
+    const userDoc = await db.collection('users').doc(userId).get();
+    if (!userDoc.exists) {
+      console.error(`Socket.IO authentication failed for ${socket.id}: User ${userId} not found`);
+      return next(new Error('Authentication error: User not found'));
+    }
+
+    const userData = userDoc.data();
+    socket.userId = userId;
+    socket.userRole = userData.role;
+
+    // Fetch patientId or doctorId based on role
+    if (userData.role === 'patient') {
+      const patientQuery = await db.collection('patients').where('uid', '==', userId).get();
+      if (!patientQuery.empty) {
+        socket.patientId = patientQuery.docs[0].data().patientId;
+      }
+    } else if (userData.role === 'doctor') {
+      const doctorQuery = await db.collection('doctors').where('uid', '==', userId).get();
+      if (!doctorQuery.empty) {
+        socket.doctorId = doctorQuery.docs[0].data().doctorId;
+      }
+    }
+
+    console.log(`Socket.IO authenticated: ${socket.id}, UID=${userId}, Role=${userData.role}`);
+    next();
+  } catch (error) {
+    console.error(`Socket.IO authentication error for ${socket.id}:`, error.message);
+    return next(new Error('Authentication error: Failed to validate user'));
+  }
+});
+
+// Function to rejoin relevant rooms for a socket
+const rejoinRooms = async (socket) => {
+  const { userId, userRole, patientId, doctorId } = socket;
+  console.log(`Rejoining rooms for socket ${socket.id}, UID=${userId}, Role=${userRole}`);
+
+  try {
+    if (userRole === 'patient' && patientId) {
+      const assignments = await db.collection('doctor_assignments')
+        .where('patientId', '==', patientId)
+        .get();
+      assignments.forEach((doc) => {
+        const { doctorId } = doc.data();
+        const room = `${patientId}-${doctorId}`;
+        socket.join(room);
+        console.log(`Socket ${socket.id} rejoined room ${room} as patient`);
+      });
+    } else if (userRole === 'doctor' && doctorId) {
+      const assignments = await db.collection('doctor_assignments')
+        .where('doctorId', '==', doctorId)
+        .get();
+      assignments.forEach((doc) => {
+        const { patientId } = doc.data();
+        const room = `${patientId}-${doctorId}`;
+        socket.join(room);
+        console.log(`Socket ${socket.id} rejoined room ${room} as doctor`);
+      });
+    }
+  } catch (error) {
+    console.error(`Error rejoining rooms for socket ${socket.id}:`, error.message);
+  }
+};
+
+// Enhanced Socket.IO connection handling
+io.on('connection', (socket) => {
+  console.log(`User connected: ${socket.id}, UID=${socket.userId}, Role=${socket.userRole}, PatientId=${socket.patientId || 'N/A'}, DoctorId=${socket.doctorId || 'N/A'}`);
+
+  // Rejoin rooms on connection
+  rejoinRooms(socket);
+
+  socket.on('joinRoom', (data) => {
+    const { patientId, doctorId } = data;
+    if (!patientId || !doctorId) {
+      console.error(`Invalid joinRoom data from ${socket.id}:`, data);
+      socket.emit('error', { message: 'Invalid patientId or doctorId' });
+      return;
+    }
+
+    // Validate that the user belongs to this room
+    if (
+      (socket.userRole === 'patient' && socket.patientId !== patientId) ||
+      (socket.userRole === 'doctor' && socket.doctorId !== doctorId)
+    ) {
+      console.error(`Unauthorized joinRoom attempt by ${socket.id}: Role=${socket.userRole}, PatientId=${socket.patientId}, DoctorId=${socket.doctorId}`);
+      socket.emit('error', { message: 'Unauthorized to join this room' });
+      return;
+    }
+
+    const room = `${patientId}-${doctorId}`;
+    socket.join(room);
+    console.log(`User ${socket.id} (UID=${socket.userId}, Role=${socket.userRole}) joined room ${room}`);
+
+    // Log current room members for debugging
+    io.in(room).allSockets().then((sockets) => {
+      console.log(`Room ${room} members: ${[...sockets].length} sockets`);
+    });
+  });
+
+  socket.on('newMessage', async (message) => {
+    console.log(`New message from ${socket.id} (UID=${socket.userId}, Role=${socket.userRole}):`, message);
+    const { patientId, doctorId, sender, diagnosis, prescription } = message;
+
+    if (!patientId || !doctorId || !sender) {
+      console.error(`Invalid message data from ${socket.id}: missing patientId, doctorId, or sender`, message);
+      socket.emit('error', { message: 'Invalid message data' });
+      return;
+    }
+
+    // Validate sender role matches the socket's role
+    if (sender !== socket.userRole) {
+      console.error(`Unauthorized message sender from ${socket.id}: Expected role=${sender}, Found role=${socket.userRole}`);
+      socket.emit('error', { message: 'Unauthorized sender role' });
+      return;
+    }
+
+    // Validate that the user belongs to this room
+    if (
+      (socket.userRole === 'patient' && socket.patientId !== patientId) ||
+      (socket.userRole === 'doctor' && socket.doctorId !== doctorId)
+    ) {
+      console.error(`Unauthorized message attempt by ${socket.id}: Role=${socket.userRole}, PatientId=${socket.patientId}, DoctorId=${socket.doctorId}`);
+      socket.emit('error', { message: 'Unauthorized to send message' });
+      return;
+    }
+
+    const room = `${patientId}-${doctorId}`;
+
+    // Verify the assignment exists
+    const assignmentQuery = await db.collection('doctor_assignments')
+      .where('patientId', '==', patientId)
+      .where('doctorId', '==', doctorId)
+      .get();
+    if (assignmentQuery.empty) {
+      console.error(`No assignment found for patient ${patientId} and doctor ${doctorId} from ${socket.id}`);
+      socket.emit('error', { message: 'No chat assignment found' });
+      return;
+    }
+
+    // Save the message to GCS (handled in the POST /chats/:patientId/:doctorId endpoint)
+    const newMessage = {
+      ...message,
+      senderId: socket.userId,
+      timestamp: message.timestamp || new Date().toISOString(),
+    };
+
+    // Log room members before emitting
+    io.in(room).allSockets().then((sockets) => {
+      console.log(`Emitting newMessage to room ${room} with ${[...sockets].length} members`);
+    });
+
+    io.to(room).emit('newMessage', newMessage);
+    console.log(`Emitted newMessage to room ${room}:`, newMessage);
+  });
+
+  socket.on('assignmentUpdated', (assignment) => {
+    console.log(`Assignment updated from ${socket.id}:`, assignment);
+    const room = `${assignment.patientId}-*`;
+    io.to(room).emit('assignmentUpdated', assignment);
+  });
+
+  socket.on('missedDoseAlert', (alert) => {
+    console.log(`Missed dose alert from ${socket.id}:`, alert);
+    const { patientId, doctorId } = alert;
+    const room = `${patientId}-${doctorId}`;
+    io.in(room).allSockets().then((sockets) => {
+      console.log(`Emitting missedDoseAlert to room ${room} with ${[...sockets].length} members`);
+    });
+    io.to(room).emit('missedDoseAlert', alert);
+    console.log(`Emitted missedDoseAlert to room ${room}`);
+  });
+
+  socket.on('disconnect', (reason) => {
+    console.log(`User disconnected: ${socket.id}, UID=${socket.userId}, Role=${socket.userRole}, Reason: ${reason}`);
+  });
+
+  socket.on('error', (error) => {
+    console.error(`Socket.IO error for ${socket.id}:`, error.message);
+  });
+
+  socket.on('connect_error', (error) => {
+    console.error(`Connection error for ${socket.id}:`, error.message);
+    // Attempt to rejoin rooms on reconnect
+    rejoinRooms(socket);
+  });
 });
 
 // Health Check Endpoint
@@ -230,47 +436,6 @@ app.get('/health', (req, res) => {
     timestamp: new Date().toISOString(),
   });
 });
-
-// Enhanced Socket.IO connection handling
-io.on('connection', (socket) => {
-  console.log(`User connected: ${socket.id}, Auth: ${JSON.stringify(socket.handshake.auth)}`);
-
-  socket.on('joinRoom', (data) => {
-    const { patientId, doctorId } = data;
-    const room = `${patientId}-${doctorId}`;
-    socket.join(room);
-    console.log(`User ${socket.id} joined room ${room}`);
-  });
-
-  socket.on('newMessage', (message) => {
-    console.log(`New message from ${socket.id}:`, message);
-    const { patientId, doctorId } = message;
-    if (!patientId || !doctorId) {
-      console.error(`Invalid message data: missing patientId or doctorId`, message);
-      return;
-    }
-    const room = `${patientId}-${doctorId}`;
-    io.to(room).emit('newMessage', { ...message, senderId: socket.userId });
-  });
-
-  socket.on('assignmentUpdated', (assignment) => {
-    console.log(`Assignment updated from ${socket.id}:`, assignment);
-    const room = `${assignment.patientId}-*`;
-    io.to(room).emit('assignmentUpdated', assignment);
-  });
-
-  socket.on('disconnect', (reason) => {
-    console.log(`User disconnected: ${socket.id}, Reason: ${reason}`);
-  });
-
-  socket.on('error', (error) => {
-    console.error(`Socket.IO error for ${socket.id}:`, error.message);
-  });
-
-  socket.on('connect_error', (error) => {
-    console.error(`Connection error for ${socket.id}:`, error.message);
-  });
-}); // Ensure proper closing of io.on block
 
 // Create Doctor (Admin only)
 app.post('/create-doctor', checkRole('admin'), async (req, res) => {
@@ -558,7 +723,7 @@ app.post('/notify-missed-dose', async (req, res) => {
 });
 
 // Audio Upload and Transcription
-app.post('/upload-audio', upload.single('audio'), async (req, res) => {
+app.post('/upload-audio', uploadAudio.single('audio'), async (req, res) => {
   console.log('POST /upload-audio:', { language: req.body.language, uid: req.body.uid });
   try {
     const language = req.body.language || 'en-US';
@@ -900,27 +1065,76 @@ app.get('/doctors-by-specialty/:specialty', async (req, res) => {
   }
 });
 
+// Upload // Upload Image (Patient only)
 // Upload Image (Patient only)
-app.post('/uploadImage/:patientId', checkRole('patient'), upload.single('image'), async (req, res) => {
+app.post('/uploadImage/:patientId', checkRole('patient'), uploadImage.single('image'), async (req, res) => {
   console.log(`POST /uploadImage/${req.params.patientId}`);
   try {
     const { patientId } = req.params;
-    if (!req.file) return res.status(400).json({ error: 'No image file uploaded' });
+    const userId = req.headers['x-user-uid'];
+
+    if (!req.file) {
+      console.log(`No image file uploaded for patient ${patientId}`);
+      return res.status(400).json({ error: 'No image file uploaded' });
+    }
+
+    // Verify patient ID matches the authenticated user
+    if (req.patientId !== patientId) {
+      console.log(`Access denied: UID=${userId} does not match patientId=${patientId}`);
+      return res.status(403).json({ error: 'You are not authorized to upload images for this patient' });
+    }
+
+    // Log file details for debugging
+    console.log('Uploaded file:', {
+      name: req.file.originalname,
+      type: req.file.mimetype,
+      size: req.file.size,
+    });
 
     const fileName = `images/${patientId}/${Date.now()}_${req.file.originalname}`;
     const blob = bucket.file(fileName);
 
-    await uploadWithRetry(blob, req.file.buffer, { contentType: req.file.mimetype });
-    await blob.makePublic();
-    const imageUrl = `https://storage.googleapis.com/${bucketName}/${fileName}`;
-    console.log(`Image uploaded: ${imageUrl}`);
-    res.status(200).json({ imageUrl });
+    try {
+      // Attempt GCS upload
+      await uploadWithRetry(blob, req.file.buffer, { contentType: req.file.mimetype });
+      await blob.makePublic();
+      const imageUrl = `https://storage.googleapis.com/${bucketName}/${fileName}`;
+      console.log(`Image uploaded successfully to GCS: ${imageUrl}`);
+      res.status(200).json({ imageUrl });
+    } catch (uploadError) {
+      console.error(`Failed to upload image to GCS for patient ${patientId}:`, uploadError.message, uploadError.stack);
+
+      // Fallback to local storage
+      const localDir = path.join(__dirname, 'temp_images', patientId);
+      if (!fs.existsSync(localDir)) {
+        fs.mkdirSync(localDir, { recursive: true });
+        console.log(`Created local storage directory: ${localDir}`);
+      }
+      const localPath = path.join(localDir, `${Date.now()}_${req.file.originalname}`);
+      try {
+        fs.writeFileSync(localPath, req.file.buffer);
+        const localUrl = `/temp_images/${patientId}/${path.basename(localPath)}`;
+        console.log(`Image saved locally: ${localPath}, accessible at ${localUrl}`);
+        res.status(200).json({ imageUrl: localUrl, warning: 'Image stored locally due to GCS failure' });
+      } catch (localError) {
+        console.error(`Failed to save image locally for patient ${patientId}:`, localError.message);
+        return res.status(503).json({
+          error: 'Image upload failed both to cloud and local storage. Please try again later.',
+          details: uploadError.message,
+        });
+      }
+    }
   } catch (error) {
-    console.error('Error in /uploadImage:', error);
+    console.error('Error in /uploadImage:', error.message, error.stack);
+    if (error.message.includes('Invalid file type')) {
+      return res.status(400).json({ error: error.message });
+    }
+    if (error.code === 'LIMIT_FILE_SIZE') {
+      return res.status(400).json({ error: 'File too large. Maximum size is 5MB.' });
+    }
     res.status(500).json({ error: 'Failed to upload image', details: error.message });
   }
 });
-
 // Fetch Chat Messages
 app.get('/chats/:patientId/:doctorId', async (req, res) => {
   console.log(`GET /chats/${req.params.patientId}/${req.params.doctorId}`);
@@ -1036,6 +1250,10 @@ app.post('/chats/:patientId/:doctorId', async (req, res) => {
     await uploadWithRetry(file, JSON.stringify(chatData), { contentType: 'application/json' });
 
     const room = `${patientId}-${doctorId}`;
+    // Log room members before emitting
+    io.in(room).allSockets().then((sockets) => {
+      console.log(`Emitting newMessage to room ${room} with ${[...sockets].length} members`);
+    });
     io.to(room).emit('newMessage', newMessage);
     console.log(`Emitted newMessage to room ${room}`);
 
@@ -1123,8 +1341,13 @@ app.post('/patients/:patientId', checkRole('doctor'), async (req, res) => {
       timestamp: new Date().toISOString(),
       doctorId,
       patientId,
+      diagnosis: diagnosis || patientData.diagnosis,
+      prescription: prescription || patientData.prescription,
     };
     const room = `${patientId}-${doctorId}`;
+    io.in(room).allSockets().then((sockets) => {
+      console.log(`Emitting newMessage to room ${room} with ${[...sockets].length} members`);
+    });
     io.to(room).emit('newMessage', message);
     console.log(`Emitted newMessage to room ${room}`);
 
@@ -1215,6 +1438,11 @@ app.post('/admin_notifications', async (req, res) => {
     const notificationFile = bucket.file(`admin_notifications/${notificationId}.json`);
     await uploadWithRetry(notificationFile, JSON.stringify(notificationData), { contentType: 'application/json' });
     console.log(`Notification ${notificationId} saved`);
+
+    const room = `${patientId}-${doctorId}`;
+    io.to(room).emit('missedDoseAlert', notificationData);
+    console.log(`Emitted missedDoseAlert to room ${room}`);
+
     res.status(200).json({ message: 'Notification saved', notificationId });
   } catch (error) {
     console.error('Error in /admin_notifications:', error);
