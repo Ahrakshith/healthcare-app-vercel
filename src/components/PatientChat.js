@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import io from 'socket.io-client';
 import { transcribeAudio, translateText, textToSpeechConvert, detectLanguage } from '../services/speech.js';
@@ -36,15 +36,16 @@ function PatientChat({ user, role, patientId, handleLogout }) {
   const effectiveUserId = user?.uid;
   const effectivePatientId = urlPatientId || patientId;
 
-  const scrollToBottom = () => {
+  // Scroll to the bottom of messages
+  const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
+  }, []);
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages]);
+  }, [messages, scrollToBottom]);
 
-  // Auto-dismiss alerts after 3 seconds
+  // Auto-dismiss error alerts after 3 seconds
   useEffect(() => {
     if (error) {
       errorTimeoutRef.current = setTimeout(() => {
@@ -65,6 +66,7 @@ function PatientChat({ user, role, patientId, handleLogout }) {
     return () => timers.forEach(clearTimeout);
   }, [missedDoseAlerts]);
 
+  // Authentication and initialization
   useEffect(() => {
     if (!effectiveUserId || !effectivePatientId || !doctorId || role !== 'patient') {
       setError('User authentication, role, or patient/doctor ID missing. Please log in as a patient.');
@@ -145,13 +147,13 @@ function PatientChat({ user, role, patientId, handleLogout }) {
       reminderTimeoutsRef.current.forEach((timeoutId) => clearTimeout(timeoutId));
       reminderTimeoutsRef.current.clear();
     };
-  }, [effectiveUserId, effectivePatientId, doctorId, role, navigate]);
+  }, [effectiveUserId, effectivePatientId, doctorId, role, navigate, handleLogout]);
 
+  // Handle new prescriptions
   useEffect(() => {
-    if (messages.some((msg) => msg.sender === 'doctor' && msg.prescription)) {
-      const latestPrescription = messages
-        .filter((msg) => msg.sender === 'doctor' && msg.prescription)
-        .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0]?.prescription;
+    const doctorMessages = messages.filter((msg) => msg.sender === 'doctor' && msg.prescription);
+    if (doctorMessages.length > 0) {
+      const latestPrescription = doctorMessages.sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0]?.prescription;
       if (latestPrescription) {
         console.log('Processing prescription:', latestPrescription, typeof latestPrescription);
         setupMedicationSchedule(latestPrescription);
@@ -159,117 +161,119 @@ function PatientChat({ user, role, patientId, handleLogout }) {
     }
   }, [messages]);
 
+  // WebSocket and message fetching
   useEffect(() => {
-  if (languagePreference === null) return;
+    if (languagePreference === null) return;
 
-  const websocketUrl = process.env.REACT_APP_WEBSOCKET_URL || 'wss://healthcare-app-vercel.vercel.app';
-  socketRef.current = io(websocketUrl, {
-    auth: { uid: effectiveUserId },
-    transports: ['websocket', 'polling'],
-    reconnection: true,
-    reconnectionAttempts: 5,
-    reconnectionDelay: 1000,
-    withCredentials: true, // Ensure cookies are sent in incognito
-  });
-
-  socketRef.current.on('connect', () => {
-    console.log('PatientChat.js: WebSocket connected, socket ID:', socketRef.current.id);
-    socketRef.current.emit('joinRoom', { patientId: effectivePatientId, doctorId });
-    console.log(`PatientChat.js: Emitted joinRoom for patientId=${effectivePatientId}, doctorId=${doctorId}`);
-  });
-
-  socketRef.current.on('connect_error', (error) => {
-    console.error('PatientChat.js: WebSocket connection error:', error.message);
-    setError(`WebSocket connection failed: ${error.message}`);
-  });
-
-  socketRef.current.on('error', (error) => {
-    console.error('PatientChat.js: WebSocket error:', error.message, error.receivedData || '');
-    setError(`WebSocket error: ${error.message}`);
-  });
-
-  socketRef.current.on('newMessage', (message) => {
-    console.log('PatientChat.js: Received new message:', { ...message, audioUrl: message.audioUrl ? '[Audio URL]' : null });
-    setMessages((prev) => {
-      // Enhanced deduplication: Check timestamp and text
-      if (!prev.some((msg) => msg.timestamp === message.timestamp && (!msg.text || msg.text === message.text))) {
-        return [...prev, message].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-      }
-      console.log('PatientChat.js: Skipped duplicate message:', message.timestamp, message.text);
-      return prev;
+    const websocketUrl = process.env.REACT_APP_WEBSOCKET_URL || 'wss://healthcare-app-vercel.vercel.app';
+    socketRef.current = io(websocketUrl, {
+      auth: { uid: effectiveUserId },
+      transports: ['websocket', 'polling'],
+      reconnection: true,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000,
+      withCredentials: true,
     });
 
-    if (message.sender === 'doctor' && (message.diagnosis || message.prescription)) {
-      validatePrescription(message.diagnosis, message.prescription, message.timestamp);
-    }
-  });
+    socketRef.current.on('connect', () => {
+      console.log('PatientChat.js: WebSocket connected, socket ID:', socketRef.current.id);
+      socketRef.current.emit('joinRoom', { patientId: effectivePatientId, doctorId });
+      console.log(`PatientChat.js: Emitted joinRoom for patientId=${effectivePatientId}, doctorId=${doctorId}`);
+    });
 
-  socketRef.current.on('missedDoseAlert', (alert) => {
-    setMissedDoseAlerts((prev) => [...prev, { ...alert, id: Date.now().toString() }]);
-  });
+    socketRef.current.on('connect_error', (error) => {
+      console.error('PatientChat.js: WebSocket connection error:', error.message);
+      setError(`WebSocket connection failed: ${error.message}`);
+    });
 
-  const fetchMessages = async () => {
-    try {
-      const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
-      const response = await fetch(`${apiUrl}/chats/${effectivePatientId}/${doctorId}`, {
-        headers: { 'x-user-uid': effectiveUserId },
-        credentials: 'include',
+    socketRef.current.on('error', (error) => {
+      console.error('PatientChat.js: WebSocket error:', error.message, error.receivedData || '');
+      setError(`WebSocket error: ${error.message}`);
+    });
+
+    socketRef.current.on('newMessage', (message) => {
+      console.log('PatientChat.js: Received new message:', { ...message, audioUrl: message.audioUrl ? '[Audio URL]' : null });
+      setMessages((prev) => {
+        if (!prev.some((msg) => msg.timestamp === message.timestamp && (!msg.text || msg.text === message.text))) {
+          return [...prev, message].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+        }
+        console.log('PatientChat.js: Skipped duplicate message:', message.timestamp, message.text);
+        return prev;
       });
-      if (!response.ok && response.status !== 404) throw new Error(`Failed to fetch messages: ${response.statusText}`);
-      const data = await response.json();
-      const fetchedMessages = data.messages || [];
 
-      const validatedMessages = await Promise.all(
-        fetchedMessages.map(async (msg) => {
-          const updatedMsg = { ...msg };
-          if (msg.audioUrl) {
-            const response = await fetch(msg.audioUrl, { method: 'HEAD' });
-            if (!response.ok) updatedMsg.audioUrl = null;
-          }
-          if (msg.audioUrlEn) {
-            const response = await fetch(msg.audioUrlEn, { method: 'HEAD' });
-            if (!response.ok) updatedMsg.audioUrlEn = null;
-          }
-          if (msg.audioUrlKn) {
-            const response = await fetch(msg.audioUrlKn, { method: 'HEAD' });
-            if (!response.ok) updatedMsg.audioUrlKn = null;
-          }
-          return updatedMsg;
-        })
-      );
-
-      setMessages(validatedMessages.sort((a, b) => a.timestamp.localeCompare(b.timestamp)));
-
-      const doctorMessages = validatedMessages.filter((msg) => msg.sender === 'doctor');
-      const latestDiagnosis = doctorMessages
-        .filter((msg) => msg.diagnosis)
-        .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0]?.diagnosis || '';
-      const latestPrescription = doctorMessages
-        .filter((msg) => msg.prescription)
-        .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0]?.prescription || '';
-      if (latestDiagnosis || latestPrescription) {
-        validatePrescription(latestDiagnosis, latestPrescription, 'latest');
+      if (message.sender === 'doctor' && (message.diagnosis || message.prescription)) {
+        validatePrescription(message.diagnosis, message.prescription, message.timestamp);
       }
-    } catch (err) {
-      setError(`Error fetching messages: ${err.message}`);
-    }
-  };
+    });
 
-  fetchMessages();
+    socketRef.current.on('missedDoseAlert', (alert) => {
+      setMissedDoseAlerts((prev) => [...prev, { ...alert, id: Date.now().toString() }]);
+    });
 
-  return () => {
-    if (socketRef.current) {
-      socketRef.current.off('connect');
-      socketRef.current.off('connect_error');
-      socketRef.current.off('error');
-      socketRef.current.off('newMessage');
-      socketRef.current.off('missedDoseAlert');
-      socketRef.current.disconnect();
-      console.log('PatientChat.js: WebSocket disconnected');
-    }
-  };
-}, [effectiveUserId, effectivePatientId, doctorId, languagePreference]);
-  const normalizeLanguageCode = (code) => {
+    const fetchMessages = async () => {
+      try {
+        const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
+        const response = await fetch(`${apiUrl}/chats/${effectivePatientId}/${doctorId}`, {
+          headers: { 'x-user-uid': effectiveUserId },
+          credentials: 'include',
+        });
+        if (!response.ok && response.status !== 404) throw new Error(`Failed to fetch messages: ${response.statusText}`);
+        const data = await response.json();
+        const fetchedMessages = data.messages || [];
+
+        const validatedMessages = await Promise.all(
+          fetchedMessages.map(async (msg) => {
+            const updatedMsg = { ...msg };
+            if (msg.audioUrl) {
+              const response = await fetch(msg.audioUrl, { method: 'HEAD' });
+              if (!response.ok) updatedMsg.audioUrl = null;
+            }
+            if (msg.audioUrlEn) {
+              const response = await fetch(msg.audioUrlEn, { method: 'HEAD' });
+              if (!response.ok) updatedMsg.audioUrlEn = null;
+            }
+            if (msg.audioUrlKn) {
+              const response = await fetch(msg.audioUrlKn, { method: 'HEAD' });
+              if (!response.ok) updatedMsg.audioUrlKn = null;
+            }
+            return updatedMsg;
+          })
+        );
+
+        setMessages(validatedMessages.sort((a, b) => a.timestamp.localeCompare(b.timestamp)));
+
+        const doctorMessages = validatedMessages.filter((msg) => msg.sender === 'doctor');
+        const latestDiagnosis = doctorMessages
+          .filter((msg) => msg.diagnosis)
+          .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0]?.diagnosis || '';
+        const latestPrescription = doctorMessages
+          .filter((msg) => msg.prescription)
+          .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0]?.prescription || '';
+        if (latestDiagnosis || latestPrescription) {
+          validatePrescription(latestDiagnosis, latestPrescription, 'latest');
+        }
+      } catch (err) {
+        setError(`Error fetching messages: ${err.message}`);
+      }
+    };
+
+    fetchMessages();
+
+    return () => {
+      if (socketRef.current) {
+        socketRef.current.off('connect');
+        socketRef.current.off('connect_error');
+        socketRef.current.off('error');
+        socketRef.current.off('newMessage');
+        socketRef.current.off('missedDoseAlert');
+        socketRef.current.disconnect();
+        console.log('PatientChat.js: WebSocket disconnected');
+      }
+    };
+  }, [effectiveUserId, effectivePatientId, doctorId, languagePreference]);
+
+  // Normalize language codes
+  const normalizeLanguageCode = useCallback((code) => {
     switch (code?.toLowerCase()) {
       case 'kn':
         return 'kn-IN';
@@ -278,8 +282,9 @@ function PatientChat({ user, role, patientId, handleLogout }) {
       default:
         return code || 'en-US';
     }
-  };
+  }, []);
 
+  // Setup medication schedule
   const setupMedicationSchedule = async (prescription) => {
     console.log('setupMedicationSchedule: Received prescription:', prescription, typeof prescription);
 
@@ -291,7 +296,6 @@ function PatientChat({ user, role, patientId, handleLogout }) {
 
     let medicine, dosage, time1Str, time2Str, durationDays;
 
-    // Handle prescription as object
     if (typeof prescription === 'object') {
       medicine = prescription.medicine;
       dosage = prescription.dosage;
@@ -402,7 +406,8 @@ function PatientChat({ user, role, patientId, handleLogout }) {
     console.log('setupMedicationSchedule: Added reminders:', newReminders);
   };
 
-  const scheduleReminders = (remindersToSchedule) => {
+  // Schedule reminders
+  const scheduleReminders = useCallback((remindersToSchedule) => {
     remindersToSchedule.forEach((reminder) => {
       if (reminder.status !== 'pending' && reminder.status !== 'snoozed') return;
 
@@ -434,9 +439,10 @@ function PatientChat({ user, role, patientId, handleLogout }) {
         handleMissedReminder(reminder.id);
       }
     });
-  };
+  }, []);
 
-  const calculateAdherenceRate = (remindersList) => {
+  // Calculate adherence rate
+  const calculateAdherenceRate = useCallback((remindersList) => {
     if (remindersList.length === 0) {
       setAdherenceRate(0);
       return;
@@ -445,9 +451,10 @@ function PatientChat({ user, role, patientId, handleLogout }) {
     const total = remindersList.length;
     const rate = (completed / total) * 100;
     setAdherenceRate(rate.toFixed(2));
-  };
+  }, []);
 
-  const checkMissedDoses = (remindersList) => {
+  // Check missed doses
+  const checkMissedDoses = useCallback((remindersList) => {
     const missed = remindersList.filter((r) => r.status === 'missed').length;
     setMissedDoses(missed);
 
@@ -463,8 +470,9 @@ function PatientChat({ user, role, patientId, handleLogout }) {
         consecutiveMissed = 0;
       }
     }
-  };
+  }, []);
 
+  // Send missed dose alert
   const sendMissedDoseAlert = async () => {
     try {
       await notifyAdmin(
@@ -482,6 +490,7 @@ function PatientChat({ user, role, patientId, handleLogout }) {
     }
   };
 
+  // Confirm reminder
   const handleConfirmReminder = async (id) => {
     try {
       const updatedReminders = reminders.map((reminder) =>
@@ -501,6 +510,7 @@ function PatientChat({ user, role, patientId, handleLogout }) {
     }
   };
 
+  // Snooze reminder
   const handleSnoozeReminder = async (id) => {
     try {
       const reminder = reminders.find((r) => r.id === id);
@@ -531,6 +541,7 @@ function PatientChat({ user, role, patientId, handleLogout }) {
     }
   };
 
+  // Mark reminder as missed
   const handleMissedReminder = async (id) => {
     try {
       const updatedReminders = reminders.map((reminder) =>
@@ -549,6 +560,7 @@ function PatientChat({ user, role, patientId, handleLogout }) {
     }
   };
 
+  // Validate prescription
   const validatePrescription = async (diagnosis, prescription, timestamp) => {
     if (!diagnosis || !prescription) {
       setValidationResult((prev) => ({
@@ -583,6 +595,7 @@ function PatientChat({ user, role, patientId, handleLogout }) {
     }
   };
 
+  // Retry failed audio upload
   const retryUpload = async (audioBlob, language) => {
     try {
       setError('');
@@ -605,6 +618,7 @@ function PatientChat({ user, role, patientId, handleLogout }) {
     }
   };
 
+  // Start audio recording
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -702,7 +716,8 @@ function PatientChat({ user, role, patientId, handleLogout }) {
         });
 
         try {
-          const response = await fetch(`http://localhost:5005/chats/${effectivePatientId}/${doctorId}`, {
+          const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
+          const response = await fetch(`${apiUrl}/chats/${effectivePatientId}/${doctorId}`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -712,7 +727,11 @@ function PatientChat({ user, role, patientId, handleLogout }) {
             credentials: 'include',
           });
           if (!response.ok) throw new Error(`Failed to save message: ${response.statusText}`);
-          socketRef.current.emit('newMessage', newMessage);
+          if (socketRef.current) {
+            socketRef.current.emit('newMessage', newMessage);
+          } else {
+            console.error('PatientChat.js: Socket not initialized');
+          }
           if (languagePreference === 'kn') {
             setTranscriptionLanguage('kn');
           }
@@ -728,139 +747,146 @@ function PatientChat({ user, role, patientId, handleLogout }) {
     }
   };
 
+  // Stop audio recording
   const stopRecording = () => {
     if (mediaRecorder) {
       mediaRecorder.stop();
       setRecording(false);
-      streamRef.current?.getTracks().forEach((track) => track.stop());
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
+      }
+      setMediaRecorder(null);
     }
   };
 
+  // Handle image upload
   const handleImageUpload = async (e) => {
-  const file = e.target.files[0];
-  if (!file) {
-    setError('No file selected. Please choose an image.');
-    return;
-  }
+    const file = e.target.files[0];
+    if (!file) {
+      setError('No file selected. Please choose an image.');
+      return;
+    }
 
-  if (!effectiveUserId || !effectivePatientId || !doctorId) {
-    setError('Authentication or patient/doctor ID missing. Please log in again.');
-    navigate('/login');
-    return;
-  }
+    if (!effectiveUserId || !effectivePatientId || !doctorId) {
+      setError('Authentication or patient/doctor ID missing. Please log in again.');
+      navigate('/login');
+      return;
+    }
 
-  // Log file details for debugging
-  console.log('Selected file:', {
-    name: file.name,
-    type: file.type,
-    size: file.size,
-  });
-
-  // Validate file type and size
-  const validTypes = ['image/jpeg', 'image/png', 'image/gif'];
-  if (!validTypes.includes(file.type)) {
-    setError('Invalid file type. Please upload a JPEG, PNG, or GIF image.');
-    setFailedUpload({ file, type: 'image' });
-    return;
-  }
-  const maxSize = 5 * 1024 * 1024; // 5MB
-  if (file.size > maxSize) {
-    setError('File too large. Maximum size is 5MB.');
-    setFailedUpload({ file, type: 'image' });
-    return;
-  }
-
-  const formData = new FormData();
-  formData.append('image', file);
-  formData.append('uid', effectiveUserId);
-  formData.append('patientId', effectivePatientId);
-
-  try {
-    const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
-    const response = await fetch(`${apiUrl}/uploadImage/${effectivePatientId}`, {
-      method: 'POST',
-      body: formData,
-      headers: {
-        'x-user-uid': effectiveUserId,
-      },
-      credentials: 'include',
+    console.log('Selected file:', {
+      name: file.name,
+      type: file.type,
+      size: file.size,
     });
 
-    if (!response.ok) {
-      let errorMessage = `Image upload failed: ${response.statusText}`;
-      if (response.status === 503) {
-        errorMessage = 'Image upload to cloud failed. Saved locally on server. Please try again later.';
-      } else if (response.status === 400) {
-        errorMessage = 'Bad request. Please check the file and try again.';
-      } else if (response.status === 401) {
-        errorMessage = 'Unauthorized. Please log in again.';
-        navigate('/login');
-      }
-      throw new Error(errorMessage);
+    const validTypes = ['image/jpeg', 'image/png', 'image/gif'];
+    if (!validTypes.includes(file.type)) {
+      setError('Invalid file type. Please upload a JPEG, PNG, or GIF image.');
+      setFailedUpload({ file, type: 'image' });
+      return;
+    }
+    const maxSize = 5 * 1024 * 1024; // 5MB
+    if (file.size > maxSize) {
+      setError('File too large. Maximum size is 5MB.');
+      setFailedUpload({ file, type: 'image' });
+      return;
     }
 
-    const { imageUrl } = await response.json();
-    if (!imageUrl) {
-      throw new Error('Image upload succeeded, but no image URL was returned.');
-    }
+    const formData = new FormData();
+    formData.append('image', file);
+    formData.append('uid', effectiveUserId);
+    formData.append('patientId', effectivePatientId);
 
-    // Verify the image URL is accessible
-    const responseHead = await fetch(imageUrl, { method: 'HEAD' });
-    if (!responseHead.ok) {
-      throw new Error(`Image URL inaccessible: ${imageUrl} (Status: ${responseHead.status})`);
-    }
-
-    const imageMessage = {
-      sender: 'patient',
-      imageUrl,
-      text: null,
-      translatedText: null,
-      language: 'en',
-      recordingLanguage: null,
-      audioUrl: null,
-      audioUrlEn: null,
-      audioUrlKn: null,
-      timestamp: new Date().toISOString(),
-      doctorId,
-      userId: effectiveUserId,
-      patientId: effectivePatientId,
-      messageType: 'image',
-    };
-
-    // Save to local state
-    setMessages((prev) => {
-      if (!prev.some((msg) => msg.timestamp === imageMessage.timestamp && msg.imageUrl === imageMessage.imageUrl)) {
-        return [...prev, imageMessage].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-      }
-      console.log('PatientChat.js: Skipped duplicate image message:', imageMessage.timestamp);
-      return prev;
-    });
-
-    // Save to server
     try {
-      const chatResponse = await fetch(`${apiUrl}/chats/${effectivePatientId}/${doctorId}`, {
+      const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
+      const response = await fetch(`${apiUrl}/uploadImage/${effectivePatientId}`, {
         method: 'POST',
+        body: formData,
         headers: {
-          'Content-Type': 'application/json',
           'x-user-uid': effectiveUserId,
         },
-        body: JSON.stringify(imageMessage),
         credentials: 'include',
       });
-      if (!chatResponse.ok) {
-        throw new Error(`Failed to save image message: ${chatResponse.statusText}`);
+
+      if (!response.ok) {
+        let errorMessage = `Image upload failed: ${response.statusText}`;
+        if (response.status === 503) {
+          errorMessage = 'Image upload to cloud failed. Saved locally on server. Please try again later.';
+        } else if (response.status === 400) {
+          errorMessage = 'Bad request. Please check the file and try again.';
+        } else if (response.status === 401) {
+          errorMessage = 'Unauthorized. Please log in again.';
+          navigate('/login');
+        }
+        throw new Error(errorMessage);
       }
-      socketRef.current.emit('newMessage', imageMessage);
+
+      const { imageUrl } = await response.json();
+      if (!imageUrl) {
+        throw new Error('Image upload succeeded, but no image URL was returned.');
+      }
+
+      const responseHead = await fetch(imageUrl, { method: 'HEAD' });
+      if (!responseHead.ok) {
+        throw new Error(`Image URL inaccessible: ${imageUrl} (Status: ${responseHead.status})`);
+      }
+
+      const imageMessage = {
+        sender: 'patient',
+        imageUrl,
+        text: null,
+        translatedText: null,
+        language: 'en',
+        recordingLanguage: null,
+        audioUrl: null,
+        audioUrlEn: null,
+        audioUrlKn: null,
+        timestamp: new Date().toISOString(),
+        doctorId,
+        userId: effectiveUserId,
+        patientId: effectivePatientId,
+        messageType: 'image',
+      };
+
+      setMessages((prev) => {
+        if (!prev.some((msg) => msg.timestamp === imageMessage.timestamp && msg.imageUrl === imageMessage.imageUrl)) {
+          return [...prev, imageMessage].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+        }
+        console.log('PatientChat.js: Skipped duplicate image message:', imageMessage.timestamp);
+        return prev;
+      });
+
+      try {
+        const chatResponse = await fetch(`${apiUrl}/chats/${effectivePatientId}/${doctorId}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-user-uid': effectiveUserId,
+          },
+          body: JSON.stringify(imageMessage),
+          credentials: 'include',
+        });
+        if (!chatResponse.ok) {
+          throw new Error(`Failed to save image message: ${chatResponse.statusText}`);
+        }
+        if (socketRef.current) {
+          socketRef.current.emit('newMessage', imageMessage);
+        } else {
+          console.error('PatientChat.js: Socket not initialized');
+        }
+      } catch (err) {
+        setError(`Failed to save image message: ${err.message}`);
+        setMessages((prev) => prev.filter((msg) => msg.timestamp !== imageMessage.timestamp));
+        setFailedUpload({ file, type: 'image' });
+      }
     } catch (err) {
-      setError(`Failed to save image message: ${err.message}`);
-      setMessages((prev) => prev.filter((msg) => msg.timestamp !== imageMessage.timestamp));
+      setError(err.message);
       setFailedUpload({ file, type: 'image' });
     }
-  } catch (err) {
-    setError(err.message);
-    setFailedUpload({ file, type: 'image' });
-  }
-};
+  };
+
+  // Read text or audio aloud
   const readAloud = async (audioUrl, lang, fallbackText) => {
     try {
       if (!audioUrl && (!fallbackText || typeof fallbackText !== 'string' || fallbackText.trim() === '')) {
@@ -876,86 +902,76 @@ function PatientChat({ user, role, patientId, handleLogout }) {
     }
   };
 
+  // Send text message
   const handleSendText = async () => {
-  if (!textInput.trim()) return;
+    if (!textInput.trim()) return;
 
-  const newMessage = {
-    sender: 'patient',
-    text: textInput,
-    translatedText: null,
-    timestamp: new Date().toISOString(),
-    language: 'en',
-    recordingLanguage: 'en',
-    doctorId,
-    userId: effectivePatientId,
-  };
+    const newMessage = {
+      sender: 'patient',
+      text: textInput,
+      translatedText: null,
+      timestamp: new Date().toISOString(),
+      language: 'en',
+      recordingLanguage: 'en',
+      doctorId,
+      userId: effectivePatientId,
+    };
 
-  setMessages((prev) => {
-    if (!prev.some((msg) => msg.timestamp === newMessage.timestamp && msg.text === newMessage.text)) {
-      return [...prev, newMessage].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-    }
-    console.log('PatientChat.js: Skipped duplicate text message:', newMessage.timestamp, newMessage.text);
-    return prev;
-  });
-  setTextInput('');
-
-  try {
-    const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
-    const response = await fetch(`${apiUrl}/chats/${effectivePatientId}/${doctorId}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-user-uid': effectiveUserId,
-      },
-      body: JSON.stringify(newMessage),
-      credentials: 'include',
+    setMessages((prev) => {
+      if (!prev.some((msg) => msg.timestamp === newMessage.timestamp && msg.text === newMessage.text)) {
+        return [...prev, newMessage].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+      }
+      console.log('PatientChat.js: Skipped duplicate text message:', newMessage.timestamp, newMessage.text);
+      return prev;
     });
-    if (!response.ok) throw new Error(`Failed to save text message: ${response.statusText}`);
-    socketRef.current.emit('newMessage', newMessage);
-  } catch (err) {
-    setError(`Failed to save text message: ${err.message}`);
-  }
-};
+    setTextInput('');
 
- const handleQuickReply = async (replyText) => {
-  const quickMessage = {
-    sender: 'patient',
-    text: replyText,
-    translatedText: null,
-    timestamp: new Date().toISOString(),
-    language: 'en',
-    recordingLanguage: 'en',
-    doctorId,
-    userId: effectivePatientId,
-  };
-
-  setMessages((prev) => {
-    if (!prev.some((msg) => msg.timestamp === quickMessage.timestamp && msg.text === quickMessage.text)) {
-      return [...prev, quickMessage].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-    }
-    console.log('PatientChat.js: Skipped duplicate quick reply:', quickMessage.timestamp, quickMessage.text);
-    return prev;
-  });
-
-  try {
-    const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
-    const response = await fetch(`${apiUrl}/chats/${effectivePatientId}/${doctorId}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-user-uid': effectiveUserId,
-      },
-      body: JSON.stringify(quickMessage),
-      credentials: 'include',
-    });
-    if (!response.ok) throw new Error(`Failed to save quick reply message: ${response.statusText}`);
-    socketRef.current.emit('newMessage', quickMessage);
-  } catch (err) {
-    setError(`Failed to save quick reply message: ${err.message}`);
-  }
-};
     try {
-      const response = await fetch(`http://localhost:5005/chats/${effectivePatientId}/${doctorId}`, {
+      const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
+      const response = await fetch(`${apiUrl}/chats/${effectivePatientId}/${doctorId}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-uid': effectiveUserId,
+        },
+        body: JSON.stringify(newMessage),
+        credentials: 'include',
+      });
+      if (!response.ok) throw new Error(`Failed to save text message: ${response.statusText}`);
+      if (socketRef.current) {
+        socketRef.current.emit('newMessage', newMessage);
+      } else {
+        console.error('PatientChat.js: Socket not initialized');
+      }
+    } catch (err) {
+      setError(`Failed to save text message: ${err.message}`);
+    }
+  };
+
+  // Send quick reply
+  const handleQuickReply = async (replyText) => {
+    const quickMessage = {
+      sender: 'patient',
+      text: replyText,
+      translatedText: null,
+      timestamp: new Date().toISOString(),
+      language: 'en',
+      recordingLanguage: 'en',
+      doctorId,
+      userId: effectivePatientId,
+    };
+
+    setMessages((prev) => {
+      if (!prev.some((msg) => msg.timestamp === quickMessage.timestamp && msg.text === quickMessage.text)) {
+        return [...prev, quickMessage].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+      }
+      console.log('PatientChat.js: Skipped duplicate quick reply:', quickMessage.timestamp, quickMessage.text);
+      return prev;
+    });
+
+    try {
+      const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
+      const response = await fetch(`${apiUrl}/chats/${effectivePatientId}/${doctorId}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -965,12 +981,17 @@ function PatientChat({ user, role, patientId, handleLogout }) {
         credentials: 'include',
       });
       if (!response.ok) throw new Error(`Failed to save quick reply message: ${response.statusText}`);
-      socketRef.current.emit('newMessage', quickMessage);
+      if (socketRef.current) {
+        socketRef.current.emit('newMessage', quickMessage);
+      } else {
+        console.error('PatientChat.js: Socket not initialized');
+      }
     } catch (err) {
       setError(`Failed to save quick reply message: ${err.message}`);
     }
   };
 
+  // Render loading state
   if (languagePreference === null || transcriptionLanguage === null) {
     return (
       <div className="loading-container">
@@ -992,6 +1013,7 @@ function PatientChat({ user, role, patientId, handleLogout }) {
     );
   }
 
+  // Render main UI
   return (
     <div className="patient-chat-container">
       <div className="chat-header">
@@ -1375,13 +1397,13 @@ function PatientChat({ user, role, patientId, handleLogout }) {
                   🛑 Stop Recording
                 </button>
                 <label className="image-upload">
-                   📷 Upload Image
-                   <input
-                      type="file"
-                      accept="image/jpeg,image/png,image/gif"
-                      onChange={handleImageUpload}
-                      style={{ display: 'none' }}
-                   />
+                  📷 Upload Image
+                  <input
+                    type="file"
+                    accept="image/jpeg,image/png,image/gif"
+                    onChange={handleImageUpload}
+                    style={{ display: 'none' }}
+                  />
                 </label>
               </div>
               <div className="text-input-container">
@@ -1844,7 +1866,7 @@ function PatientChat({ user, role, patientId, handleLogout }) {
           border: 1px solid rgba(255, 255, 255, 0.2);
           border-radius: 20px;
           font-size: 0.9rem;
-          cursor: pig;
+          cursor: pointer;
           transition: background 0.3s ease, transform 0.3s ease;
         }
 
@@ -2038,6 +2060,13 @@ function PatientChat({ user, role, patientId, handleLogout }) {
           gap: 10px;
           margin-bottom: 15px;
         }
+
+        .text-input-container input {
+          flex: 1;
+          padding: 12px 20px;
+          background: rgba(255, 255, 255, 0.1);
+          border: 1px solid rgba(255, 255, 255, 0.2);
+          border-radius: 25px;
 
         .text-input-container input {
           flex: 1;
