@@ -45,21 +45,41 @@ function Login({ setUser, setRole, setPatientId, user }) {
       const firebaseUser = userCredential.user;
       console.log('User logged in successfully:', { uid: firebaseUser.uid, email: firebaseUser.email });
 
-      const response = await fetch(`${process.env.REACT_APP_API_URL}/users/${firebaseUser.uid}`, {
+      const idToken = await firebaseUser.getIdToken(true);
+      console.log('Firebase ID token:', idToken.substring(0, 10) + '...');
+
+      const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
+      console.log('Fetching user data from:', `${apiUrl}/users/${firebaseUser.uid}`);
+
+      const response = await fetch(`${apiUrl}/users/${firebaseUser.uid}`, {
+        method: 'GET',
         headers: {
-          'Authorization': `Bearer ${await firebaseUser.getIdToken()}`,
+          'Authorization': `Bearer ${idToken}`,
           'x-user-uid': firebaseUser.uid,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
         },
+        mode: 'cors',
+        credentials: 'same-origin',
       });
 
-      console.log('API response status:', response.status);
+      console.log('API response status:', response.status, 'OK:', response.ok, 'Headers:', Object.fromEntries(response.headers.entries()));
+      const responseText = await response.text();
+      console.log('Raw API response:', responseText);
+
       if (!response.ok) {
-        const errorText = await response.text();
-        console.error('API Error:', { status: response.status, errorText });
-        throw new Error(`HTTP error! status: ${response.status}, text: ${errorText}`);
+        console.error('API Error:', response.status, responseText);
+        throw new Error(`HTTP error! status: ${response.status}, text: ${responseText}`);
       }
 
-      const userData = await response.json();
+      let userData;
+      try {
+        userData = JSON.parse(responseText);
+      } catch (parseError) {
+        console.error('JSON parsing failed:', parseError.message, 'Raw response:', responseText);
+        throw new Error('Failed to parse API response as JSON');
+      }
+
       console.log('User data received from API:', userData);
       if (!userData || !userData.role) {
         console.error('Invalid user data:', userData);
@@ -117,23 +137,37 @@ function Login({ setUser, setRole, setPatientId, user }) {
         throw new Error('No user authenticated for logout');
       }
 
-      const response = await fetch(`${process.env.REACT_APP_API_URL}/logout`, {
+      const idToken = await user.getIdToken(true);
+      const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
+      const response = await fetch(`${apiUrl}/logout`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${await user.getIdToken()}`,
+          'Authorization': `Bearer ${idToken}`,
           'x-user-uid': user.uid,
           'Content-Type': 'application/json',
+          'Accept': 'application/json',
         },
+        mode: 'cors',
+        credentials: 'same-origin',
       });
 
-      console.log('Logout API response status:', response.status);
+      console.log('Logout API response status:', response.status, 'OK:', response.ok, 'Headers:', Object.fromEntries(response.headers.entries()));
+      const responseText = await response.text();
+      console.log('Raw logout API response:', responseText);
+
       if (!response.ok) {
-        const errorText = await response.text();
-        console.error('Logout API Error:', { status: response.status, errorText });
-        throw new Error(`Logout request failed: ${response.statusText}, text: ${errorText}`);
+        console.error('Logout API Error:', { status: response.status, errorText: responseText });
+        throw new Error(`Logout request failed: ${response.status}, text: ${responseText}`);
       }
 
-      const logoutData = await response.json();
+      let logoutData;
+      try {
+        logoutData = JSON.parse(responseText);
+      } catch (parseError) {
+        console.error('Logout JSON parsing failed:', parseError.message, 'Raw response:', responseText);
+        throw new Error('Failed to parse logout API response as JSON');
+      }
+
       console.log('Server logout response:', logoutData);
 
       await signOut(auth);
