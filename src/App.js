@@ -58,7 +58,8 @@ const NotFound = () => {
 };
 
 function App() {
-  const [user, setUser] = useState(null);
+  const [firebaseUser, setFirebaseUser] = useState(null); // Firebase Auth user
+  const [user, setUser] = useState(null); // Combined user data
   const [role, setRole] = useState(null);
   const [patientId, setPatientId] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -66,9 +67,10 @@ function App() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    const unsubscribeAuth = firebaseAuth.onAuthStateChanged(async (firebaseUser) => {
-      if (firebaseUser) {
-        const userId = firebaseUser.uid;
+    const unsubscribeAuth = firebaseAuth.onAuthStateChanged(async (authUser) => {
+      if (authUser) {
+        setFirebaseUser(authUser); // Store Firebase Auth user
+        const userId = authUser.uid;
         if (process.env.NODE_ENV !== 'production') {
           console.log('App.js: Authenticated user detected, UID:', userId);
         }
@@ -85,7 +87,7 @@ function App() {
 
               const updatedUser = {
                 uid: userId,
-                email: firebaseUser.email,
+                email: authUser.email,
                 ...userData,
               };
 
@@ -133,6 +135,7 @@ function App() {
   }, []);
 
   const handleAuthFailure = () => {
+    setFirebaseUser(null);
     setUser(null);
     setRole(null);
     setPatientId(null);
@@ -147,37 +150,6 @@ function App() {
       console.log('App.js: Initiating logout');
     }
     try {
-      // Define API base URL with fallback
-      const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:5005';
-      if (process.env.NODE_ENV !== 'production') {
-        console.log(`App.js: Using API URL: ${apiUrl}`);
-      }
-
-      // Send logout request to server before signing out
-      if (firebaseAuth.currentUser) {
-        const token = await firebaseAuth.currentUser.getIdToken();
-        try {
-          const response = await fetch(`${apiUrl}/logout`, {
-            method: 'POST',
-            credentials: 'include',
-            headers: {
-              'Authorization': `Bearer ${token}`,
-              'Content-Type': 'application/json',
-            },
-          });
-          if (!response.ok) {
-            console.warn(`App.js: Server logout failed: ${response.status} ${response.statusText}`);
-          } else {
-            if (process.env.NODE_ENV !== 'production') {
-              console.log('App.js: Server logout successful');
-            }
-          }
-        } catch (serverError) {
-          console.warn('App.js: Server logout request failed:', serverError.message);
-          // Continue with Firebase sign-out even if server logout fails
-        }
-      }
-
       // Sign out from Firebase
       await firebaseAuth.signOut();
       if (process.env.NODE_ENV !== 'production') {
@@ -185,6 +157,7 @@ function App() {
       }
 
       // Clear client-side state
+      setFirebaseUser(null);
       setUser(null);
       setRole(null);
       setPatientId(null);
@@ -194,6 +167,7 @@ function App() {
     } catch (err) {
       console.error('App.js: Logout error:', err.message);
       setError(`Failed to log out: ${err.message}`);
+      setFirebaseUser(null);
       setUser(null);
       setRole(null);
       setPatientId(null);
@@ -267,6 +241,7 @@ function App() {
           element={
             user && role === 'patient' ? (
               <SelectDoctor
+                firebaseUser={firebaseUser} // Pass Firebase Auth user
                 user={user}
                 role={role}
                 patientId={patientId}
