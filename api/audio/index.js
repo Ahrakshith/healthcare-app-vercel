@@ -1,11 +1,10 @@
- const { Storage } = require('@google-cloud/storage');
+const { Storage } = require('@google-cloud/storage');
 const speech = require('@google-cloud/speech');
 const admin = require('firebase-admin');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 
-// Initialize Firebase
 if (!admin.apps.length) {
   admin.initializeApp({
     credential: admin.credential.cert({
@@ -16,20 +15,18 @@ if (!admin.apps.length) {
   });
 }
 
-// Initialize Google Cloud Storage and Speech-to-Text
 const serviceAccountKeyPath = process.env.REACT_APP_GCS_SERVICE_ACCOUNT_KEY
   ? JSON.parse(Buffer.from(process.env.REACT_APP_GCS_SERVICE_ACCOUNT_KEY, 'base64').toString())
-  : require('../../service-account.json');
+  : require('../../../service-account.json');
 const storage = new Storage({ credentials: serviceAccountKeyPath });
 const speechClient = new speech.SpeechClient({ credentials: serviceAccountKeyPath });
 
 const bucketName = 'healthcare-app-d8997-audio';
 const bucket = storage.bucket(bucketName);
 
-// Multer configuration for audio uploads
 const uploadAudio = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+  limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     if (!file.mimetype.includes('audio/webm')) {
       return cb(new Error('Invalid file type. Only audio/webm is allowed.'));
@@ -38,7 +35,6 @@ const uploadAudio = multer({
   },
 });
 
-// Local fallback storage directory
 const localStorageDir = path.join(process.cwd(), 'temp_audio');
 if (!fs.existsSync(localStorageDir)) {
   fs.mkdirSync(localStorageDir, { recursive: true });
@@ -67,8 +63,12 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
+  const pathSegments = req.url.split('/').filter(Boolean);
+  const endpoint = pathSegments[1]; // "audio"
+  const subEndpoint = pathSegments[2]; // "upload-audio" or "upload-audio-fallback"
+
   const multerMiddleware = uploadAudio.single('audio');
-  multerMiddleware(req, res, async (err) => {
+  return multerMiddleware(req, res, async (err) => {
     if (err) {
       console.error('Multer error:', err.message);
       return res.status(400).json({ error: err.message });
@@ -83,56 +83,70 @@ export default async function handler(req, res) {
 
       const audioFile = req.file;
       if (audioFile.size === 0) return res.status(400).json({ error: 'Audio file is empty' });
-      if (!audioFile.mimetype.includes('audio/webm')) {
-        return res.status(400).json({ error: 'Unsupported format. Expected audio/webm' });
-      }
 
-      // Verify user
       await admin.auth().getUser(uid);
 
-      const fileName = `audio/${uid}/${Date.now()}-recording.webm`;
-      const file = bucket.file(fileName);
-      await uploadWithRetry(file, audioFile.buffer, { contentType: audioFile.mimetype });
-      const audioUrl = `https://storage.googleapis.com/${bucketName}/${fileName}`;
-      console.log(`Audio uploaded to GCS: ${audioUrl}`);
+      if (subEndpoint === 'upload-audio') {
+        const fileName = `audio/${uid}/${Date.now()}-recording.webm`;
+        const file = bucket.file(fileName);
+        await uploadWithRetry(file, audioFile.buffer, { contentType: audioFile.mimetype });
+        const audioUrl = `https://storage.googleapis.com/${bucketName}/${fileName}`;
 
-      let transcriptionText = 'Transcription unavailable';
-      let translatedText = transcriptionText;
+        let transcriptionText = 'Transcription unavailable';
+        let translatedText = transcriptionText;
 
-      try {
-        const config = {
-          encoding: 'WEBM_OPUS',
-          sampleRateHertz: 48000,
+        try {
+          const config = {
+            encoding: 'WEBM_OPUS',
+            sampleRateHertz: 48000,
+            languageCode: language,
+            enableAutomaticLanguageDetection: false,
+          };
+
+          const request = {
+            audio: { content: audioFile.buffer.toString('base64') },
+            config,
+          };
+
+          const [response] = await speechClient.recognize(request);
+          transcriptionText = response.results?.length > 0
+            ? response.results.map((result) => result.alternatives[0].transcript).join('\n')
+            : 'No transcription available';
+          translatedText = transcriptionText;
+        } catch (transcriptionError) {
+          console.error('Transcription error:', transcriptionError.message);
+        }
+
+        return res.status(200).json({
+          transcription: transcriptionText,
+          translatedText,
           languageCode: language,
-          enableAutomaticLanguageDetection: false,
-        };
+          audioUrl,
+        });
+      } else if (subEndpoint === 'upload-audio-fallback') {
+        const fileName = `${uid}-${Date.now()}-recording.webm`;
+        const localPath = path.join(localStorageDir, fileName);
+        fs.writeFileSync(localPath, audioFile.buffer);
+        const audioUrl = `/temp_files/audio/${fileName}`;
 
-        const request = {
-          audio: { content: audioFile.buffer.toString('base64') },
-          config,
-        };
-
-        const [response] = await speechClient.recognize(request);
-        transcriptionText = response.results?.length > 0
-          ? response.results.map((result) => result.alternatives[0].transcript).join('\n')
-          : 'No transcription available';
-        translatedText = transcriptionText;
-      } catch (transcriptionError) {
-        console.error('Transcription error:', transcriptionError.message);
+        return res.status(200).json({
+          transcription: '[Fallback transcription unavailable]',
+          languageCode: language,
+          detectedLanguage: language,
+          audioUrl,
+        });
       }
 
-      res.status(200).json({
-        transcription: transcriptionText,
-        translatedText,
-        languageCode: language,
-        audioUrl,
-      });
+      return res.status(404).json({ error: 'Endpoint not found' });
     } catch (error) {
-      console.error('Error in /api/upload-audio:', error.message);
-      res.status(500).json({
-        error: 'Failed to process audio upload',
-        details: error.message,
-      });
+      console.error(`Error in /api/audio/${subEndpoint}:`, error.message);
+      if (error.message.includes('Invalid file type')) {
+        return res.status(400).json({ error: error.message });
+      }
+      if (error.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ error: 'File too large. Maximum size is 5MB.' });
+      }
+      res.status(500).json({ error: 'Failed to upload audio', details: error.message });
     }
   });
 }
