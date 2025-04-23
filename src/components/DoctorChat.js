@@ -1,4 +1,3 @@
-// src/components/DoctorChat.js
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { collection, query, where, onSnapshot, getDocs, doc, getDoc } from 'firebase/firestore';
@@ -21,6 +20,7 @@ function DoctorChat({ user, role, handleLogout }) {
     duration: '',
   });
   const [error, setError] = useState('');
+  const [failedUpload, setFailedUpload] = useState(null);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [loadingPatients, setLoadingPatients] = useState(true);
   const [diagnosisPrompt, setDiagnosisPrompt] = useState(null);
@@ -32,6 +32,7 @@ function DoctorChat({ user, role, handleLogout }) {
   const [doctorProfile, setDoctorProfile] = useState(null);
   const [showActionModal, setShowActionModal] = useState(false);
   const [actionType, setActionType] = useState('');
+  const [patientMessageTimestamps, setPatientMessageTimestamps] = useState({}); // New state to track message timestamps
   const audioRef = useRef(new Audio());
   const socketRef = useRef(null);
   const messagesEndRef = useRef(null);
@@ -47,10 +48,10 @@ function DoctorChat({ user, role, handleLogout }) {
     scrollToBottom();
   }, [messages, scrollToBottom]);
 
-  // Fetch Doctor ID
+  // Fetch Doctor ID and Profile
   useEffect(() => {
     if (role !== 'doctor' || !user?.uid) {
-      setError('Unauthorized access. Redirecting to login.');
+      setError('Please log in as a doctor.');
       navigate('/login');
       return;
     }
@@ -73,15 +74,15 @@ function DoctorChat({ user, role, handleLogout }) {
           email: doctorData.email || 'N/A',
         });
       } catch (err) {
-        setError('Failed to fetch doctor profile: ' + err.message);
+        setError(`Failed to fetch doctor profile: ${err.message}`);
         setLoadingPatients(false);
       }
     };
 
     fetchDoctorId();
-  }, [role, navigate, user?.uid]);
+  }, [role, user?.uid, navigate]);
 
-  // Fetch Patients
+  // Fetch Assigned Patients
   useEffect(() => {
     if (!doctorId) return;
 
@@ -106,54 +107,64 @@ function DoctorChat({ user, role, handleLogout }) {
         }
       },
       (err) => {
-        setError('Failed to fetch patients: ' + err.message);
+        setError(`Failed to fetch patients: ${err.message}`);
         setLoadingPatients(false);
       }
     );
 
     return () => unsubscribe();
-  }, [doctorId, selectedPatientId]);
+  }, [doctorId]);
 
   // WebSocket and Data Fetching
   useEffect(() => {
-    if (!selectedPatientId || !user?.uid || !doctorId) {
-      return;
-    }
+    if (!selectedPatientId || !user?.uid || !doctorId) return;
 
-    socketRef.current = io('http://localhost:5005', {
+    socketRef.current = io(process.env.REACT_APP_WEBSOCKET_URL || 'http://localhost:5005', {
+      auth: { uid: user.uid },
       transports: ['websocket', 'polling'],
       reconnection: true,
       reconnectionAttempts: 5,
       reconnectionDelay: 1000,
+      withCredentials: true, // Ensure cookies are sent in incognito
     });
 
-    const roomName = `${selectedPatientId}-${doctorId}`;
     socketRef.current.on('connect', () => {
-      socketRef.current.emit('joinRoom', roomName);
+      console.log('DoctorChat.js: WebSocket connected, socket ID:', socketRef.current.id);
+      socketRef.current.emit('joinRoom', { patientId: selectedPatientId, doctorId });
+      console.log(`DoctorChat.js: Emitted joinRoom for patientId=${selectedPatientId}, doctorId=${doctorId}`);
+    });
+
+    socketRef.current.on('connect_error', (error) => {
+      console.error('DoctorChat.js: WebSocket connection error:', error.message);
+      setError(`WebSocket connection failed: ${error.message}`);
+    });
+
+    socketRef.current.on('error', (error) => {
+      console.error('DoctorChat.js: WebSocket error:', error.message, error.receivedData || '');
+      setError(`WebSocket error: ${error.message}`);
     });
 
     socketRef.current.on('newMessage', (message) => {
+      console.log('DoctorChat.js: Received new message:', { ...message, audioUrl: message.audioUrl ? '[Audio URL]' : null });
       setMessages((prev) => {
-        if (!prev.some((msg) => msg.timestamp === message.timestamp)) {
-          return [...prev, message].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+        // Enhanced deduplication: Check timestamp and text
+        if (!prev.some((msg) => msg.timestamp === message.timestamp && msg.text === message.text)) {
+          const updatedMessages = [...prev, message].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+          // Update patient message timestamps if the message is from the patient
+          if (message.sender === 'patient') {
+            setPatientMessageTimestamps((prevTimestamps) => ({
+              ...prevTimestamps,
+              [message.patientId]: {
+                firstMessageTime: prevTimestamps[message.patientId]?.firstMessageTime || message.timestamp,
+                lastMessageTime: message.timestamp,
+              },
+            }));
+          }
+          return updatedMessages;
         }
+        console.log('DoctorChat.js: Skipped duplicate message:', message.timestamp, message.text);
         return prev;
       });
-
-      // Check if prompt is needed after new patient message
-      if (message.sender === 'patient') {
-        const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
-        const hoursSinceLast = lastMessage
-          ? (new Date() - new Date(lastMessage.timestamp)) / (1000 * 60 * 60)
-          : Infinity;
-        const patientAssignment = patients.find((p) => p.patientId === selectedPatientId);
-        const hoursSinceAssignment = patientAssignment
-          ? (new Date() - new Date(patientAssignment.timestamp)) / (1000 * 60 * 60)
-          : Infinity;
-        if (hoursSinceAssignment <= 24 || hoursSinceLast >= 168) {
-          setDiagnosisPrompt(selectedPatientId);
-        }
-      }
     });
 
     socketRef.current.on('missedDoseAlert', (alert) => {
@@ -169,65 +180,47 @@ function DoctorChat({ user, role, handleLogout }) {
           headers: { 'x-user-uid': user.uid },
           credentials: 'include',
         });
-        if (!response.ok) {
-          if (response.status === 404) {
-            setMessages([]);
-            const patientAssignment = patients.find((p) => p.patientId === selectedPatientId);
-            const hoursSinceAssignment = patientAssignment
-              ? (new Date() - new Date(patientAssignment.timestamp)) / (1000 * 60 * 60)
-              : Infinity;
-            if (hoursSinceAssignment <= 24) {
-              setDiagnosisPrompt(selectedPatientId);
-            }
-            return;
-          }
+        if (!response.ok && response.status !== 404) {
           throw new Error(`Failed to fetch messages: ${response.statusText}`);
         }
         const data = await response.json();
+        const fetchedMessages = data.messages || [];
+
         const validatedMessages = await Promise.all(
-          data.messages.map(async (msg) => {
+          fetchedMessages.map(async (msg) => {
             const updatedMsg = { ...msg };
             if (msg.audioUrl) {
-              try {
-                const response = await fetch(msg.audioUrl, { method: 'HEAD' });
-                if (!response.ok) updatedMsg.audioUrl = null;
-              } catch {
-                updatedMsg.audioUrl = null;
-              }
+              const response = await fetch(msg.audioUrl, { method: 'HEAD' });
+              if (!response.ok) updatedMsg.audioUrl = null;
             }
             if (msg.audioUrlEn) {
-              try {
-                const response = await fetch(msg.audioUrlEn, { method: 'HEAD' });
-                if (!response.ok) updatedMsg.audioUrlEn = null;
-              } catch {
-                updatedMsg.audioUrlEn = null;
-              }
+              const response = await fetch(msg.audioUrlEn, { method: 'HEAD' });
+              if (!response.ok) updatedMsg.audioUrlEn = null;
             }
             if (msg.audioUrlKn) {
-              try {
-                const response = await fetch(msg.audioUrlKn, { method: 'HEAD' });
-                if (!response.ok) updatedMsg.audioUrlKn = null;
-              } catch {
-                updatedMsg.audioUrlKn = null;
-              }
+              const response = await fetch(msg.audioUrlKn, { method: 'HEAD' });
+              if (!response.ok) updatedMsg.audioUrlKn = null;
             }
             return updatedMsg;
           })
         );
-        setMessages(validatedMessages.sort((a, b) => a.timestamp.localeCompare(b.timestamp)));
-        const lastMessage = validatedMessages.length > 0 ? validatedMessages[validatedMessages.length - 1] : null;
-        const hoursSinceLast = lastMessage
-          ? (new Date() - new Date(lastMessage.timestamp)) / (1000 * 60 * 60)
-          : Infinity;
-        const patientAssignment = patients.find((p) => p.patientId === selectedPatientId);
-        const hoursSinceAssignment = patientAssignment
-          ? (new Date() - new Date(patientAssignment.timestamp)) / (1000 * 60 * 60)
-          : Infinity;
-        if (hoursSinceAssignment <= 24 || hoursSinceLast >= 168) {
-          setDiagnosisPrompt(selectedPatientId);
+
+        const sortedMessages = validatedMessages.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+        setMessages(sortedMessages);
+
+        // Initialize patient message timestamps from fetched messages
+        const patientMessages = sortedMessages.filter((msg) => msg.sender === 'patient');
+        if (patientMessages.length > 0) {
+          setPatientMessageTimestamps((prev) => ({
+            ...prev,
+            [selectedPatientId]: {
+              firstMessageTime: patientMessages[0].timestamp,
+              lastMessageTime: patientMessages[patientMessages.length - 1].timestamp,
+            },
+          }));
         }
       } catch (err) {
-        setError(err.message);
+        setError(`Error fetching messages: ${err.message}`);
       } finally {
         setLoadingMessages(false);
       }
@@ -266,50 +259,123 @@ function DoctorChat({ user, role, handleLogout }) {
     fetchMissedDoseAlerts();
 
     return () => {
-      if (socketRef.current) socketRef.current.disconnect();
+      if (socketRef.current) {
+        socketRef.current.off('connect');
+        socketRef.current.off('connect_error');
+        socketRef.current.off('error');
+        socketRef.current.off('newMessage');
+        socketRef.current.off('missedDoseAlert');
+        socketRef.current.disconnect();
+        console.log('DoctorChat.js: WebSocket disconnected');
+      }
     };
-  }, [selectedPatientId, user?.uid, doctorId, patients]);
+  }, [selectedPatientId, user?.uid, doctorId]);
 
-  const handleDiagnosisDecision = async (accept) => {
-    if (!selectedPatientId) {
-      setError('No patient selected.');
+  // Diagnosis Prompt Logic
+  useEffect(() => {
+    if (!selectedPatientId || !patients.length) return;
+
+    const patientAssignment = patients.find((p) => p.patientId === selectedPatientId);
+    if (!patientAssignment) return;
+
+    const timestamps = patientMessageTimestamps[selectedPatientId];
+    const now = new Date();
+
+    // If no patient messages exist, check if within 24 hours of assignment
+    if (!timestamps || !timestamps.firstMessageTime) {
+      const hoursSinceAssignment = (now - new Date(patientAssignment.timestamp)) / (1000 * 60 * 60);
+      if (hoursSinceAssignment <= 24) {
+        setDiagnosisPrompt(selectedPatientId);
+      } else {
+        setDiagnosisPrompt(null);
+      }
       return;
     }
-    if (accept) {
-      setDiagnosisPrompt(null);
-    } else {
-      const message = {
-        sender: 'doctor',
-        text: 'Sorry, I am not available at the moment. Please chat with another doctor.',
-        translatedText:
-          languagePreference === 'kn'
-            ? await translateText('Sorry, I am not available at the moment. Please chat with another doctor.', 'en', 'kn')
-            : null,
-        language: 'en',
-        recordingLanguage: 'en',
-        timestamp: new Date().toISOString(),
-        doctorId,
-        patientId: selectedPatientId,
-      };
-      try {
-        await fetch(`http://localhost:5005/chats/${selectedPatientId}/${doctorId}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
-          body: JSON.stringify(message),
-          credentials: 'include',
-        });
-        socketRef.current.emit('newMessage', message);
-        setPatients((prev) => prev.filter((p) => p.patientId !== selectedPatientId));
-        setSelectedPatientId(null);
-        setSelectedPatientName('');
-        setDiagnosisPrompt(null);
-      } catch (err) {
-        setError('Failed to send message: ' + err.message);
-      }
-    }
-  };
 
-  const startRecording = async () => {
+    // Check time since first and last patient messages
+    const hoursSinceFirstMessage = (now - new Date(timestamps.firstMessageTime)) / (1000 * 60 * 60);
+    const hoursSinceLastMessage = (now - new Date(timestamps.lastMessageTime)) / (1000 * 60 * 60);
+
+    if (hoursSinceFirstMessage <= 24 || hoursSinceLastMessage >= 168) {
+      setDiagnosisPrompt(selectedPatientId);
+    } else {
+      setDiagnosisPrompt(null);
+    }
+  }, [selectedPatientId, patients, patientMessageTimestamps]);
+
+  const handleDiagnosisDecision = useCallback(
+    async (accept) => {
+      if (!selectedPatientId) {
+        setError('No patient selected.');
+        return;
+      }
+      if (accept) {
+        setDiagnosisPrompt(null);
+      } else {
+        const message = {
+          sender: 'doctor',
+          text: 'Sorry, I am not available at the moment. Please chat with another doctor.',
+          translatedText:
+            languagePreference === 'kn'
+              ? await translateText(
+                  'Sorry, I am not available at the moment. Please chat with another doctor.',
+                  'en',
+                  'kn'
+                )
+              : null,
+          language: 'en',
+          recordingLanguage: 'en',
+          timestamp: new Date().toISOString(),
+          doctorId,
+          patientId: selectedPatientId,
+        };
+        try {
+          const response = await fetch(`http://localhost:5005/chats/${selectedPatientId}/${doctorId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
+            body: JSON.stringify(message),
+            credentials: 'include',
+          });
+          if (!response.ok) throw new Error(`Failed to send message: ${response.statusText}`);
+          socketRef.current.emit('newMessage', message);
+          setPatients((prev) => prev.filter((p) => p.patientId !== selectedPatientId));
+          setSelectedPatientId(null);
+          setSelectedPatientName('');
+          setDiagnosisPrompt(null);
+        } catch (err) {
+          setError(`Failed to send message: ${err.message}`);
+        }
+      }
+    },
+    [selectedPatientId, languagePreference, doctorId, user.uid]
+  );
+
+  const retryUpload = useCallback(
+    async (audioBlob, language) => {
+      try {
+        setError('');
+        setFailedUpload(null);
+        const transcriptionResult = await transcribeAudio(audioBlob, language, user.uid);
+        if (!transcriptionResult.audioUrl) {
+          setError('Transcription succeeded, but no audio URL was returned.');
+          return null;
+        }
+        const response = await fetch(transcriptionResult.audioUrl, { method: 'HEAD' });
+        if (!response.ok) {
+          setError(`Audio URL inaccessible: ${transcriptionResult.audioUrl}`);
+          return null;
+        }
+        return transcriptionResult;
+      } catch (err) {
+        setError(`Failed to transcribe audio: ${err.message}`);
+        setFailedUpload({ audioBlob, language });
+        return null;
+      }
+    },
+    [user.uid]
+  );
+
+  const startRecording = useCallback(async () => {
     if (!selectedPatientId) {
       setError('No patient selected.');
       return;
@@ -320,76 +386,109 @@ function DoctorChat({ user, role, handleLogout }) {
       const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
       setMediaRecorder(recorder);
       audioChunksRef.current = [];
+
       recorder.ondataavailable = (e) => e.data.size > 0 && audioChunksRef.current.push(e.data);
+
       recorder.onstop = async () => {
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
         if (audioBlob.size === 0) {
-          setError('Empty audio recorded.');
+          setError('Recorded audio is empty.');
           return;
         }
-        try {
-          const transcriptionResult = await transcribeAudio(audioBlob, 'en-US', user.uid);
-          const transcribedText = transcriptionResult.transcription || 'Transcription failed';
-          let translatedText = null;
-          let audioUrl = transcriptionResult.audioUrl;
-          let audioUrlEn = await textToSpeechConvert(transcribedText, 'en-US');
-          let audioUrlKn = null;
 
+        let transcriptionResult;
+        let transcribedText;
+        let translatedText = null;
+        let audioUrl;
+        let audioUrlEn;
+        let audioUrlKn = null;
+
+        try {
+          transcriptionResult = await transcribeAudio(audioBlob, 'en-US', user.uid);
+          audioUrl = transcriptionResult.audioUrl;
+          if (!audioUrl) {
+            setError('Transcription succeeded, but no audio URL was returned.');
+            return;
+          }
+          const response = await fetch(audioUrl, { method: 'HEAD' });
+          if (!response.ok) {
+            setError(`Audio URL inaccessible: ${audioUrl}`);
+            return;
+          }
+
+          transcribedText = transcriptionResult.transcription || 'Transcription failed';
+          audioUrlEn = await textToSpeechConvert(transcribedText, 'en-US');
           if (languagePreference === 'kn') {
             translatedText = await translateText(transcribedText, 'en', 'kn');
             audioUrlKn = await textToSpeechConvert(translatedText, 'kn-IN');
           }
+        } catch (err) {
+          setError(`Failed to process audio: ${err.message}`);
+          setFailedUpload({ audioBlob, language: 'en-US' });
+          return;
+        }
 
-          const message = {
-            sender: 'doctor',
-            text: transcribedText,
-            translatedText,
-            language: 'en',
-            recordingLanguage: 'en',
-            audioUrl,
-            audioUrlEn,
-            audioUrlKn,
-            timestamp: new Date().toISOString(),
-            doctorId,
-            patientId: selectedPatientId,
-          };
-          await fetch(`http://localhost:5005/chats/${selectedPatientId}/${doctorId}`, {
+        const message = {
+          sender: 'doctor',
+          text: transcribedText,
+          translatedText,
+          language: 'en',
+          recordingLanguage: 'en',
+          audioUrl,
+          audioUrlEn,
+          audioUrlKn,
+          timestamp: new Date().toISOString(),
+          doctorId,
+          patientId: selectedPatientId,
+        };
+
+        try {
+          const response = await fetch(`http://localhost:5005/chats/${selectedPatientId}/${doctorId}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
             body: JSON.stringify(message),
             credentials: 'include',
           });
+          if (!response.ok) throw new Error(`Failed to save message: ${response.statusText}`);
           socketRef.current.emit('newMessage', message);
-          setMessages((prev) => [...prev, message].sort((a, b) => a.timestamp.localeCompare(b.timestamp)));
+          setMessages((prev) => {
+            if (!prev.some((msg) => msg.timestamp === message.timestamp && msg.text === message.text)) {
+              return [...prev, message].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+            }
+            return prev;
+          });
         } catch (err) {
-          setError(`Failed to process audio: ${err.message}`);
+          setError(`Failed to send message: ${err.message}`);
         }
       };
+
       recorder.start();
       setRecording(true);
     } catch (err) {
-      setError(`Recording error: ${err.message}`);
+      setError(`Failed to start recording: ${err.message}`);
     }
-  };
+  }, [selectedPatientId, languagePreference, user.uid]);
 
-  const stopRecording = () => {
+  const stopRecording = useCallback(() => {
     if (mediaRecorder) {
       mediaRecorder.stop();
       setRecording(false);
       streamRef.current?.getTracks().forEach((track) => track.stop());
     }
-  };
+  }, [mediaRecorder]);
 
-  const sendMessage = async () => {
+  const sendMessage = useCallback(async () => {
     if (!newMessage.trim() || !selectedPatientId || !user?.uid || !doctorId) {
-      setError('Please type a message and ensure a patient is selected.');
+      setError('Please type a message and select a patient.');
       return;
     }
-    try {
-      let translatedText = null;
-      let audioUrlEn = await textToSpeechConvert(newMessage, 'en-US');
-      let audioUrlKn = null;
 
+    let translatedText = null;
+    let audioUrlEn;
+    let audioUrlKn = null;
+
+    try {
+      audioUrlEn = await textToSpeechConvert(newMessage, 'en-US');
       if (languagePreference === 'kn') {
         translatedText = await translateText(newMessage, 'en', 'kn');
         audioUrlKn = await textToSpeechConvert(translatedText, 'kn-IN');
@@ -408,156 +507,159 @@ function DoctorChat({ user, role, handleLogout }) {
         doctorId,
         patientId: selectedPatientId,
       };
-      await fetch(`http://localhost:5005/chats/${selectedPatientId}/${doctorId}`, {
+
+      const response = await fetch(`http://localhost:5005/chats/${selectedPatientId}/${doctorId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
         body: JSON.stringify(message),
         credentials: 'include',
       });
+      if (!response.ok) throw new Error(`Failed to send message: ${response.statusText}`);
       socketRef.current.emit('newMessage', message);
-      setMessages((prev) => [...prev, message].sort((a, b) => a.timestamp.localeCompare(b.timestamp)));
+      setMessages((prev) => {
+        if (!prev.some((msg) => msg.timestamp === message.timestamp && msg.text === message.text)) {
+          return [...prev, message].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+        }
+        return prev;
+      });
       setNewMessage('');
     } catch (err) {
-      setError('Failed to send message: ' + err.message);
+      setError(`Failed to send message: ${err.message}`);
     }
-  };
+  }, [newMessage, selectedPatientId, user?.uid, doctorId, languagePreference]);
 
-  const sendDiagnosis = async () => {
-    if (!diagnosis.trim()) {
-      setError('Please enter a diagnosis.');
-      return;
-    }
-    if (!selectedPatientId) {
-      setError('No patient selected.');
-      return;
-    }
-    const message = {
-      sender: 'doctor',
-      diagnosis,
-      timestamp: new Date().toISOString(),
-      doctorId,
-      patientId: selectedPatientId,
-    };
-    try {
-      await fetch(`http://localhost:5005/chats/${selectedPatientId}/${doctorId}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
-        body: JSON.stringify(message),
-        credentials: 'include',
-      });
-      socketRef.current.emit('newMessage', message);
-      setMessages((prev) => [...prev, message].sort((a, b) => a.timestamp.localeCompare(b.timestamp)));
-      await fetch(`http://localhost:5005/patients/${selectedPatientId}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
-        body: JSON.stringify({ diagnosis, doctorId }),
-        credentials: 'include',
-      });
-      const selectedPatient = patients.find((p) => p.patientId === selectedPatientId);
-      await fetch('http://localhost:5005/admin_notifications', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
-        body: JSON.stringify({
-          patientId: selectedPatientId,
-          patientName: selectedPatientName,
-          age: selectedPatient?.age || 'N/A',
-          sex: selectedPatient?.sex || 'N/A',
-          description: 'N/A',
-          disease: diagnosis,
-          medicine: undefined,
-          doctorId,
-        }),
-        credentials: 'include',
-      });
-      setDiagnosis('');
-      setShowActionModal(false);
-    } catch (err) {
-      setError('Failed to send diagnosis: ' + err.message);
-    }
-  };
-
-  const sendPrescription = async () => {
-    const { medicine, dosage, frequency, duration } = prescription;
-    if (!medicine.trim() || !dosage.trim() || !frequency.trim() || !duration.trim()) {
-      setError('Please fill all prescription fields.');
-      return;
-    }
-    if (!selectedPatientId) {
-      setError('No patient selected.');
-      return;
-    }
-    const latestDiagnosisMessage = messages
-      .filter((msg) => msg.sender === 'doctor' && msg.diagnosis)
-      .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0];
-    if (!latestDiagnosisMessage) {
-      setError('Provide a diagnosis first.');
-      return;
-    }
-    const prescriptionString = `${medicine}, ${dosage}, ${frequency}, ${duration}`;
-    const message = {
-      sender: 'doctor',
-      prescription: { medicine, dosage, frequency, duration },
-      timestamp: new Date().toISOString(),
-      doctorId,
-      patientId: selectedPatientId,
-    };
-    try {
-      await fetch(`http://localhost:5005/chats/${selectedPatientId}/${doctorId}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
-        body: JSON.stringify(message),
-        credentials: 'include',
-      });
-      socketRef.current.emit('newMessage', message);
-      setMessages((prev) => [...prev, message].sort((a, b) => a.timestamp.localeCompare(b.timestamp)));
-      await fetch(`http://localhost:5005/patients/${selectedPatientId}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
-        body: JSON.stringify({ prescription: prescriptionString, doctorId }),
-        credentials: 'include',
-      });
-      const selectedPatient = patients.find((p) => p.patientId === selectedPatientId);
-      await fetch('http://localhost:5005/admin_notifications', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
-        body: JSON.stringify({
-          patientId: selectedPatientId,
-          patientName: selectedPatientName,
-          age: selectedPatient?.age || 'N/A',
-          sex: selectedPatient?.sex || 'N/A',
-          description: 'N/A',
-          disease: latestDiagnosisMessage.diagnosis,
-          medicine: prescriptionString,
-          doctorId,
-        }),
-        credentials: 'include',
-      });
-      setPrescription({ medicine: '', dosage: '', frequency: '', duration: '' });
-      setShowActionModal(false);
-    } catch (err) {
-      setError('Failed to send prescription: ' + err.message);
-    }
-  };
-
-  const readAloud = async (text, lang, audioUrl) => {
-    try {
-      if (!text && !audioUrl) {
-        setError('No valid text or audio provided.');
+  const sendAction = useCallback(
+    async () => {
+      if (!selectedPatientId) {
+        setError('No patient selected.');
         return;
       }
-      const audioToPlay = audioUrl || (await textToSpeechConvert(text.trim(), lang === 'kn' ? 'kn-IN' : 'en-US'));
-      audioRef.current.src = audioToPlay;
-      audioRef.current.play();
-    } catch (err) {
-      setError(`Error reading aloud: ${err.message}`);
-    }
-  };
 
-  const dismissAlert = (alertId) => {
+      if (actionType === 'Diagnosis' && !diagnosis.trim()) {
+        setError('Please enter a diagnosis.');
+        return;
+      }
+
+      if (actionType === 'Prescription') {
+        const { medicine, dosage, frequency, duration } = prescription;
+        if (!medicine.trim() || !dosage.trim() || !frequency.trim() || !duration.trim()) {
+          setError('Please fill all prescription fields.');
+          return;
+        }
+        const latestDiagnosisMessage = messages
+          .filter((msg) => msg.sender === 'doctor' && msg.diagnosis)
+          .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0];
+        if (!latestDiagnosisMessage) {
+          setError('Please provide a diagnosis first.');
+          return;
+        }
+      }
+
+      if (actionType === 'Combined' && (!diagnosis.trim() || !Object.values(prescription).every((v) => v.trim()))) {
+        setError('Please fill all diagnosis and prescription fields.');
+        return;
+      }
+
+      const prescriptionString =
+        actionType === 'Prescription' || actionType === 'Combined'
+          ? `${prescription.medicine}, ${prescription.dosage}, ${prescription.frequency}, ${prescription.duration}`
+          : undefined;
+
+      const message = {
+        sender: 'doctor',
+        ...(actionType === 'Diagnosis' || actionType === 'Combined' ? { diagnosis } : {}),
+        ...(actionType === 'Prescription' || actionType === 'Combined'
+          ? { prescription: { ...prescription } }
+          : {}),
+        timestamp: new Date().toISOString(),
+        doctorId,
+        patientId: selectedPatientId,
+      };
+
+      try {
+        // Send message to chat
+        const chatResponse = await fetch(`http://localhost:5005/chats/${selectedPatientId}/${doctorId}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
+          body: JSON.stringify(message),
+          credentials: 'include',
+        });
+        if (!chatResponse.ok) throw new Error(`Failed to send message: ${chatResponse.statusText}`);
+        socketRef.current.emit('newMessage', message);
+        setMessages((prev) => {
+          if (!prev.some((msg) => msg.timestamp === message.timestamp)) {
+            return [...prev, message].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+          }
+          return prev;
+        });
+
+        // Update patient record
+        await fetch(`http://localhost:5005/patients/${selectedPatientId}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
+          body: JSON.stringify({
+            ...(actionType === 'Diagnosis' || actionType === 'Combined' ? { diagnosis } : {}),
+            ...(actionType === 'Prescription' || actionType === 'Combined' ? { prescription: prescriptionString } : {}),
+            doctorId,
+          }),
+          credentials: 'include',
+        });
+
+        // Notify admin
+        const selectedPatient = patients.find((p) => p.patientId === selectedPatientId);
+        const disease = actionType === 'Prescription' ? messages
+          .filter((msg) => msg.sender === 'doctor' && msg.diagnosis)
+          .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0]?.diagnosis : diagnosis;
+        await fetch('http://localhost:5005/admin_notifications', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
+          body: JSON.stringify({
+            patientId: selectedPatientId,
+            patientName: selectedPatientName,
+            age: selectedPatient?.age || 'N/A',
+            sex: selectedPatient?.sex || 'N/A',
+            description: 'N/A',
+            disease: disease || 'N/A',
+            medicine: (actionType === 'Prescription' || actionType === 'Combined') ? prescriptionString : undefined,
+            doctorId,
+          }),
+          credentials: 'include',
+        });
+
+        setDiagnosis('');
+        setPrescription({ medicine: '', dosage: '', frequency: '', duration: '' });
+        setShowActionModal(false);
+        setActionType('');
+      } catch (err) {
+        setError(`Failed to send action: ${err.message}`);
+      }
+    },
+    [actionType, diagnosis, prescription, selectedPatientId, doctorId, user.uid, selectedPatientName, patients, messages]
+  );
+
+  const readAloud = useCallback(
+    async (audioUrl, lang, fallbackText) => {
+      try {
+        if (!audioUrl && (!fallbackText || typeof fallbackText !== 'string' || fallbackText.trim() === '')) {
+          setError('Cannot read aloud: No valid audio or text provided.');
+          return;
+        }
+        const normalizedLang = lang === 'kn' ? 'kn-IN' : 'en-US';
+        const audioToPlay = audioUrl || (await textToSpeechConvert(fallbackText.trim(), normalizedLang));
+        audioRef.current.src = audioToPlay;
+        audioRef.current.play();
+      } catch (err) {
+        setError(`Failed to read aloud: ${err.message}`);
+      }
+    },
+    []
+  );
+
+  const dismissAlert = useCallback((alertId) => {
     setMissedDoseAlerts((prev) => prev.filter((alert) => alert.id !== alertId));
-  };
+  }, []);
 
-  const isValidPrescription = (prescription) => {
+  const isValidPrescription = useCallback((prescription) => {
     return (
       prescription &&
       prescription.medicine &&
@@ -565,7 +667,7 @@ function DoctorChat({ user, role, handleLogout }) {
       prescription.frequency &&
       prescription.duration
     );
-  };
+  }, []);
 
   return (
     <div className="doctor-chat-container">
@@ -575,6 +677,9 @@ function DoctorChat({ user, role, handleLogout }) {
         </button>
         <h2>{selectedPatientId ? `Chat with ${selectedPatientName}` : 'Doctor Dashboard'}</h2>
         <div className="header-actions">
+          <button onClick={() => setDoctorProfile(doctorProfile)} className="profile-button">
+            Profile
+          </button>
           <button onClick={handleLogout} className="logout-button">
             Logout
           </button>
@@ -633,17 +738,15 @@ function DoctorChat({ user, role, handleLogout }) {
                 <h3>Chat with {selectedPatientName}</h3>
                 <p>
                   {(() => {
-                    const patientAssignment = patients.find((p) => p.patientId === selectedPatientId);
-                    const hoursSinceAssignment = patientAssignment
-                      ? (new Date() - new Date(patientAssignment.timestamp)) / (1000 * 60 * 60)
-                      : Infinity;
-                    const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
-                    const hoursSinceLast = lastMessage
-                      ? (new Date() - new Date(lastMessage.timestamp)) / (1000 * 60 * 60)
-                      : Infinity;
-                    if (hoursSinceAssignment <= 24) return 'New patient (within 24 hours). ';
-                    if (hoursSinceLast >= 168) return 'Last chat over 7 days ago. ';
-                    return '';
+                    const timestamps = patientMessageTimestamps[selectedPatientId];
+                    if (!timestamps || !timestamps.firstMessageTime) {
+                      return 'New patient (within 24 hours). ';
+                    }
+                    const hoursSinceLastMessage = (new Date() - new Date(timestamps.lastMessageTime)) / (1000 * 60 * 60);
+                    if (hoursSinceLastMessage >= 168) {
+                      return 'Last chat over 7 days ago. ';
+                    }
+                    return 'New message from patient. ';
                   })()}
                   Chat now?
                 </p>
@@ -679,18 +782,21 @@ function DoctorChat({ user, role, handleLogout }) {
                   ) : (
                     messages.map((msg, index) => (
                       <div
-                        key={index}
+                        key={`${msg.timestamp}-${index}`}
                         className={`message ${msg.sender === 'doctor' ? 'doctor-message' : 'patient-message'}`}
                       >
                         <div className="message-content">
                           {msg.sender === 'patient' && (
                             <>
                               {(msg.recordingLanguage || msg.language) === 'en' ? (
-                                <>
-                                  <p>{msg.text || 'No transcription'}</p>
+                                <div className="message-block">
+                                  <p className="primary-text">{msg.text || 'No transcription'}</p>
                                   {msg.audioUrl && (
                                     <div className="audio-container">
-                                      <audio controls src={msg.audioUrl} />
+                                      <audio controls>
+                                        <source src={msg.audioUrl} type="audio/webm" />
+                                        Your browser does not support the audio element.
+                                      </audio>
                                       <a href={msg.audioUrl} download className="download-link">
                                         Download Audio
                                       </a>
@@ -699,23 +805,26 @@ function DoctorChat({ user, role, handleLogout }) {
                                   {msg.audioUrlEn && (
                                     <div className="read-aloud-buttons">
                                       <button
-                                        onClick={() => readAloud(null, 'en', msg.audioUrlEn)}
+                                        onClick={() => readAloud(msg.audioUrlEn, 'en', msg.text)}
                                         className="read-aloud-button"
                                       >
                                         🔊 (English)
                                       </button>
                                     </div>
                                   )}
-                                </>
+                                </div>
                               ) : (
-                                <>
-                                  <p>{msg.text || 'No transcription'}</p>
+                                <div className="message-block">
+                                  <p className="primary-text">{msg.text || 'No transcription'}</p>
                                   {msg.translatedText && (
-                                    <p className="translated-text">(English: {msg.translatedText})</p>
+                                    <p className="translated-text">English: {msg.translatedText}</p>
                                   )}
                                   {msg.audioUrl && (
                                     <div className="audio-container">
-                                      <audio controls src={msg.audioUrl} />
+                                      <audio controls>
+                                        <source src={msg.audioUrl} type="audio/webm" />
+                                        Your browser does not support the audio element.
+                                      </audio>
                                       <a href={msg.audioUrl} download className="download-link">
                                         Download Audio
                                       </a>
@@ -725,7 +834,7 @@ function DoctorChat({ user, role, handleLogout }) {
                                     <div className="read-aloud-buttons">
                                       {msg.audioUrlKn && (
                                         <button
-                                          onClick={() => readAloud(null, 'kn', msg.audioUrlKn)}
+                                          onClick={() => readAloud(msg.audioUrlKn, 'kn', msg.text)}
                                           className="read-aloud-button"
                                         >
                                           🔊 (Kannada)
@@ -733,7 +842,56 @@ function DoctorChat({ user, role, handleLogout }) {
                                       )}
                                       {msg.audioUrlEn && (
                                         <button
-                                          onClick={() => readAloud(null, 'en', msg.audioUrlEn)}
+                                          onClick={() =>
+                                            readAloud(msg.audioUrlEn, 'en', msg.translatedText || msg.text)
+                                          }
+                                          className="read-aloud-button"
+                                        >
+                                          🔊 (English)
+                                        </button>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </>
+                          )}
+                          {msg.sender === 'doctor' && (
+                            <div className="message-block">
+                              {msg.text && (
+                                <>
+                                  {languagePreference === 'en' ? (
+                                    <p className="primary-text">{msg.text}</p>
+                                  ) : (
+                                    <>
+                                      <p className="primary-text">{msg.translatedText || msg.text}</p>
+                                      {msg.text && <p className="translated-text">English: {msg.text}</p>}
+                                    </>
+                                  )}
+                                  {msg.audioUrl && (
+                                    <div className="audio-container">
+                                      <audio controls>
+                                        <source src={msg.audioUrl} type="audio/webm" />
+                                        Your browser does not support the audio element.
+                                      </audio>
+                                      <a href={msg.audioUrl} download className="download-link">
+                                        Download Audio
+                                      </a>
+                                    </div>
+                                  )}
+                                  {(msg.audioUrlEn || msg.audioUrlKn) && (
+                                    <div className="read-aloud-buttons">
+                                      {msg.audioUrlKn && (
+                                        <button
+                                          onClick={() => readAloud(msg.audioUrlKn, 'kn', msg.translatedText || msg.text)}
+                                          className="read-aloud-button"
+                                        >
+                                          🔊 (Kannada)
+                                        </button>
+                                      )}
+                                      {msg.audioUrlEn && (
+                                        <button
+                                          onClick={() => readAloud(msg.audioUrlEn, 'en', msg.text)}
                                           className="read-aloud-button"
                                         >
                                           🔊 (English)
@@ -743,88 +901,32 @@ function DoctorChat({ user, role, handleLogout }) {
                                   )}
                                 </>
                               )}
-                            </>
-                          )}
-                          {msg.sender === 'doctor' && (
-                            <>
-                              {msg.text && (
-                                <>
-                                  {languagePreference === 'en' ? (
-                                    <>
-                                      <p>{msg.text}</p>
-                                      {msg.audioUrl && (
-                                        <div className="audio-container">
-                                          <audio controls src={msg.audioUrl} />
-                                          <a href={msg.audioUrl} download className="download-link">
-                                            Download Audio
-                                          </a>
-                                        </div>
-                                      )}
-                                      {msg.audioUrlEn && (
-                                        <div className="read-aloud-buttons">
-                                          <button
-                                            onClick={() => readAloud(null, 'en', msg.audioUrlEn)}
-                                            className="read-aloud-button"
-                                          >
-                                            🔊 (English)
-                                          </button>
-                                        </div>
-                                      )}
-                                    </>
+                              {(msg.diagnosis || msg.prescription) && (
+                                <div className="recommendation-item">
+                                  {msg.diagnosis ? (
+                                    <div>
+                                      <strong>Diagnosis:</strong> {msg.diagnosis}
+                                      <button
+                                        onClick={() => readAloud(null, 'en', msg.diagnosis)}
+                                        className="read-aloud-button"
+                                      >
+                                        🔊
+                                      </button>
+                                    </div>
                                   ) : (
-                                    <>
-                                      <p>{msg.translatedText || msg.text}</p>
-                                      {msg.text && <p className="translated-text">(English: {msg.text})</p>}
-                                      {msg.audioUrl && (
-                                        <div className="audio-container">
-                                          <audio controls src={msg.audioUrl} />
-                                          <a href={msg.audioUrl} download className="download-link">
-                                            Download Audio
-                                          </a>
-                                        </div>
-                                      )}
-                                      {(msg.audioUrlEn || msg.audioUrlKn) && (
-                                        <div className="read-aloud-buttons">
-                                          {msg.audioUrlKn && (
-                                            <button
-                                              onClick={() => readAloud(null, 'kn', msg.audioUrlKn)}
-                                              className="read-aloud-button"
-                                            >
-                                              🔊 (Kannada)
-                                            </button>
-                                          )}
-                                          {msg.audioUrlEn && (
-                                            <button
-                                              onClick={() => readAloud(null, 'en', msg.audioUrlEn)}
-                                              className="read-aloud-button"
-                                            >
-                                              🔊 (English)
-                                            </button>
-                                          )}
-                                        </div>
-                                      )}
-                                    </>
+                                    <p className="missing-field">Diagnosis not provided.</p>
                                   )}
-                                </>
-                              )}
-                              {msg.diagnosis && (
-                                <div className="recommendation-item">
-                                  <strong>Diagnosis:</strong> {msg.diagnosis}
-                                  <button
-                                    onClick={() => readAloud(msg.diagnosis, 'en', null)}
-                                    className="read-aloud-button"
-                                  >
-                                    🔊
-                                  </button>
+                                  {msg.prescription && isValidPrescription(msg.prescription) ? (
+                                    <div>
+                                      <strong>Prescription:</strong>{' '}
+                                      {`${msg.prescription.medicine}, ${msg.prescription.dosage}, ${msg.prescription.frequency}, ${msg.prescription.duration}`}
+                                    </div>
+                                  ) : (
+                                    <p className="missing-field">Prescription not provided.</p>
+                                  )}
                                 </div>
                               )}
-                              {msg.prescription && isValidPrescription(msg.prescription) && (
-                                <div className="recommendation-item">
-                                  <strong>Prescription:</strong>{' '}
-                                  {`${msg.prescription.medicine}, ${msg.prescription.dosage}, ${msg.prescription.frequency}, ${msg.prescription.duration}`}
-                                </div>
-                              )}
-                            </>
+                            </div>
                           )}
                           <span className="timestamp">{new Date(msg.timestamp).toLocaleTimeString()}</span>
                         </div>
@@ -833,7 +935,19 @@ function DoctorChat({ user, role, handleLogout }) {
                   )}
                   <div ref={messagesEndRef} />
                 </div>
-                {error && <div className="error-message">{error}</div>}
+                {error && (
+                  <div className="error-message">
+                    {error}
+                    {failedUpload && (
+                      <button
+                        onClick={() => retryUpload(failedUpload.audioBlob, failedUpload.language)}
+                        className="retry-button"
+                      >
+                        Retry
+                      </button>
+                    )}
+                  </div>
+                )}
                 <div className="controls">
                   <div className="recording-buttons">
                     <button
@@ -864,6 +978,7 @@ function DoctorChat({ user, role, handleLogout }) {
                       onChange={(e) => setNewMessage(e.target.value)}
                       placeholder="Type a message (English only)..."
                       onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
+                      aria-label="Type a message to the patient"
                     />
                     <button onClick={sendMessage} className="send-button">
                       Send
@@ -882,62 +997,77 @@ function DoctorChat({ user, role, handleLogout }) {
       {showActionModal && (
         <div className="action-modal">
           <div className="modal-content">
-            <h3>{actionType === 'Diagnosis' ? 'Provide Diagnosis' : actionType === 'Prescription' ? 'Prescribe Medicine' : 'Select an Action'}</h3>
-            <select
-              value={actionType}
-              onChange={(e) => setActionType(e.target.value)}
-              aria-label="Select action type"
-            >
-              <option value="">Select an action...</option>
-              <option value="Diagnosis">Diagnosis</option>
-              <option value="Prescription">Prescription</option>
-            </select>
-            {actionType === 'Diagnosis' && (
-              <>
+            <h3>{actionType ? `${actionType} Entry` : 'Select an Action'}</h3>
+            <div className="action-type-selection">
+              <select
+                value={actionType}
+                onChange={(e) => setActionType(e.target.value)}
+                aria-label="Select action type (Diagnosis, Prescription, or Combined)"
+              >
+                <option value="">Select an action...</option>
+                <option value="Diagnosis">Diagnosis Only</option>
+                <option value="Prescription">Prescription Only</option>
+                <option value="Combined">Diagnosis and Prescription</option>
+              </select>
+              {(actionType === 'Diagnosis' || actionType === 'Combined') && (
                 <textarea
                   value={diagnosis}
                   onChange={(e) => setDiagnosis(e.target.value)}
                   placeholder="Enter diagnosis..."
+                  aria-label="Enter patient diagnosis"
                 />
-                <button onClick={sendDiagnosis} className="submit-button">
-                  Send Diagnosis
+              )}
+              {(actionType === 'Prescription' || actionType === 'Combined') && (
+                <>
+                  <input
+                    type="text"
+                    value={prescription.medicine}
+                    onChange={(e) => setPrescription({ ...prescription, medicine: e.target.value })}
+                    placeholder="Medicine (e.g., Paracetamol)"
+                    aria-label="Enter medicine name"
+                  />
+                  <input
+                    type="text"
+                    value={prescription.dosage}
+                    onChange={(e) => setPrescription({ ...prescription, dosage: e.target.value })}
+                    placeholder="Dosage (e.g., 500mg)"
+                    aria-label="Enter dosage"
+                  />
+                  <input
+                    type="text"
+                    value={prescription.frequency}
+                    onChange={(e) => setPrescription({ ...prescription, frequency: e.target.value })}
+                    placeholder="Frequency (e.g., 08:00 AM and 06:00 PM)"
+                    aria-label="Enter dosage frequency"
+                  />
+                  <input
+                    type="text"
+                    value={prescription.duration}
+                    onChange={(e) => setPrescription({ ...prescription, duration: e.target.value })}
+                    placeholder="Duration (e.g., 3 days)"
+                    aria-label="Enter prescription duration"
+                  />
+                </>
+              )}
+            </div>
+            <div className="modal-buttons">
+              {actionType && (
+                <button onClick={sendAction} className="submit-button">
+                  Send {actionType}
                 </button>
-              </>
-            )}
-            {actionType === 'Prescription' && (
-              <>
-                <input
-                  type="text"
-                  value={prescription.medicine}
-                  onChange={(e) => setPrescription({ ...prescription, medicine: e.target.value })}
-                  placeholder="Medicine (e.g., Paracetamol)"
-                />
-                <input
-                  type="text"
-                  value={prescription.dosage}
-                  onChange={(e) => setPrescription({ ...prescription, dosage: e.target.value })}
-                  placeholder="Dosage (e.g., 500mg)"
-                />
-                <input
-                  type="text"
-                  value={prescription.frequency}
-                  onChange={(e) => setPrescription({ ...prescription, frequency: e.target.value })}
-                  placeholder="Frequency (e.g., 08:00 AM and 06:00 PM)"
-                />
-                <input
-                  type="text"
-                  value={prescription.duration}
-                  onChange={(e) => setPrescription({ ...prescription, duration: e.target.value })}
-                  placeholder="Duration (e.g., 3 days)"
-                />
-                <button onClick={sendPrescription} className="submit-button">
-                  Send Prescription
-                </button>
-              </>
-            )}
-            <button onClick={() => setShowActionModal(false)} className="close-modal">
-              Close
-            </button>
+              )}
+              <button
+                onClick={() => {
+                  setShowActionModal(false);
+                  setActionType('');
+                  setDiagnosis('');
+                  setPrescription({ medicine: '', dosage: '', frequency: '', duration: '' });
+                }}
+                className="close-modal"
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -989,24 +1119,29 @@ function DoctorChat({ user, role, handleLogout }) {
           font-size: 1.8rem;
           font-weight: 600;
           color: #FFFFFF;
-          position: relative;
-        }
-
-        .chat-header h2::after {
-          content: '';
-          width: 40px;
-          height: 4px;
-          background: #6E48AA;
-          position: absolute;
-          bottom: -5px;
-          left: 0;
-          border-radius: 2px;
         }
 
         .header-actions {
           display: flex;
           align-items: center;
           gap: 15px;
+        }
+
+        .profile-button {
+          padding: 8px 20px;
+          background: #6E48AA;
+          color: #FFFFFF;
+          border: none;
+          border-radius: 25px;
+          font-size: 1rem;
+          font-weight: 500;
+          cursor: pointer;
+          transition: background 0.3s ease, transform 0.3s ease;
+        }
+
+        .profile-button:hover {
+          background: #5A3E8B;
+          transform: scale(1.05);
         }
 
         .logout-button {
@@ -1357,8 +1492,14 @@ function DoctorChat({ user, role, handleLogout }) {
           box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
         }
 
-        .message-content p {
-          margin: 0 0 5px;
+        .message-block {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        }
+
+        .primary-text {
+          margin: 0;
           font-size: 1rem;
           line-height: 1.4;
         }
@@ -1367,11 +1508,10 @@ function DoctorChat({ user, role, handleLogout }) {
           font-size: 0.85rem;
           font-style: italic;
           color: #B0B0B0;
-          margin-top: 5px;
+          margin: 0;
         }
 
         .audio-container {
-          margin-top: 10px;
           display: flex;
           flex-direction: column;
           gap: 5px;
@@ -1397,7 +1537,6 @@ function DoctorChat({ user, role, handleLogout }) {
         .read-aloud-buttons {
           display: flex;
           gap: 10px;
-          margin-top: 5px;
         }
 
         .read-aloud-button {
@@ -1422,10 +1561,16 @@ function DoctorChat({ user, role, handleLogout }) {
           padding: 15px;
           margin-bottom: 10px;
           display: flex;
-          justify-content: space-between;
-          align-items: center;
+          flex-direction: column;
+          gap: 10px;
           font-size: 1rem;
           color: #E0E0E0;
+        }
+
+        .recommendation-item div {
+          display: flex;
+          align-items: center;
+          gap: 10px;
           flex-wrap: wrap;
         }
 
@@ -1433,10 +1578,15 @@ function DoctorChat({ user, role, handleLogout }) {
           color: #FFFFFF;
         }
 
+        .missing-field {
+          color: #E74C3C;
+          font-style: italic;
+        }
+
         .timestamp {
           font-size: 0.8rem;
           color: #A0A0A0;
-          margin-top: 5px;
+          margin-top: 8px;
           display: block;
         }
 
@@ -1446,6 +1596,26 @@ function DoctorChat({ user, role, handleLogout }) {
           text-align: center;
           margin-bottom: 20px;
           animation: shake 0.5s ease;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 10px;
+        }
+
+        .retry-button {
+          padding: 6px 12px;
+          background: #F39C12;
+          color: #FFFFFF;
+          border: none;
+          border-radius: 20px;
+          font-size: 0.9rem;
+          cursor: pointer;
+          transition: background 0.3s ease, transform 0.3s ease;
+        }
+
+        .retry-button:hover {
+          background: #E67E22;
+          transform: scale(1.05);
         }
 
         .controls {
@@ -1545,7 +1715,6 @@ function DoctorChat({ user, role, handleLogout }) {
           outline: none;
           border-color: #6E48AA;
           box-shadow: 0 0 8px rgba(110, 72, 170, 0.3);
-          background: rgba(255, 255, 255, 0.05);
         }
 
         .text-input-container input::placeholder {
@@ -1610,6 +1779,12 @@ function DoctorChat({ user, role, handleLogout }) {
           margin-bottom: 10px;
         }
 
+        .action-type-selection {
+          display: flex;
+          flex-direction: column;
+          gap: 15px;
+        }
+
         .modal-content select,
         .modal-content input,
         .modal-content textarea {
@@ -1634,6 +1809,12 @@ function DoctorChat({ user, role, handleLogout }) {
         .modal-content textarea {
           min-height: 100px;
           resize: none;
+        }
+
+        .modal-buttons {
+          display: flex;
+          gap: 15px;
+          justify-content: center;
         }
 
         .submit-button {
