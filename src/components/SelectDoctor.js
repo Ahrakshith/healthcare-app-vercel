@@ -4,7 +4,7 @@ import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { db } from '../services/firebase.js';
 import { SPECIALTIES } from '../constants/specialties.js';
 
-function SelectDoctor({ user, role, patientId, handleLogout }) {
+function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
   const [specialty, setSpecialty] = useState('All');
   const [doctors, setDoctors] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -65,7 +65,7 @@ function SelectDoctor({ user, role, patientId, handleLogout }) {
     setError('');
 
     try {
-      const idToken = await user.getIdToken(true);
+      const idToken = await firebaseUser.getIdToken(true);
       const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
       const response = await fetch(`${apiUrl}/assign-doctor`, {
         method: 'POST',
@@ -106,7 +106,6 @@ function SelectDoctor({ user, role, patientId, handleLogout }) {
 
   const handleLogoutClick = () => {
     handleLogout();
-    navigate('/login');
   };
 
   return (
