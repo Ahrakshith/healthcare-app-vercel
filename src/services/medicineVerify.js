@@ -1,99 +1,168 @@
-// src/services/medicineVerify.js
-import { db } from './firebase.js';
-import { collection, addDoc } from 'firebase/firestore';
 import Papa from 'papaparse';
 
-let medicineData = null;
+// Cache for the parsed CSV data
+let cachedCsvData = null;
 
-async function loadMedicineData() {
-  if (medicineData) {
-    return medicineData;
+/**
+ * Fetches and parses the medicine_validation.csv file.
+ * Caches the result to avoid repeated fetches.
+ * @returns {Promise<Array<Array<string>>>} The parsed CSV rows.
+ */
+const fetchMedicineValidationCsv = async () => {
+  if (cachedCsvData) {
+    console.log('medicineVerify.js: Using cached CSV data');
+    return cachedCsvData;
   }
 
+  const csvPath = '/data/medicine_validation.csv';
+  console.log('medicineVerify.js: Attempting to fetch medicine_validation.csv from:', csvPath);
+
   try {
-    const response = await fetch('/Users/ah1/PycharmProjects/healthcare-app/healthcare-app/medicibe_validation.csv'); // Ensure correct path
+    const response = await fetch(csvPath);
     if (!response.ok) {
-      throw new Error(`Failed to fetch medicine.csv: ${response.statusText}`);
+      throw new Error(`Failed to fetch CSV: ${response.statusText}`);
     }
+
     const csvText = await response.text();
+    console.log('medicineVerify.js: Successfully fetched medicine_validation.csv, parsing content...');
 
     return new Promise((resolve, reject) => {
       Papa.parse(csvText, {
         header: false,
         skipEmptyLines: true,
         complete: (result) => {
-          const data = {};
           const rows = result.data;
+          console.log('medicineVerify.js: Parsed CSV rows:', rows);
 
           if (rows.length === 0) {
-            reject(new Error('No data found in medicine.csv'));
+            console.error('medicineVerify.js: No data found in medicine_validation.csv');
+            reject(new Error('No data found in medicine_validation.csv'));
             return;
           }
 
-          for (const row of rows) {
-            const cleanedRow = row.map((col) => col && col.trim().toLowerCase()).filter(Boolean);
-            if (cleanedRow.length > 1) {
-              const disease = cleanedRow[0];
-              data[disease] = new Set(cleanedRow.slice(1));
-            }
+          // Validate CSV structure: each row should have at least 2 columns (disease, medicine)
+          const invalidRows = rows.filter((row) => row.length < 2);
+          if (invalidRows.length > 0) {
+            console.error('medicineVerify.js: Invalid CSV structure - some rows have fewer than 2 columns:', invalidRows);
+            reject(new Error('Invalid CSV structure: Each row must have at least 2 columns (disease, medicine)'));
+            return;
           }
 
-          if (Object.keys(data).length === 0) {
-            reject(new Error('No valid data found in medicine.csv'));
-          }
-
-          medicineData = data;
-          resolve(data);
+          cachedCsvData = rows;
+          resolve(rows);
         },
-        error: (error) => reject(error),
+        error: (error) => {
+          console.error('medicineVerify.js: PapaParse error while parsing CSV:', error.message);
+          reject(new Error(`PapaParse error: ${error.message}`));
+        },
       });
     });
   } catch (error) {
-    console.error('Error loading medicine data:', error);
+    console.error('medicineVerify.js: Error fetching CSV:', error.message);
     throw error;
   }
-}
+};
 
+/**
+ * Verifies if a medicine is valid for a given disease based on the CSV data.
+ * @param {string} disease - The disease to verify.
+ * @param {string} medicine - The medicine to verify.
+ * @returns {Promise<{ success: boolean, message: string }>} The verification result.
+ */
 async function verifyMedicine(disease, medicine) {
   try {
+    // Input validation
     if (!disease || !medicine) {
-      return "Error: Both disease and medicine must be provided.";
+      return {
+        success: false,
+        message: 'Both disease and medicine must be provided.',
+      };
     }
 
-    const data = await loadMedicineData();
-    const diseaseKey = disease.trim().toLowerCase();
-    const medicineKey = medicine.trim().toLowerCase();
+    const normalizedDisease = disease.trim().toLowerCase();
+    const normalizedMedicine = medicine.trim().toLowerCase();
 
-    if (!(diseaseKey in data)) {
-      return "No disease doesn't exist in the DB";
+    const rows = await fetchMedicineValidationCsv();
+
+    // Iterate through each row in the CSV
+    for (const row of rows) {
+      if (row[0].trim().toLowerCase() === normalizedDisease) {
+        // Check if medicine exists in the row (columns 1 and beyond)
+        for (const item of row.slice(1)) {
+          if (item && item.trim().toLowerCase() === normalizedMedicine) {
+            console.log(`medicineVerify.js: Verification successful: disease=${disease}, medicine=${medicine}`);
+            return {
+              success: true,
+              message: 'Medication verified',
+            };
+          }
+        }
+        console.log(`medicineVerify.js: Medicine "${medicine}" not found for disease "${disease}"`);
+        return {
+          success: false,
+          message: 'Medicine not found for the specified disease.',
+        };
+      }
     }
 
-    return data[diseaseKey].has(medicineKey) ? "Medication verified" : "Error Wrong Medication";
+    console.log(`medicineVerify.js: Disease "${disease}" not found in database`);
+    return {
+      success: false,
+      message: 'Disease not found in the database.',
+    };
   } catch (error) {
-    console.error('Error verifying medicine:', error);
-    return `Error: ${error.message}`;
+    console.error('medicineVerify.js: Error verifying medicine:', error.message);
+    return {
+      success: false,
+      message: `Error verifying medicine: ${error.message}`,
+    };
   }
 }
 
-async function notifyAdmin(patientName, doctorName, disease, medicine) {
+/**
+ * Notifies the admin of an invalid prescription by sending a request to the server.
+ * @param {string} patientName - The name of the patient.
+ * @param {string} doctorName - The name of the doctor.
+ * @param {string} disease - The disease being treated.
+ * @param {string} medicine - The prescribed medicine.
+ * @param {string} patientId - The patient's ID.
+ * @param {string} doctorId - The doctor's ID.
+ * @returns {Promise<{ success: boolean, message: string }>} The notification result.
+ */
+async function notifyAdmin(patientName, doctorName, disease, medicine, patientId, doctorId) {
   try {
-    if (!patientName || !doctorName || !disease || !medicine) {
-      throw new Error('All fields are required to notify admin.');
+    // Input validation
+    if (!patientName || !doctorName || !disease || !medicine || !patientId || !doctorId) {
+      throw new Error('All fields (patientName, doctorName, disease, medicine, patientId, doctorId) are required to notify admin.');
     }
 
-    await addDoc(collection(db, 'admin_notifications'), {
-      patientName,
-      doctorName,
-      disease,
-      medicine,
-      status: 'invalid',
-      timestamp: new Date().toISOString(),
+    const response = await fetch('http://localhost:5005/notify-missed-dose', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        patientId,
+        doctorId,
+        message: `Invalid prescription: ${medicine} for ${disease} (Patient: ${patientName}, Doctor: ${doctorName})`,
+      }),
     });
 
-    console.log('Admin notified of invalid prescription.');
+    if (!response.ok) {
+      throw new Error(`Failed to notify admin: ${response.statusText}`);
+    }
+
+    console.log('medicineVerify.js: Admin notified of invalid prescription.');
+    return {
+      success: true,
+      message: 'Admin notified of invalid prescription.',
+    };
   } catch (error) {
-    console.error('Error notifying admin:', error);
-    throw error;
+    console.error('medicineVerify.js: Error notifying admin:', error.message);
+    return {
+      success: false,
+      message: `Error notifying admin: ${error.message}`,
+    };
   }
 }
 
