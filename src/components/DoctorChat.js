@@ -33,6 +33,8 @@ function DoctorChat({ user, role, handleLogout }) {
   const [showActionModal, setShowActionModal] = useState(false);
   const [actionType, setActionType] = useState('');
   const [patientMessageTimestamps, setPatientMessageTimestamps] = useState({});
+  const [isSocketConnected, setIsSocketConnected] = useState(false);
+  const [isSocketRetrying, setIsSocketRetrying] = useState(false);
   const audioRef = useRef(new Audio());
   const socketRef = useRef(null);
   const messagesEndRef = useRef(null);
@@ -113,63 +115,80 @@ function DoctorChat({ user, role, handleLogout }) {
     );
 
     return () => unsubscribe();
-  }, [doctorId]);
+  }, [doctorId, selectedPatientId]);
 
   // WebSocket and Data Fetching
   useEffect(() => {
     if (!selectedPatientId || !user?.uid || !doctorId) return;
 
-    socketRef.current = io(process.env.REACT_APP_WEBSOCKET_URL || 'wss://healthcare-app-vercel.vercel.app', {
-      auth: { uid: user.uid },
-      transports: ['websocket', 'polling'],
-      reconnection: true,
-      reconnectionAttempts: 5,
-      reconnectionDelay: 1000,
-      withCredentials: true,
-    });
-
-    socketRef.current.on('connect', () => {
-      console.log('DoctorChat.js: WebSocket connected, socket ID:', socketRef.current.id);
-      socketRef.current.emit('joinRoom', { patientId: selectedPatientId, doctorId });
-      console.log(`DoctorChat.js: Emitted joinRoom for patientId=${selectedPatientId}, doctorId=${doctorId}`);
-    });
-
-    socketRef.current.on('connect_error', (error) => {
-      console.error('DoctorChat.js: WebSocket connection error:', error.message);
-      setError(`WebSocket connection failed: ${error.message}`);
-    });
-
-    socketRef.current.on('error', (error) => {
-      console.error('DoctorChat.js: WebSocket error:', error.message, error.receivedData || '');
-      setError(`WebSocket error: ${error.message}`);
-    });
-
-    socketRef.current.on('newMessage', (message) => {
-      console.log('DoctorChat.js: Received new message:', { ...message, audioUrl: message.audioUrl ? '[Audio URL]' : null });
-      setMessages((prev) => {
-        if (!prev.some((msg) => msg.timestamp === message.timestamp && (!msg.text || msg.text === message.text))) {
-          const updatedMessages = [...prev, message].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-          if (message.sender === 'patient') {
-            setPatientMessageTimestamps((prevTimestamps) => ({
-              ...prevTimestamps,
-              [message.patientId]: {
-                firstMessageTime: prevTimestamps[message.patientId]?.firstMessageTime || message.timestamp,
-                lastMessageTime: message.timestamp,
-              },
-            }));
-          }
-          return updatedMessages;
-        }
-        console.log('DoctorChat.js: Skipped duplicate message:', message.timestamp, message.text);
-        return prev;
+    const connectSocket = () => {
+      socketRef.current = io(process.env.REACT_APP_WEBSOCKET_URL || 'wss://healthcare-app-vercel.vercel.app', {
+        auth: { uid: user.uid },
+        transports: ['websocket', 'polling'],
+        reconnection: true,
+        reconnectionAttempts: 10,
+        reconnectionDelay: 1000,
+        reconnectionDelayMax: 5000,
+        withCredentials: true,
       });
-    });
 
-    socketRef.current.on('missedDoseAlert', (alert) => {
-      if (alert.patientId === selectedPatientId) {
-        setMissedDoseAlerts((prev) => [...prev, { ...alert, id: Date.now().toString() }]);
-      }
-    });
+      socketRef.current.on('connect', () => {
+        setIsSocketConnected(true);
+        setIsSocketRetrying(false);
+        setError('');
+        socketRef.current.emit('joinRoom', { patientId: selectedPatientId, doctorId });
+      });
+
+      socketRef.current.on('connect_error', (error) => {
+        setIsSocketConnected(false);
+        setIsSocketRetrying(true);
+        setError('WebSocket connection failed. Retrying...');
+      });
+
+      socketRef.current.on('reconnect', () => {
+        setIsSocketConnected(true);
+        setIsSocketRetrying(false);
+        setError('');
+        socketRef.current.emit('joinRoom', { patientId: selectedPatientId, doctorId });
+      });
+
+      socketRef.current.on('reconnect_failed', () => {
+        setIsSocketConnected(false);
+        setIsSocketRetrying(false);
+        setError('Failed to reconnect to WebSocket. Please try again.');
+      });
+
+      socketRef.current.on('error', (error) => {
+        setError(`WebSocket error: ${error.message}`);
+      });
+
+      socketRef.current.on('newMessage', (message) => {
+        setMessages((prev) => {
+          if (!prev.some((msg) => msg.timestamp === message.timestamp && (!msg.text || msg.text === message.text))) {
+            const updatedMessages = [...prev, message].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+            if (message.sender === 'patient') {
+              setPatientMessageTimestamps((prevTimestamps) => ({
+                ...prevTimestamps,
+                [message.patientId]: {
+                  firstMessageTime: prevTimestamps[message.patientId]?.firstMessageTime || message.timestamp,
+                  lastMessageTime: message.timestamp,
+                },
+              }));
+            }
+            return updatedMessages;
+          }
+          return prev;
+        });
+      });
+
+      socketRef.current.on('missedDoseAlert', (alert) => {
+        if (alert.patientId === selectedPatientId) {
+          setMissedDoseAlerts((prev) => [...prev, { ...alert, id: Date.now().toString() }]);
+        }
+      });
+    };
+
+    connectSocket();
 
     const fetchMessages = async () => {
       setLoadingMessages(true);
@@ -261,11 +280,12 @@ function DoctorChat({ user, role, handleLogout }) {
       if (socketRef.current) {
         socketRef.current.off('connect');
         socketRef.current.off('connect_error');
+        socketRef.current.off('reconnect');
+        socketRef.current.off('reconnect_failed');
         socketRef.current.off('error');
         socketRef.current.off('newMessage');
         socketRef.current.off('missedDoseAlert');
         socketRef.current.disconnect();
-        console.log('DoctorChat.js: WebSocket disconnected');
       }
     };
   }, [selectedPatientId, user?.uid, doctorId]);
@@ -373,9 +393,24 @@ function DoctorChat({ user, role, handleLogout }) {
     [user.uid]
   );
 
+  const retrySocketConnection = useCallback(() => {
+    if (socketRef.current) {
+      socketRef.current.disconnect();
+    }
+    setIsSocketRetrying(true);
+    setError('Retrying WebSocket connection...');
+    setTimeout(() => {
+      socketRef.current.connect();
+    }, 1000);
+  }, []);
+
   const startRecording = useCallback(async () => {
     if (!selectedPatientId) {
       setError('No patient selected.');
+      return;
+    }
+    if (!isSocketConnected) {
+      setError('Cannot record: WebSocket connection is not active.');
       return;
     }
     try {
@@ -466,7 +501,7 @@ function DoctorChat({ user, role, handleLogout }) {
     } catch (err) {
       setError(`Failed to start recording: ${err.message}`);
     }
-  }, [selectedPatientId, languagePreference, user.uid]);
+  }, [selectedPatientId, languagePreference, user.uid, isSocketConnected]);
 
   const stopRecording = useCallback(() => {
     if (mediaRecorder) {
@@ -479,6 +514,10 @@ function DoctorChat({ user, role, handleLogout }) {
   const sendMessage = useCallback(async () => {
     if (!newMessage.trim() || !selectedPatientId || !user?.uid || !doctorId) {
       setError('Please type a message and select a patient.');
+      return;
+    }
+    if (!isSocketConnected) {
+      setError('Cannot send message: WebSocket connection is not active.');
       return;
     }
 
@@ -526,12 +565,16 @@ function DoctorChat({ user, role, handleLogout }) {
     } catch (err) {
       setError(`Failed to send message: ${err.message}`);
     }
-  }, [newMessage, selectedPatientId, user?.uid, doctorId, languagePreference]);
+  }, [newMessage, selectedPatientId, user?.uid, doctorId, languagePreference, isSocketConnected]);
 
   const sendAction = useCallback(
     async () => {
       if (!selectedPatientId) {
         setError('No patient selected.');
+        return;
+      }
+      if (!isSocketConnected) {
+        setError('Cannot send action: WebSocket connection is not active.');
         return;
       }
 
@@ -635,7 +678,7 @@ function DoctorChat({ user, role, handleLogout }) {
         setError(`Failed to send action: ${err.message}`);
       }
     },
-    [actionType, diagnosis, prescription, selectedPatientId, doctorId, user.uid, selectedPatientName, patients, messages]
+    [actionType, diagnosis, prescription, selectedPatientId, doctorId, user.uid, selectedPatientName, patients, messages, isSocketConnected]
   );
 
   const readAloud = useCallback(
@@ -670,15 +713,11 @@ function DoctorChat({ user, role, handleLogout }) {
     );
   }, []);
 
-  // Handle Logout with Debugging
   const onLogout = () => {
-    console.log('DoctorChat.js: Logout button clicked, calling handleLogout');
     if (handleLogout) {
       handleLogout();
-    } else {
-      console.error('DoctorChat.js: handleLogout function is not defined');
     }
-    navigate('/login'); // Fallback navigation
+    navigate('/login');
   };
 
   return (
@@ -955,8 +994,16 @@ function DoctorChat({ user, role, handleLogout }) {
                         onClick={() => retryUpload(failedUpload.audioBlob, failedUpload.language)}
                         className="retry-button"
                       >
-                        Retry
+                        Retry Upload
                       </button>
+                    )}
+                    {!isSocketConnected && !isSocketRetrying && (
+                      <button onClick={retrySocketConnection} className="retry-button">
+                        Retry Connection
+                      </button>
+                    )}
+                    {isSocketRetrying && (
+                      <div className="spinner"></div>
                     )}
                   </div>
                 )}
@@ -964,8 +1011,8 @@ function DoctorChat({ user, role, handleLogout }) {
                   <div className="recording-buttons">
                     <button
                       onClick={startRecording}
-                      disabled={recording}
-                      className={recording ? 'disabled-button' : 'start-button'}
+                      disabled={recording || !isSocketConnected}
+                      className={recording || !isSocketConnected ? 'disabled-button' : 'start-button'}
                     >
                       🎙️ Record
                     </button>
@@ -978,7 +1025,8 @@ function DoctorChat({ user, role, handleLogout }) {
                     </button>
                     <button
                       onClick={() => setShowActionModal(true)}
-                      className="action-button"
+                      disabled={!isSocketConnected}
+                      className={!isSocketConnected ? 'disabled-button' : 'action-button'}
                     >
                       ⚕️ Diagnosis/Prescription
                     </button>
@@ -990,9 +1038,14 @@ function DoctorChat({ user, role, handleLogout }) {
                       onChange={(e) => setNewMessage(e.target.value)}
                       placeholder="Type a message (English only)..."
                       onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
+                      disabled={!isSocketConnected}
                       aria-label="Type a message to the patient"
                     />
-                    <button onClick={sendMessage} className="send-button">
+                    <button
+                      onClick={sendMessage}
+                      disabled={!isSocketConnected}
+                      className={!isSocketConnected ? 'disabled-button' : 'send-button'}
+                    >
                       Send
                     </button>
                   </div>
@@ -1369,7 +1422,7 @@ function DoctorChat({ user, role, handleLogout }) {
         .decline-button {
           padding: 10px 25px;
           background: #E74C3C;
-          color: #FFFFFF;
+          color:suit: #FFFFFF;
           border: none;
           border-radius: 20px;
           font-size: 1rem;
@@ -1612,6 +1665,7 @@ function DoctorChat({ user, role, handleLogout }) {
           align-items: center;
           justify-content: center;
           gap: 10px;
+          flex-wrap: wrap;
         }
 
         .retry-button {
@@ -1628,6 +1682,20 @@ function DoctorChat({ user, role, handleLogout }) {
         .retry-button:hover {
           background: #E67E22;
           transform: scale(1.05);
+        }
+
+        .spinner {
+          width: 20px;
+          height: 20px;
+          border: 3px solid #F39C12;
+          border-top: 3px solid transparent;
+          border-radius: 50%;
+          animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
         }
 
         .controls {
@@ -1721,6 +1789,12 @@ function DoctorChat({ user, role, handleLogout }) {
           font-size: 1rem;
           color: #FFFFFF;
           transition: border-color 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        .text-input-container input:disabled {
+          background: rgba(255, 255, 255, 0.05);
+          color: #A0A0A0;
+          cursor: not-allowed;
         }
 
         .text-input-container input:focus {
