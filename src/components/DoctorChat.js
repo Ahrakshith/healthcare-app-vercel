@@ -159,7 +159,7 @@ function DoctorChat({ user, role, handleLogout }) {
       }
     });
 
-    // Fetch initial messages from Firestore via API
+    // Fetch initial messages from API
     const fetchMessages = async () => {
       setLoadingMessages(true);
       try {
@@ -182,7 +182,6 @@ function DoctorChat({ user, role, handleLogout }) {
         }
 
         const fetchedMessages = data.messages || [];
-
         const validatedMessages = await Promise.all(
           fetchedMessages.map(async (msg) => {
             const updatedMsg = { ...msg };
@@ -247,7 +246,7 @@ function DoctorChat({ user, role, handleLogout }) {
     const fetchMissedDoseAlerts = async () => {
       try {
         const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
-        const response = await fetch(`${apiUrl}/admin/admin_notifications`, {
+        const response = await fetch(`${apiUrl}/admin`, {
           headers: { 'x-user-uid': user.uid },
           credentials: 'include',
         });
@@ -264,13 +263,12 @@ function DoctorChat({ user, role, handleLogout }) {
           throw new Error(`Failed to parse alerts response as JSON: ${jsonError.message}`);
         }
 
-        // Ensure the response has the expected structure
-        if (!Array.isArray(notifications.notifications)) {
-          throw new Error('Invalid response format: Expected "notifications" array');
+        if (!Array.isArray(notifications)) {
+          throw new Error('Invalid response format: Expected an array of notifications');
         }
 
         setMissedDoseAlerts(
-          notifications.notifications
+          notifications
             .filter((n) => n.patientId === selectedPatientId)
             .map((n) => ({ ...n, id: n.id || Date.now().toString() }))
         );
@@ -283,7 +281,6 @@ function DoctorChat({ user, role, handleLogout }) {
     fetchLanguagePreference();
     fetchMissedDoseAlerts();
 
-    // Cleanup Pusher subscription on unmount
     return () => {
       pusher.unsubscribe(`chat-${selectedPatientId}-${doctorId}`);
       pusher.disconnect();
@@ -595,7 +592,7 @@ function DoctorChat({ user, role, handleLogout }) {
 
       try {
         const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
-        // Send message to chat
+        // Send message to chat (stored in GCS)
         const chatResponse = await fetch(`${apiUrl}/chats/${selectedPatientId}/${doctorId}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
@@ -627,7 +624,7 @@ function DoctorChat({ user, role, handleLogout }) {
         const disease = actionType === 'Prescription' ? messages
           .filter((msg) => msg.sender === 'doctor' && msg.diagnosis)
           .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0]?.diagnosis : diagnosis;
-        await fetch(`${apiUrl}/admin/admin_notifications`, {
+        await fetch(`${apiUrl}/admin`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
           body: JSON.stringify({

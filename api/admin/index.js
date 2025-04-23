@@ -1,89 +1,93 @@
+const { Storage } = require('@google-cloud/storage');
 const admin = require('firebase-admin');
+const { db } = require('../../services/firebaseAdmin'); // Adjust path as needed
+const { uploadWithRetry } = require('../../utils/gcsUtils'); // Custom utility for retry logic
 
+// Initialize Firebase Admin
 if (!admin.apps.length) {
   admin.initializeApp({
-    credential: admin.credential.cert({
-      projectId: process.env.FIREBASE_PROJECT_ID,
-      privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
-      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-    }),
+    credential: admin.credential.applicationDefault(),
   });
 }
 
-const db = admin.firestore();
+// Initialize GCS
+const storage = new Storage();
+const bucketName = 'healthcare-app-d8997-audio';
+const bucket = storage.bucket(bucketName);
 
-export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', 'https://healthcare-app-vercel.vercel.app');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST');
-  res.setHeader('Access-Control-Allow-Headers', 'x-user-uid, Content-Type');
+module.exports = async (req, res) => {
+  const { method } = req;
 
-  const pathSegments = req.url.split('/').filter(Boolean);
-  const endpoint = pathSegments[1]; // e.g., "admin_notifications" or "assign-doctor"
+  switch (method) {
+    case 'GET':
+      try {
+        const [files] = await bucket.getFiles({ prefix: 'admin_notifications/' });
+        const notifications = await Promise.all(
+          files.map(async (file) => {
+            try {
+              const [contents] = await file.download();
+              const data = JSON.parse(contents.toString('utf8'));
+              return { id: file.name.split('/')[1].replace('.json', ''), ...data };
+            } catch (fileError) {
+              console.error(`Error processing notification file ${file.name}:`, fileError.message);
+              return null;
+            }
+          })
+        );
+        const filteredNotifications = notifications.filter((n) => n);
+        console.log(`Fetched ${filteredNotifications.length} admin notifications`);
+        res.status(200).json(filteredNotifications);
+      } catch (error) {
+        console.error('Error fetching admin notifications:', error);
+        res.status(500).json({ error: 'Failed to fetch admin notifications', details: error.message });
+      }
+      break;
 
-  try {
-    const userId = req.headers['x-user-uid'];
-    if (!userId) {
-      return res.status(400).json({ error: 'Firebase UID is required in x-user-uid header' });
-    }
-
-    const userDoc = await db.collection('users').doc(userId).get();
-    if (!userDoc.exists) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-
-    const userData = userDoc.data();
-    if (userData.role !== 'admin') {
-      return res.status(403).json({ error: 'Unauthorized: Admin access required' });
-    }
-
-    if (endpoint === 'admin') {
-      const subEndpoint = pathSegments[2]; // "admin_notifications" or "assign-doctor"
-
-      if (subEndpoint === 'admin_notifications') {
-        if (req.method !== 'GET') {
-          return res.status(405).json({ error: 'Method not allowed' });
-        }
-
-        const notificationsSnapshot = await db.collection('admin_notifications').get();
-        const notifications = notificationsSnapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        }));
-
-        return res.status(200).json({ notifications });
-      } else if (subEndpoint === 'assign-doctor') {
-        if (req.method !== 'POST') {
-          return res.status(405).json({ error: 'Method not allowed' });
-        }
-
-        const { patientId, doctorId } = req.body;
+    case 'POST':
+      try {
+        const { patientName, age, sex, description, disease, medicine, patientId, doctorId } = req.body;
         if (!patientId || !doctorId) {
           return res.status(400).json({ error: 'patientId and doctorId are required' });
         }
 
-        const patientRef = await db.collection('patients').where('patientId', '==', patientId).get();
-        if (patientRef.empty) {
-          return res.status(404).json({ error: 'Patient not found' });
-        }
-
-        const doctorRef = await db.collection('doctors').where('doctorId', '==', doctorId).get();
-        if (doctorRef.empty) {
-          return res.status(404).json({ error: 'Doctor not found' });
-        }
-
-        await db.collection('doctor_assignments').add({
+        const notificationId = `${Date.now()}`;
+        const notificationData = {
+          patientName: patientName || 'Unknown',
+          age: age ? parseInt(age, 10) : null,
+          sex: sex || 'N/A',
+          description: description || 'N/A',
+          disease: disease || 'N/A',
+          medicine: medicine || null,
           patientId,
           doctorId,
-          assignedAt: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
+        };
+
+        const notificationFile = bucket.file(`admin_notifications/${notificationId}.json`);
+        await uploadWithRetry(notificationFile, JSON.stringify(notificationData), { contentType: 'application/json' });
+        console.log(`Notification ${notificationId} saved to GCS`);
+
+        // Emit to Pusher (assuming Pusher is configured in your project)
+        const Pusher = require('pusher');
+        const pusher = new Pusher({
+          appId: process.env.PUSHER_APP_ID,
+          key: process.env.PUSHER_KEY,
+          secret: process.env.PUSHER_SECRET,
+          cluster: 'ap2',
+          useTLS: true,
         });
+        pusher.trigger(`chat-${patientId}-${doctorId}`, 'missedDoseAlert', notificationData);
 
-        return res.status(200).json({ message: 'Doctor assigned successfully' });
+        res.status(200).json({ message: 'Notification saved', notificationId });
+      } catch (error) {
+        console.error('Error saving admin notification:', error);
+        res.status(500).json({ error: 'Failed to save notification', details: error.message });
       }
-    }
+      break;
 
-    return res.status(404).json({ error: 'Endpoint not found' });
-  } catch (error) {
-    console.error(`Error in /api/admin/${endpoint}:`, error.message);
-    res.status(500).json({ error: `Failed to process ${endpoint}`, details: error.message });
+    default:
+      res.setHeader('Allow', ['GET', 'POST']);
+      res.status(405).json({ error: `Method ${method} Not Allowed` });
+      break;
   }
-}
+};
