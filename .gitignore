@@ -13,7 +13,7 @@
 
 # misc
 .env
-.env*
+.env
 server/node_modules
 node_modules
 healthcare-app-d8997-d11ed6d0b101.json

@@ -1,10 +1,8 @@
-// src/components/SelectDoctor.js
 import React, { useState, useEffect } from 'react';
-import { SPECIALTIES } from '../constants/specialties.js';
 import { useNavigate } from 'react-router-dom';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { db } from '../services/firebase.js';
-import io from 'socket.io-client';
+import { SPECIALTIES } from '../constants/specialties.js';
 
 function SelectDoctor({ user, role, patientId, handleLogout }) {
   const [specialty, setSpecialty] = useState('All');
@@ -12,9 +10,7 @@ function SelectDoctor({ user, role, patientId, handleLogout }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const navigate = useNavigate();
-  const socketRef = React.useRef(null);
 
-  // Initialize WebSocket connection
   useEffect(() => {
     if (!user || role !== 'patient' || !patientId) {
       console.error('SelectDoctor: Invalid user state:', { user, role, patientId });
@@ -23,94 +19,41 @@ function SelectDoctor({ user, role, patientId, handleLogout }) {
       return;
     }
 
-    socketRef.current = io('http://localhost:5005', {
-      transports: ['websocket'],
-      withCredentials: true,
-      extraHeaders: {
-        'x-user-uid': user.uid,
-      },
-    });
-
-    socketRef.current.on('connect', () => {
-      console.log('SelectDoctor: WebSocket connected:', socketRef.current.id);
-      socketRef.current.emit('joinRoom', `${patientId}-*`);
-    });
-
-    socketRef.current.on('connect_error', (err) => {
-      console.error('SelectDoctor: WebSocket connection error:', err.message);
-      setError('Real-time updates unavailable, but you can still proceed.');
-    });
-
-    socketRef.current.on('doctorAdded', (newDoctor) => {
-      console.log('SelectDoctor: Received doctorAdded event:', newDoctor);
-      if (!doctors.some((doc) => doc.doctorId === newDoctor.doctorId)) {
-        setDoctors((prev) => [...prev, newDoctor]);
-      }
-    });
-
-    socketRef.current.on('doctorDeleted', (deletedDoctorId) => {
-      console.log('SelectDoctor: Received doctorDeleted event:', deletedDoctorId);
-      setDoctors((prev) => prev.filter((doc) => doc.doctorId !== deletedDoctorId));
-    });
-
-    socketRef.current.on('assignmentUpdated', (assignment) => {
-      console.log('SelectDoctor: Received assignment update:', assignment);
-      if (assignment.patientId === patientId) {
-        navigate(`/patient/language-preference/${patientId}/${assignment.doctorId}`);
-      }
-    });
-
-    socketRef.current.on('disconnect', () => {
-      console.log('SelectDoctor: WebSocket disconnected, attempting reconnect...');
-    });
-
-    return () => {
-      if (socketRef.current) {
-        socketRef.current.disconnect();
-        console.log('SelectDoctor: WebSocket cleanup completed');
-      }
-    };
-  }, [user, role, patientId, navigate]);
-
-  // Fetch and listen to doctors in real-time using Firestore
-  useEffect(() => {
-    if (!user || role !== 'patient' || !patientId) return;
-
-    setLoading(true);
-    setError('');
+    console.log('Fetching doctors for patient:', { patientId, uid: user.uid });
 
     const q = specialty === 'All'
       ? query(collection(db, 'doctors'))
       : query(collection(db, 'doctors'), where('specialty', '==', specialty));
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const doctorList = snapshot.docs.map((doc) => ({
-        doctorId: doc.id,
-        ...doc.data(),
-      }));
-      console.log('SelectDoctor: Real-time doctors fetched:', doctorList);
-      setDoctors(doctorList);
-      if (doctorList.length === 0) {
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const doctorList = snapshot.docs.map((doc) => ({
+          doctorId: doc.id,
+          ...doc.data(),
+        }));
+        console.log('SelectDoctor: Real-time doctors fetched:', doctorList);
+        setDoctors(doctorList);
         setError(
-          specialty === 'All'
-            ? 'No doctors available at this time.'
-            : `No doctors found for specialty: ${specialty}.`
+          doctorList.length === 0
+            ? specialty === 'All'
+              ? 'No doctors available at this time.'
+              : `No doctors found for specialty: ${specialty}.`
+            : ''
         );
-      } else {
-        setError('');
+        setLoading(false);
+      },
+      (err) => {
+        console.error('SelectDoctor: Firestore error:', err.message);
+        setError(`Failed to load doctors: ${err.message}`);
+        setDoctors([]);
+        setLoading(false);
       }
-      setLoading(false);
-    }, (err) => {
-      console.error('SelectDoctor: Error with Firestore snapshot:', err);
-      setError(`Failed to load doctors: ${err.message}`);
-      setDoctors([]);
-      setLoading(false);
-    });
+    );
 
-    return () => unsubscribe(); // Cleanup subscription
-  }, [specialty, user, role, patientId]);
+    return () => unsubscribe();
+  }, [specialty, user, role, patientId, navigate]);
 
-  // Handle doctor selection
   const handleDoctorSelect = async (doctorId) => {
     if (!patientId) {
       setError('Patient ID not found. Please log in again.');
@@ -122,34 +65,45 @@ function SelectDoctor({ user, role, patientId, handleLogout }) {
     setError('');
 
     try {
-      const response = await fetch('http://localhost:5005/assign-doctor', {
+      const idToken = await user.getIdToken(true);
+      const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
+      const response = await fetch(`${apiUrl}/assign-doctor`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${idToken}`,
           'x-user-uid': user.uid,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
         },
         body: JSON.stringify({ patientId, doctorId }),
-        credentials: 'include',
       });
 
+      console.log('AssignDoctor API response status:', response.status);
+      const responseText = await response.text();
+      console.log('Raw AssignDoctor API response:', responseText);
+
       if (!response.ok) {
-        const errorData = await response.json();
+        let errorData;
+        try {
+          errorData = JSON.parse(responseText);
+        } catch {
+          throw new Error(`AssignDoctor failed: ${response.status}`);
+        }
         throw new Error(errorData.error || 'Failed to assign doctor');
       }
 
-      const result = await response.json();
+      const result = JSON.parse(responseText);
       console.log(`SelectDoctor: Assigned doctor ${doctorId} to patient ${patientId}`, result);
 
       navigate(`/patient/language-preference/${patientId}/${doctorId}`);
     } catch (err) {
-      console.error('SelectDoctor: Error assigning doctor:', err);
+      console.error('SelectDoctor: Error assigning doctor:', err.message);
       setError(`Error assigning doctor: ${err.message}`);
     } finally {
       setLoading(false);
     }
   };
 
-  // Handle logout
   const handleLogoutClick = () => {
     handleLogout();
     navigate('/login');
