@@ -116,7 +116,7 @@ export default async function handler(req, res) {
     return res.status(200).end();
   }
 
-  const { patientId, doctorId } = req.query;
+  const { patientId, doctorId } = req.params; // Use params instead of query
   const userId = req.headers['x-user-uid'];
 
   if (!userId) {

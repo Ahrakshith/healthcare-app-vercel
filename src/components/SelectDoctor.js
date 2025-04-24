@@ -78,9 +78,8 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
   }
 
   const handleDoctorSelect = async (doctorId) => {
-    if (!patientId) {
-      setError('Patient ID not found. Please log in again.');
-      navigate('/login');
+    if (!patientId || !doctorId) {
+      setError('Patient ID or Doctor ID not found. Please try again.');
       return;
     }
 
@@ -101,19 +100,20 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
         credentials: 'include',
       });
 
-      console.log('AssignDoctor API response status:', response.status);
-      const responseText = await response.text();
-      console.log('Raw AssignDoctor API response:', responseText);
-
-      const result = JSON.parse(responseText);
+      const result = await response.json();
       console.log(`SelectDoctor: Assigned doctor ${doctorId} to patient ${patientId}`, result);
 
+      // Redirect to language preference page
       navigate(`/patient/language-preference/${patientId}/${doctorId}`);
     } catch (err) {
       console.error('SelectDoctor: Error assigning doctor:', err.message);
       setError(
         `Error assigning doctor: ${
-          err.message.includes('404') ? 'Endpoint not found. Please contact support.' : err.message
+          err.message.includes('404')
+            ? 'Endpoint not found. Please ensure the server is updated.'
+            : err.message.includes('403')
+            ? 'Access denied. Please verify your role.'
+            : err.message
         }`
       );
     } finally {
@@ -124,7 +124,6 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
   const handleLogoutClick = async () => {
     try {
       await signOut(auth);
-      // Optionally call the logout API for server-side cleanup
       await fetch(`${apiBaseUrl}/misc/logout`, {
         method: 'POST',
         headers: {

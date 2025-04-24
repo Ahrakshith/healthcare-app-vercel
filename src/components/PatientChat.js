@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Pusher from 'pusher-js';
@@ -7,7 +6,7 @@ import { verifyMedicine, notifyAdmin } from '../services/medicineVerify.js';
 import { doc, getDoc, collection, addDoc, getDocs, updateDoc } from 'firebase/firestore';
 import { db } from '../services/firebase.js';
 
-function PatientChat({ user, role, patientId, handleLogout }) {
+function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   const { patientId: urlPatientId, doctorId } = useParams();
   const [messages, setMessages] = useState([]);
   const [recording, setRecording] = useState(false);
@@ -189,8 +188,12 @@ function PatientChat({ user, role, patientId, handleLogout }) {
 
     const fetchMessages = async () => {
       try {
+        const idToken = await firebaseUser.getIdToken(true);
         const response = await fetch(`${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`, {
-          headers: { 'x-user-uid': effectiveUserId },
+          headers: {
+            'x-user-uid': effectiveUserId,
+            'Authorization': `Bearer ${idToken}`,
+          },
           credentials: 'include',
         });
         if (!response.ok && response.status !== 404) throw new Error(`Failed to fetch messages: ${response.statusText}`);
@@ -242,7 +245,7 @@ function PatientChat({ user, role, patientId, handleLogout }) {
         console.log('PatientChat.js: Pusher disconnected');
       }
     };
-  }, [effectiveUserId, effectivePatientId, doctorId, languagePreference, apiBaseUrl]);
+  }, [effectiveUserId, effectivePatientId, doctorId, languagePreference, apiBaseUrl, firebaseUser]);
 
   const normalizeLanguageCode = useCallback((code) => {
     switch (code?.toLowerCase()) {
@@ -603,95 +606,48 @@ function PatientChat({ user, role, patientId, handleLogout }) {
         }
 
         const normalizedTranscriptionLanguage = normalizeLanguageCode(transcriptionLanguage);
-        let transcriptionResult;
-        let audioUrl;
-        let audioUrlEn;
-        let audioUrlKn = null;
         let text;
         let translatedText = null;
-        let recordingLanguage = transcriptionLanguage;
 
         try {
-          transcriptionResult = await transcribeAudio(audioBlob, normalizedTranscriptionLanguage, effectiveUserId);
-          audioUrl = transcriptionResult.audioUrl;
-          if (!audioUrl) {
-            setError('Transcription succeeded, but no audio URL was returned.');
-            return;
-          }
-          const response = await fetch(audioUrl, { method: 'HEAD' });
-          if (!response.ok) {
-            setError(`Audio URL inaccessible: ${audioUrl} (Status: ${response.status})`);
-            return;
+          const transcriptionResult = await transcribeAudio(audioBlob, normalizedTranscriptionLanguage, effectiveUserId);
+          text = transcriptionResult.transcription || 'Transcription failed';
+
+          if (languagePreference === 'en' && transcriptionLanguage === 'kn') {
+            translatedText = await translateText(text, 'kn', 'en');
+          } else if (languagePreference === 'kn' && transcriptionLanguage === 'en') {
+            translatedText = await translateText(text, 'en', 'kn');
           }
 
-          if (languagePreference === 'en' && transcriptionLanguage === 'en') {
-            text = transcriptionResult.transcription || 'Transcription failed';
-            translatedText = null;
-            audioUrlEn = await textToSpeechConvert(text, 'en-US');
-            recordingLanguage = 'en';
-          } else if (languagePreference === 'en' && transcriptionLanguage === 'kn') {
-            text = transcriptionResult.transcription || 'Transcription failed';
-            translatedText = await translateText(text, 'kn', 'en');
-            audioUrlEn = await textToSpeechConvert(translatedText, 'en-US');
-            audioUrlKn = await textToSpeechConvert(text, 'kn-IN');
-            recordingLanguage = 'kn';
-          } else if (languagePreference === 'kn' && transcriptionLanguage === 'kn') {
-            text = transcriptionResult.transcription || 'Transcription failed';
-            translatedText = await translateText(text, 'kn', 'en');
-            audioUrlEn = await textToSpeechConvert(translatedText, 'en-US');
-            audioUrlKn = await textToSpeechConvert(text, 'kn-IN');
-            recordingLanguage = 'kn';
-          } else if (languagePreference === 'kn' && transcriptionLanguage === 'en') {
-            text = transcriptionResult.transcription || 'Transcription failed';
-            translatedText = null;
-            audioUrlEn = await textToSpeechConvert(text, 'en-US');
-            recordingLanguage = 'en';
-          }
+          const formData = new FormData();
+          formData.append('audio', audioBlob, `audio_${new Date().toISOString()}.webm`);
+          formData.append('sender', 'patient');
+          formData.append('text', text);
+          formData.append('translatedText', translatedText || '');
+          formData.append('timestamp', new Date().toISOString());
+          formData.append('language', transcriptionLanguage);
+          formData.append('recordingLanguage', transcriptionLanguage);
+          formData.append('doctorId', doctorId);
+          formData.append('userId', effectivePatientId);
+
+          const idToken = await firebaseUser.getIdToken(true);
+          const response = await fetch(`${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`, {
+            method: 'POST',
+            headers: {
+              'x-user-uid': effectiveUserId,
+              'Authorization': `Bearer ${idToken}`,
+            },
+            body: formData,
+            credentials: 'include',
+          });
+
+          if (!response.ok) throw new Error(`Failed to save message: ${response.statusText}`);
+          const data = await response.json();
+          setMessages((prev) => [...prev, data.newMessage].sort((a, b) => a.timestamp.localeCompare(b.timestamp)));
         } catch (err) {
           setError(`Failed to process audio: ${err.message}`);
           setFailedUpload({ audioBlob, language: normalizedTranscriptionLanguage });
           return;
-        }
-
-        const newMessage = {
-          sender: 'patient',
-          text,
-          translatedText,
-          timestamp: new Date().toISOString(),
-          language: transcriptionLanguage,
-          recordingLanguage,
-          audioUrl,
-          audioUrlEn,
-          audioUrlKn,
-          doctorId,
-          userId: effectivePatientId,
-        };
-
-        setMessages((prev) => {
-          if (!prev.some((msg) => msg.timestamp === newMessage.timestamp && msg.text === newMessage.text)) {
-            return [...prev, newMessage].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-          }
-          console.log('PatientChat.js: Skipped duplicate message:', newMessage.timestamp, newMessage.text);
-          return prev;
-        });
-
-        try {
-          const response = await fetch(`${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'x-user-uid': effectiveUserId,
-            },
-            body: JSON.stringify(newMessage),
-            credentials: 'include',
-          });
-          if (!response.ok) throw new Error(`Failed to save message: ${response.statusText}`);
-          console.log('PatientChat.js: Message sent to backend successfully');
-          if (languagePreference === 'kn') {
-            setTranscriptionLanguage('kn');
-          }
-        } catch (err) {
-          setError(`Failed to save message: ${err.message}`);
         }
       };
 
@@ -748,85 +704,35 @@ function PatientChat({ user, role, patientId, handleLogout }) {
 
     const formData = new FormData();
     formData.append('image', file);
-    formData.append('uid', effectiveUserId);
-    formData.append('patientId', effectivePatientId);
+    formData.append('sender', 'patient');
+    formData.append('timestamp', new Date().toISOString());
+    formData.append('doctorId', doctorId);
+    formData.append('userId', effectivePatientId);
+    formData.append('messageType', 'image');
 
     try {
-      const response = await fetch(`${apiBaseUrl}/uploadImage/${effectivePatientId}`, {
+      const idToken = await firebaseUser.getIdToken(true);
+      const response = await fetch(`${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`, {
         method: 'POST',
-        body: formData,
         headers: {
           'x-user-uid': effectiveUserId,
+          'Authorization': `Bearer ${idToken}`,
         },
+        body: formData,
         credentials: 'include',
       });
 
       if (!response.ok) {
         let errorMessage = `Image upload failed: ${response.statusText}`;
-        if (response.status === 503) {
-          errorMessage = 'Image upload to cloud failed. Saved locally on server. Please try again later.';
-        } else if (response.status === 400) {
-          errorMessage = 'Bad request. Please check the file and try again.';
-        } else if (response.status === 401) {
-          errorMessage = 'Unauthorized. Please log in again.';
-          navigate('/login');
-        }
         throw new Error(errorMessage);
       }
 
-      const { imageUrl } = await response.json();
-      if (!imageUrl) {
+      const data = await response.json();
+      if (!data.newMessage.imageUrl) {
         throw new Error('Image upload succeeded, but no image URL was returned.');
       }
 
-      const responseHead = await fetch(imageUrl, { method: 'HEAD' });
-      if (!responseHead.ok) {
-        throw new Error(`Image URL inaccessible: ${imageUrl} (Status: ${responseHead.status})`);
-      }
-
-      const imageMessage = {
-        sender: 'patient',
-        imageUrl,
-        text: null,
-        translatedText: null,
-        language: 'en',
-        recordingLanguage: null,
-        audioUrl: null,
-        audioUrlEn: null,
-        audioUrlKn: null,
-        timestamp: new Date().toISOString(),
-        doctorId,
-        userId: effectiveUserId,
-        patientId: effectivePatientId,
-        messageType: 'image',
-      };
-
-      setMessages((prev) => {
-        if (!prev.some((msg) => msg.timestamp === imageMessage.timestamp && msg.imageUrl === imageMessage.imageUrl)) {
-          return [...prev, imageMessage].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-        }
-        console.log('PatientChat.js: Skipped duplicate image message:', imageMessage.timestamp);
-        return prev;
-      });
-
-      try {
-        const chatResponse = await fetch(`${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-user-uid': effectiveUserId,
-          },
-          body: JSON.stringify(imageMessage),
-          credentials: 'include',
-        });
-        if (!chatResponse.ok) {
-          throw new Error(`Failed to save image message: ${chatResponse.statusText}`);
-        }
-      } catch (err) {
-        setError(`Failed to save image message: ${err.message}`);
-        setMessages((prev) => prev.filter((msg) => msg.timestamp !== imageMessage.timestamp));
-        setFailedUpload({ file, type: 'image' });
-      }
+      setMessages((prev) => [...prev, data.newMessage].sort((a, b) => a.timestamp.localeCompare(b.timestamp)));
     } catch (err) {
       setError(err.message);
       setFailedUpload({ file, type: 'image' });
@@ -872,16 +778,20 @@ function PatientChat({ user, role, patientId, handleLogout }) {
     setTextInput('');
 
     try {
+      const idToken = await firebaseUser.getIdToken(true);
       const response = await fetch(`${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'x-user-uid': effectiveUserId,
+          'Authorization': `Bearer ${idToken}`,
         },
         body: JSON.stringify(newMessage),
         credentials: 'include',
       });
       if (!response.ok) throw new Error(`Failed to save text message: ${response.statusText}`);
+      const data = await response.json();
+      setMessages((prev) => [...prev.filter(msg => msg.timestamp !== newMessage.timestamp), data.newMessage].sort((a, b) => a.timestamp.localeCompare(b.timestamp)));
     } catch (err) {
       setError(`Failed to save text message: ${err.message}`);
     }
@@ -908,16 +818,20 @@ function PatientChat({ user, role, patientId, handleLogout }) {
     });
 
     try {
+      const idToken = await firebaseUser.getIdToken(true);
       const response = await fetch(`${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'x-user-uid': effectiveUserId,
+          'Authorization': `Bearer ${idToken}`,
         },
         body: JSON.stringify(quickMessage),
         credentials: 'include',
       });
       if (!response.ok) throw new Error(`Failed to save quick reply message: ${response.statusText}`);
+      const data = await response.json();
+      setMessages((prev) => [...prev.filter(msg => msg.timestamp !== quickMessage.timestamp), data.newMessage].sort((a, b) => a.timestamp.localeCompare(b.timestamp)));
     } catch (err) {
       setError(`Failed to save quick reply message: ${err.message}`);
     }
@@ -1989,13 +1903,6 @@ function PatientChat({ user, role, patientId, handleLogout }) {
           gap: 10px;
           margin-bottom: 15px;
         }
-
-        .text-input-container input {
-          flex: 1;
-          padding: 12px 20px;
-          background: rgba(255, 255, 255, 0.1);
-          border: 1px solid rgba(255, 255, 255, 0.2);
-          border-radius: 25px;
 
         .text-input-container input {
           flex: 1;

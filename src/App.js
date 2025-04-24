@@ -39,11 +39,6 @@ const NotFound = () => {
           font-size: 1.2rem;
           margin: 5px 0;
         }
-        code {
-          background: rgba(255, 255, 255, 0.1);
-          padding: 2px 6px;
-          border-radius: 4px;
-        }
         a {
           color: #6E48AA;
           text-decoration: underline;
@@ -147,7 +142,6 @@ function App() {
       console.log('App.js: Initiating logout');
     }
     try {
-      // Call the server-side logout endpoint
       const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
       const response = await fetch(`${apiUrl}/misc/logout`, {
         method: 'POST',
@@ -159,19 +153,12 @@ function App() {
         throw new Error(`Logout failed: ${response.statusText}`);
       }
 
-      // Sign out from Firebase
       await firebaseAuth.signOut();
       if (process.env.NODE_ENV !== 'production') {
         console.log('App.js: User logged out successfully from Firebase');
       }
 
-      // Clear client-side state
-      setFirebaseUser(null);
-      setUser(null);
-      setRole(null);
-      setPatientId(null);
-      localStorage.removeItem('userId');
-      localStorage.removeItem('patientId');
+      handleAuthFailure();
     } catch (err) {
       console.error('App.js: Logout error:', err.message);
       setError(`Failed to log out: ${err.message}`);
@@ -260,6 +247,7 @@ function App() {
           element={
             user && role === 'patient' ? (
               <LanguagePreference
+                firebaseUser={firebaseUser}
                 user={user}
                 role={role}
                 patientId={patientId}
@@ -274,9 +262,11 @@ function App() {
           element={
             user && role === 'patient' ? (
               <PatientChat
+                firebaseUser={firebaseUser}
                 user={user}
                 role={role}
                 patientId={patientId}
+                doctorId={patientId.split('/').pop()} // Temporary fix, adjust as needed
                 handleLogout={handleLogout}
               />
             ) : (
