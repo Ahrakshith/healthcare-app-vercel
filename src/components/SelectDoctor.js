@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
-import { db } from '../services/firebase.js';
+import { db, auth } from '../services/firebase.js'; // Ensure firebase.js exports auth
 import { SPECIALTIES } from '../constants/specialties.js';
+import { signOut } from 'firebase/auth'; // For logout functionality
 
 function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
   const [specialty, setSpecialty] = useState('All');
@@ -87,9 +88,9 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
         try {
           errorData = JSON.parse(responseText);
         } catch {
-          throw new Error(`AssignDoctor failed: ${response.status}`);
+          throw new Error(`AssignDoctor failed: ${response.status} - ${responseText || 'Unknown error'}`);
         }
-        throw new Error(errorData.error || 'Failed to assign doctor');
+        throw new Error(errorData.error?.message || errorData.error || 'Failed to assign doctor');
       }
 
       const result = JSON.parse(responseText);
@@ -104,8 +105,16 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
     }
   };
 
-  const handleLogoutClick = () => {
-    handleLogout();
+  const handleLogoutClick = async () => {
+    try {
+      await signOut(auth); // Firebase logout
+      handleLogout(); // Custom logout handler (e.g., clears state)
+      navigate('/login');
+      console.log('Logged out successfully');
+    } catch (err) {
+      console.error('Logout error:', err.message);
+      setError('Failed to log out. Please try again.');
+    }
   };
 
   return (
