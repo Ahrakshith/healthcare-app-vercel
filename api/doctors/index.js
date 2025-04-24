@@ -1,5 +1,3 @@
-//api/doctors/index.js
-import { Storage } from '@google-cloud/storage';
 import admin from 'firebase-admin';
 import Pusher from 'pusher';
 
@@ -27,29 +25,6 @@ if (!admin.apps.length) {
 
 const db = admin.firestore();
 
-// Initialize Google Cloud Storage (GCS)
-let storage;
-try {
-  const gcsPrivateKey = process.env.GCS_PRIVATE_KEY?.replace(/\\n/g, '\n');
-  if (!process.env.GCS_CLIENT_EMAIL || !gcsPrivateKey) {
-    throw new Error('Missing GCS credentials: GCS_CLIENT_EMAIL or GCS_PRIVATE_KEY');
-  }
-
-  storage = new Storage({
-    credentials: {
-      client_email: process.env.GCS_CLIENT_EMAIL,
-      private_key: gcsPrivateKey,
-    },
-  });
-  console.log('Google Cloud Storage initialized successfully');
-} catch (error) {
-  console.error('GCS initialization failed:', error.message);
-  throw new Error(`GCS initialization failed: ${error.message}`);
-}
-
-const bucketName = 'fir-project-vercel';
-const bucket = storage.bucket(bucketName);
-
 // Initialize Pusher
 let pusher;
 try {
@@ -69,7 +44,7 @@ try {
   throw new Error(`Pusher initialization failed: ${error.message}`);
 }
 
-// Retry logic for Firestore and GCS operations
+// Retry logic for Firestore operations
 async function operationWithRetry(operation, retries = 3, backoff = 1000) {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
@@ -118,31 +93,11 @@ async function checkRole(requiredRole, req, res, next) {
   }
 }
 
-// Upload with retry logic
-async function uploadWithRetry(file, buffer, metadata, retries = 3, backoff = 1000) {
-  for (let attempt = 1; attempt <= retries; attempt++) {
-    try {
-      await file.save(buffer, { metadata });
-      console.log(`Upload successful on attempt ${attempt} for ${file.name}`);
-      return true;
-    } catch (error) {
-      if (attempt === retries) {
-        console.error(`Upload failed after ${retries} retries for ${file.name}: ${error.message}`);
-        throw error;
-      }
-      console.warn(`Upload attempt ${attempt} failed for ${file.name}: ${error.message}`);
-      await new Promise((resolve) => setTimeout(resolve, backoff * attempt));
-    }
-  }
-}
-
 export default async function handler(req, res) {
-  // Set CORS headers
   res.setHeader('Access-Control-Allow-Origin', process.env.FRONTEND_URL || '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'x-user-uid, Content-Type, Authorization');
 
-  // Handle preflight requests
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
@@ -154,96 +109,45 @@ export default async function handler(req, res) {
 
   try {
     if (req.method === 'GET' && endpoint === 'doctors' && !param) {
-      // Handle /api/doctors (GET all doctors)
-      let files;
-      try {
-        [files] = await operationWithRetry(() => bucket.getFiles({ prefix: 'doctors/' }));
-      } catch (error) {
-        console.error('Failed to fetch files from GCS:', error.message);
-        return res.status(500).json({ error: { code: 500, message: 'Failed to fetch doctor files from storage', details: error.message } });
-      }
-
-      if (!files || files.length === 0) {
-        console.warn('No doctor files found in GCS bucket');
+      // Fetch all doctors from Firestore
+      const doctorsSnapshot = await operationWithRetry(() => db.collection('doctors').get());
+      if (doctorsSnapshot.empty) {
+        console.warn('No doctors found in Firestore');
         return res.status(404).json({ error: { code: 404, message: 'No doctors found' } });
       }
 
-      const doctorList = await Promise.all(
-        files.map(async (file) => {
-          try {
-            const [contents] = await operationWithRetry(() => file.download());
-            const data = JSON.parse(contents.toString('utf8'));
-            return { id: file.name.split('/')[1].replace('.json', ''), ...data };
-          } catch (fileError) {
-            console.error(`Error processing doctor file ${file.name}: ${fileError.message}`);
-            return null;
-          }
-        })
-      );
+      const doctorList = doctorsSnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
 
-      const filteredDoctors = doctorList.filter((doctor) => doctor !== null);
-      if (filteredDoctors.length === 0) {
-        console.warn('No valid doctor data after processing');
-        return res.status(404).json({ error: { code: 404, message: 'No valid doctors found' } });
-      }
-
-      return res.status(200).json(filteredDoctors);
+      return res.status(200).json(doctorList);
     } else if (req.method === 'GET' && endpoint === 'doctors' && param && param !== 'by-specialty') {
-      // Handle /api/doctors/[id] (GET specific doctor)
-      const doctorFile = bucket.file(`doctors/${param}.json`);
-      let exists;
-      try {
-        [exists] = await operationWithRetry(() => doctorFile.exists());
-      } catch (error) {
-        console.error(`Failed to check if doctor file exists (${doctorFile.name}): ${error.message}`);
-        return res.status(500).json({ error: { code: 500, message: 'Failed to check doctor file existence', details: error.message } });
-      }
-
-      if (!exists) {
+      // Fetch a specific doctor by ID from Firestore
+      const doctorDoc = await operationWithRetry(() => db.collection('doctors').doc(param).get());
+      if (!doctorDoc.exists) {
         return res.status(404).json({ error: { code: 404, message: 'Doctor not found' } });
       }
 
-      let contents;
-      try {
-        [contents] = await operationWithRetry(() => doctorFile.download());
-      } catch (error) {
-        console.error(`Failed to download doctor file (${doctorFile.name}): ${error.message}`);
-        return res.status(500).json({ error: { code: 500, message: 'Failed to download doctor file', details: error.message } });
-      }
-
-      return res.status(200).json(JSON.parse(contents.toString('utf8')));
+      return res.status(200).json({ id: doctorDoc.id, ...doctorDoc.data() });
     } else if (req.method === 'GET' && endpoint === 'doctors' && param === 'by-specialty' && specialty) {
-      // Handle /api/doctors/by-specialty/[specialty] (GET doctors by specialty)
-      let files;
-      try {
-        [files] = await operationWithRetry(() => bucket.getFiles({ prefix: 'doctors/' }));
-      } catch (error) {
-        console.error('Failed to fetch files from GCS for specialty:', error.message);
-        return res.status(500).json({ error: { code: 500, message: 'Failed to fetch doctor files from storage', details: error.message } });
-      }
-
-      if (!files || files.length === 0) {
-        console.warn('No doctor files found in GCS bucket for specialty');
-        return res.status(404).json({ error: { code: 404, message: 'No doctors found' } });
-      }
-
-      const doctorList = await Promise.all(
-        files.map(async (file) => {
-          try {
-            const [contents] = await operationWithRetry(() => file.download());
-            const data = JSON.parse(contents.toString('utf8'));
-            return data.specialty === specialty ? { id: file.name.split('/')[1].replace('.json', ''), ...data } : null;
-          } catch (fileError) {
-            console.error(`Error processing doctor file ${file.name}: ${fileError.message}`);
-            return null;
-          }
-        })
+      // Fetch doctors by specialty from Firestore
+      const doctorsSnapshot = await operationWithRetry(() =>
+        db.collection('doctors').where('specialty', '==', specialty).get()
       );
+      if (doctorsSnapshot.empty) {
+        console.warn(`No doctors found with specialty: ${specialty}`);
+        return res.status(404).json({ error: { code: 404, message: `No doctors found with specialty: ${specialty}` } });
+      }
 
-      const filteredDoctors = doctorList.filter((doctor) => doctor !== null);
-      return res.status(200).json(filteredDoctors.length > 0 ? filteredDoctors : []);
+      const doctorList = doctorsSnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
+
+      return res.status(200).json(doctorList);
     } else if (req.method === 'POST' && endpoint === 'doctors' && param === 'assign') {
-      // Handle /api/doctors/assign (POST to assign doctor)
+      // Assign a doctor to a patient
       await checkRole('patient', req, res, async () => {
         try {
           const { patientId, doctorId } = req.body;
@@ -257,12 +161,16 @@ export default async function handler(req, res) {
             return res.status(403).json({ error: { code: 403, message: 'You are not authorized to assign this patient' } });
           }
 
-          const doctorQuery = await operationWithRetry(() => db.collection('doctors').where('doctorId', '==', doctorId).get());
+          const doctorQuery = await operationWithRetry(() =>
+            db.collection('doctors').where('doctorId', '==', doctorId).get()
+          );
           if (doctorQuery.empty) {
             return res.status(404).json({ error: { code: 404, message: 'Doctor not found' } });
           }
 
-          const patientDoc = await operationWithRetry(() => db.collection('patients').doc(patientId).get());
+          const patientDoc = await operationWithRetry(() =>
+            db.collection('patients').doc(patientId).get()
+          );
           if (!patientDoc.exists) {
             return res.status(404).json({ error: { code: 404, message: 'Patient not found' } });
           }
@@ -280,9 +188,6 @@ export default async function handler(req, res) {
           await operationWithRetry(() =>
             db.collection('doctor_assignments').doc(`${patientId}_${doctorId}`).set(assignmentData, { merge: true })
           );
-
-          const assignmentFile = bucket.file(`doctor_assignments/${patientId}-${doctorId}.json`);
-          await uploadWithRetry(assignmentFile, JSON.stringify(assignmentData), { contentType: 'application/json' });
 
           // Trigger Pusher event
           const channel = `private-patient-${patientId}`;
@@ -305,4 +210,4 @@ export default async function handler(req, res) {
     console.error(`Error in /api/doctors${param ? `/${param}${specialty ? `/${specialty}` : ''}` : ''}: ${error.message}`);
     return res.status(500).json({ error: { code: 500, message: 'A server error has occurred', details: error.message } });
   }
-}}
+}

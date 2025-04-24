@@ -1,39 +1,73 @@
-//api/chats/[patientId]/[doctorId].js
 import { Storage } from '@google-cloud/storage';
 import admin from 'firebase-admin';
 import Pusher from 'pusher';
 
 // Initialize Firebase Admin
 if (!admin.apps.length) {
-  admin.initializeApp({
-    credential: admin.credential.cert({
-      projectId: process.env.FIREBASE_PROJECT_ID,
-      privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
-      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-    }),
-  });
+  try {
+    const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n');
+    if (!process.env.FIREBASE_PROJECT_ID || !privateKey || !process.env.FIREBASE_CLIENT_EMAIL) {
+      throw new Error('Missing Firebase credentials: FIREBASE_PROJECT_ID, FIREBASE_PRIVATE_KEY, or FIREBASE_CLIENT_EMAIL');
+    }
+
+    admin.initializeApp({
+      credential: admin.credential.cert({
+        projectId: process.env.FIREBASE_PROJECT_ID,
+        privateKey,
+        clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+      }),
+    });
+    console.log('Firebase Admin initialized successfully');
+  } catch (error) {
+    console.error('Firebase Admin initialization failed:', error.message);
+    throw new Error(`Firebase Admin initialization failed: ${error.message}`);
+  }
 }
 
 const db = admin.firestore();
 
 // Initialize GCS
-const storage = new Storage({
-  credentials: {
-    client_email: process.env.GCS_CLIENT_EMAIL,
-    private_key: process.env.GCS_PRIVATE_KEY?.replace(/\\n/g, '\n'),
-  },
-});
+let storage;
+try {
+  const gcsPrivateKey = process.env.GCS_PRIVATE_KEY?.replace(/\\n/g, '\n');
+  if (!process.env.GCS_CLIENT_EMAIL || !gcsPrivateKey) {
+    throw new Error('Missing GCS credentials: GCS_CLIENT_EMAIL or GCS_PRIVATE_KEY');
+  }
+
+  storage = new Storage({
+    credentials: {
+      client_email: process.env.GCS_CLIENT_EMAIL,
+      private_key: gcsPrivateKey,
+    },
+  });
+  console.log('Google Cloud Storage initialized successfully');
+} catch (error) {
+  console.error('GCS initialization failed:', error.message);
+  throw new Error(`GCS initialization failed: ${error.message}`);
+}
+
 const bucketName = 'fir-project-vercel';
 const bucket = storage.bucket(bucketName);
 
 // Initialize Pusher
-const pusher = new Pusher({
-  appId: process.env.PUSHER_APP_ID,
-  key: process.env.PUSHER_KEY,
-  secret: process.env.PUSHER_SECRET,
-  cluster: process.env.PUSHER_CLUSTER,
-  useTLS: true,
-});
+let pusher;
+try {
+  if (!process.env.PUSHER_APP_ID || !process.env.PUSHER_KEY || !process.env.PUSHER_SECRET || !process.env.PUSHER_CLUSTER) {
+    throw new Error('Missing Pusher credentials: PUSHER_APP_ID, PUSHER_KEY, PUSHER_SECRET, or PUSHER_CLUSTER');
+  }
+
+  pusher = new Pusher({
+    appId: process.env.PUSHER_APP_ID,
+    key: process.env.PUSHER_KEY,
+    secret: process.env.PUSHER_SECRET,
+    cluster: process.env.PUSHER_CLUSTER,
+    useTLS: true,
+  });
+  console.log('Pusher initialized successfully');
+} catch (error) {
+  console.error('Pusher initialization failed:', error.message);
+  throw new Error(`Pusher initialization failed: ${error.message}`);
+}
 
 // Utility function for GCS upload with retry logic
 const uploadWithRetry = async (file, buffer, metadata, retries = 3, backoff = 1000) => {
@@ -58,6 +92,21 @@ const validateSender = (sender) => {
   }
 };
 
+// Generate a signed URL for accessing GCS files
+const generateSignedUrl = async (filePath) => {
+  try {
+    const file = bucket.file(filePath);
+    const [url] = await file.getSignedUrl({
+      action: 'read',
+      expires: Date.now() + 1000 * 60 * 60, // 1 hour expiry
+    });
+    return url;
+  } catch (error) {
+    console.error(`Error generating signed URL for ${filePath}:`, error.message);
+    throw error;
+  }
+};
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', process.env.FRONTEND_URL || '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -71,15 +120,16 @@ export default async function handler(req, res) {
   const userId = req.headers['x-user-uid'];
 
   if (!userId) {
-    return res.status(400).json({ error: 'Firebase UID is required in x-user-uid header' });
+    return res.status(400).json({ error: { code: 400, message: 'Firebase UID is required in x-user-uid header' } });
   }
 
   if (!patientId || !doctorId) {
-    return res.status(400).json({ error: 'patientId and doctorId are required' });
+    return res.status(400).json({ error: { code: 400, message: 'patientId and doctorId are required' } });
   }
 
   try {
     if (req.method === 'GET') {
+      // Authorization check
       const patientQuery = await db.collection('patients').where('uid', '==', userId).get();
       const doctorQuery = await db.collection('doctors').where('uid', '==', userId).get();
       let isAuthorized = false;
@@ -94,7 +144,7 @@ export default async function handler(req, res) {
       }
 
       if (!isAuthorized) {
-        return res.status(403).json({ error: 'You are not authorized to access this chat' });
+        return res.status(403).json({ error: { code: 403, message: 'You are not authorized to access this chat' } });
       }
 
       const assignmentQuery = await db.collection('doctor_assignments')
@@ -102,87 +152,211 @@ export default async function handler(req, res) {
         .where('doctorId', '==', doctorId)
         .get();
       if (assignmentQuery.empty) {
-        return res.status(404).json({ error: 'No chat assignment found' });
+        return res.status(404).json({ error: { code: 404, message: 'No chat assignment found' } });
       }
 
-      const file = bucket.file(`chats/${patientId}-${doctorId}.json`);
-      const [exists] = await file.exists();
+      const chatFile = bucket.file(`chats/${patientId}-${doctorId}/messages.json`);
+      const [exists] = await chatFile.exists();
       if (!exists) {
-        return res.json({ messages: [] });
+        return res.json({ messages: [], userRole });
       }
 
-      const [contents] = await file.download();
+      const [contents] = await chatFile.download();
       const data = JSON.parse(contents.toString('utf8'));
-      return res.json({ messages: data.messages || [], userRole });
+
+      // Generate signed URLs for audio and image files
+      const messagesWithUrls = await Promise.all(
+        (data.messages || []).map(async (message) => {
+          const updatedMessage = { ...message };
+          if (message.audioPath) {
+            updatedMessage.audioUrl = await generateSignedUrl(message.audioPath);
+          }
+          if (message.imagePath) {
+            updatedMessage.imageUrl = await generateSignedUrl(message.imagePath);
+          }
+          return updatedMessage;
+        })
+      );
+
+      return res.json({ messages: messagesWithUrls, userRole });
     } else if (req.method === 'POST') {
-      const { message } = req.body;
-      if (!message || typeof message !== 'object') {
-        return res.status(400).json({ error: 'Message object is required' });
-      }
+      const contentType = req.headers['content-type'];
+      let messageData;
 
-      const sender = message.sender;
-      validateSender(sender);
+      if (contentType && contentType.includes('multipart/form-data')) {
+        // Handle file uploads (audio, image)
+        const busboy = require('busboy');
+        const bb = busboy({ headers: req.headers });
 
-      let expectedId;
-      if (sender === 'doctor') {
-        const doctorQuery = await db.collection('doctors').where('uid', '==', userId).get();
-        if (doctorQuery.empty) {
-          return res.status(404).json({ error: 'Doctor profile not found for this user' });
+        let message = {};
+        let audioFileBuffer;
+        let imageFileBuffer;
+        let audioFileName;
+        let imageFileName;
+
+        bb.on('file', (fieldname, file, info) => {
+          const { filename, mimeType } = info;
+          const chunks = [];
+          file.on('data', (chunk) => chunks.push(chunk));
+          file.on('end', () => {
+            const buffer = Buffer.concat(chunks);
+            if (fieldname === 'audio') {
+              audioFileBuffer = buffer;
+              audioFileName = `${Date.now()}-${filename}`;
+            } else if (fieldname === 'image') {
+              imageFileBuffer = buffer;
+              imageFileName = `${Date.now()}-${filename}`;
+            }
+          });
+        });
+
+        bb.on('field', (name, value) => {
+          message[name] = value;
+        });
+
+        bb.on('finish', async () => {
+          try {
+            validateSender(message.sender);
+
+            // Authorization check
+            let expectedId;
+            if (message.sender === 'doctor') {
+              const doctorQuery = await db.collection('doctors').where('uid', '==', userId).get();
+              if (doctorQuery.empty) {
+                return res.status(404).json({ error: { code: 404, message: 'Doctor profile not found for this user' } });
+              }
+              expectedId = doctorQuery.docs[0].data().doctorId;
+            } else if (message.sender === 'patient') {
+              const patientQuery = await db.collection('patients').where('uid', '==', userId).get();
+              if (patientQuery.empty) {
+                return res.status(404).json({ error: { code: 404, message: 'Patient profile not found for this user' } });
+              }
+              expectedId = patientQuery.docs[0].data().patientId;
+            }
+
+            if ((message.sender === 'doctor' && doctorId !== expectedId) || (message.sender === 'patient' && patientId !== expectedId)) {
+              return res.status(403).json({ error: { code: 403, message: `You are not authorized to send messages as this ${message.sender}` } });
+            }
+
+            const assignmentQuery = await db.collection('doctor_assignments')
+              .where('patientId', '==', patientId)
+              .where('doctorId', '==', doctorId)
+              .get();
+            if (assignmentQuery.empty) {
+              return res.status(404).json({ error: { code: 404, message: 'No chat assignment found' } });
+            }
+
+            const chatDir = `chats/${patientId}-${doctorId}`;
+            const chatFile = bucket.file(`${chatDir}/messages.json`);
+            let chatData = { messages: [] };
+            const [exists] = await chatFile.exists();
+            if (exists) {
+              const [contents] = await chatFile.download();
+              chatData = JSON.parse(contents.toString('utf8')) || { messages: [] };
+            }
+
+            const newMessage = {
+              text: message.text || '',
+              timestamp: message.timestamp || new Date().toISOString(),
+              sender: message.sender,
+              senderId: userId,
+            };
+
+            // Handle audio upload
+            if (audioFileBuffer && audioFileName) {
+              const audioFile = bucket.file(`${chatDir}/audio/${audioFileName}`);
+              await uploadWithRetry(audioFile, audioFileBuffer, { contentType: 'audio/mpeg' });
+              newMessage.audioPath = `${chatDir}/audio/${audioFileName}`;
+            }
+
+            // Handle image upload
+            if (imageFileBuffer && imageFileName) {
+              const imageFile = bucket.file(`${chatDir}/images/${imageFileName}`);
+              await uploadWithRetry(imageFile, imageFileBuffer, { contentType: 'image/jpeg' });
+              newMessage.imagePath = `${chatDir}/images/${imageFileName}`;
+            }
+
+            chatData.messages.push(newMessage);
+            await uploadWithRetry(chatFile, JSON.stringify(chatData), { contentType: 'application/json' });
+
+            // Trigger Pusher event
+            await pusher.trigger(`chat-${patientId}-${doctorId}`, 'new-message', newMessage);
+
+            return res.status(200).json({ message: 'Message saved', newMessage });
+          } catch (error) {
+            console.error('Error processing file upload:', error.message);
+            return res.status(500).json({ error: { code: 500, message: 'Failed to process file upload', details: error.message } });
+          }
+        });
+
+        req.pipe(bb);
+      } else {
+        // Handle text-only messages
+        const { message } = req.body;
+        if (!message || typeof message !== 'object') {
+          return res.status(400).json({ error: { code: 400, message: 'Message object is required' } });
         }
-        expectedId = doctorQuery.docs[0].data().doctorId;
-      } else if (sender === 'patient') {
-        const patientQuery = await db.collection('patients').where('uid', '==', userId).get();
-        if (patientQuery.empty) {
-          return res.status(404).json({ error: 'Patient profile not found for this user' });
+
+        validateSender(message.sender);
+
+        let expectedId;
+        if (message.sender === 'doctor') {
+          const doctorQuery = await db.collection('doctors').where('uid', '==', userId).get();
+          if (doctorQuery.empty) {
+            return res.status(404).json({ error: { code: 404, message: 'Doctor profile not found for this user' } });
+          }
+          expectedId = doctorQuery.docs[0].data().doctorId;
+        } else if (message.sender === 'patient') {
+          const patientQuery = await db.collection('patients').where('uid', '==', userId).get();
+          if (patientQuery.empty) {
+            return res.status(404).json({ error: { code: 404, message: 'Patient profile not found for this user' } });
+          }
+          expectedId = patientQuery.docs[0].data().patientId;
         }
-        expectedId = patientQuery.docs[0].data().patientId;
+
+        if ((message.sender === 'doctor' && doctorId !== expectedId) || (message.sender === 'patient' && patientId !== expectedId)) {
+          return res.status(403).json({ error: { code: 403, message: `You are not authorized to send messages as this ${message.sender}` } });
+        }
+
+        const assignmentQuery = await db.collection('doctor_assignments')
+          .where('patientId', '==', patientId)
+          .where('doctorId', '==', doctorId)
+          .get();
+        if (assignmentQuery.empty) {
+          return res.status(404).json({ error: { code: 404, message: 'No chat assignment found' } });
+        }
+
+        const chatFile = bucket.file(`chats/${patientId}-${doctorId}/messages.json`);
+        let chatData = { messages: [] };
+        const [exists] = await chatFile.exists();
+        if (exists) {
+          const [contents] = await chatFile.download();
+          chatData = JSON.parse(contents.toString('utf8')) || { messages: [] };
+        }
+
+        const newMessage = {
+          ...message,
+          timestamp: message.timestamp || new Date().toISOString(),
+          senderId: userId,
+        };
+        chatData.messages.push(newMessage);
+
+        await uploadWithRetry(chatFile, JSON.stringify(chatData), { contentType: 'application/json' });
+
+        // Trigger Pusher event
+        await pusher.trigger(`chat-${patientId}-${doctorId}`, 'new-message', newMessage);
+
+        return res.status(200).json({ message: 'Message saved', newMessage });
       }
-
-      if ((sender === 'doctor' && doctorId !== expectedId) || (sender === 'patient' && patientId !== expectedId)) {
-        return res.status(403).json({ error: `You are not authorized to send messages as this ${sender}` });
-      }
-
-      const assignmentQuery = await db.collection('doctor_assignments')
-        .where('patientId', '==', patientId)
-        .where('doctorId', '==', doctorId)
-        .get();
-      if (assignmentQuery.empty) {
-        return res.status(404).json({ error: 'No chat assignment found' });
-      }
-
-      const file = bucket.file(`chats/${patientId}-${doctorId}.json`);
-      let chatData = { messages: [] };
-      const [exists] = await file.exists();
-      if (exists) {
-        const [contents] = await file.download();
-        chatData = JSON.parse(contents.toString('utf8')) || { messages: [] };
-      }
-
-      const newMessage = {
-        ...message,
-        timestamp: message.timestamp || new Date().toISOString(),
-        senderId: userId,
-      };
-      chatData.messages.push(newMessage);
-
-      await uploadWithRetry(file, JSON.stringify(chatData), { contentType: 'application/json' });
-
-      // Trigger Pusher event for real-time updates
-      await pusher.trigger(`chat-${patientId}-${doctorId}`, 'new-message', newMessage);
-
-      // Optionally save to Firestore for redundancy
-      await db.collection('chats').doc(`${patientId}-${doctorId}`).set(chatData);
-
-      return res.status(200).json({ message: 'Message saved' });
+    } else {
+      res.setHeader('Allow', ['GET', 'POST']);
+      return res.status(405).json({ error: { code: 405, message: `Method ${req.method} Not Allowed` } });
     }
-
-    res.setHeader('Allow', ['GET', 'POST']);
-    return res.status(405).json({ error: `Method ${req.method} Not Allowed` });
   } catch (error) {
     console.error(`Error in /api/chats/${patientId}/${doctorId} (${req.method}):`, error.message);
     if (error.message === 'Invalid sender type') {
-      return res.status(400).json({ error: error.message });
+      return res.status(400).json({ error: { code: 400, message: error.message } });
     }
-    return res.status(500).json({ error: 'Failed to process request', details: error.message });
+    return res.status(500).json({ error: { code: 500, message: 'Failed to process request', details: error.message } });
   }
 }
