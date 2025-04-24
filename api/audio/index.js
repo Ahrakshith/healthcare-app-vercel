@@ -20,7 +20,7 @@ const serviceAccountKeyPath = process.env.REACT_APP_GCS_SERVICE_ACCOUNT_KEY
   : JSON.parse(await import('fs').then(fs => fs.promises.readFile('./service-account.json', 'utf8')));
 
 const storage = new Storage({ credentials: serviceAccountKeyPath });
-const bucketName = 'healthcare-app-d8997-audio';
+const bucketName = 'fir-project-vercelgcloud storage buckets get-iam-policy gs://fir-project-vercel';
 const bucket = storage.bucket(bucketName);
 
 let speechClient;

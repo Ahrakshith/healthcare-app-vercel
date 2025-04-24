@@ -22,7 +22,7 @@ const storage = new Storage({
     private_key: process.env.GCS_PRIVATE_KEY?.replace(/\\n/g, '\n'),
   },
 });
-const bucketName = 'healthcare-app-d8997-audio';
+const bucketName = 'fir-project-vercel';
 const bucket = storage.bucket(bucketName);
 
 // Utility for GCS upload with retry
