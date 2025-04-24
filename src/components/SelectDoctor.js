@@ -8,14 +8,15 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
   const [specialty, setSpecialty] = useState('All');
   const [doctors, setDoctors] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadingDoctorId, setLoadingDoctorId] = useState(null);
   const [error, setError] = useState('');
   const navigate = useNavigate();
 
   const apiBaseUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
 
   useEffect(() => {
-    if (!user || role !== 'patient' || !patientId) {
-      console.error('SelectDoctor: Invalid user state:', { user, role, patientId });
+    if (!user || !firebaseUser || role !== 'patient' || !patientId) {
+      console.error('SelectDoctor: Invalid user state:', { user, role, patientId, firebaseUser });
       setError('Invalid session. Please log in again.');
       navigate('/login');
       return;
@@ -26,26 +27,28 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
     const fetchDoctors = async () => {
       setLoading(true);
       try {
+        const idToken = await firebaseUser.getIdToken(true);
         const url = specialty === 'All' ? `${apiBaseUrl}/doctors` : `${apiBaseUrl}/doctors/by-specialty/${specialty}`;
         const response = await fetch(url, {
           headers: {
             'x-user-uid': user.uid,
             'Content-Type': 'application/json',
             'Accept': 'application/json',
+            'Authorization': `Bearer ${idToken}`,
           },
           credentials: 'include',
         });
 
         if (!response.ok) {
-          const errorText = await response.text();
-          throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`);
+          const errorData = await response.json();
+          throw new Error(`HTTP error! status: ${response.status}, message: ${errorData.error?.message || response.statusText}`);
         }
 
-        const doctorList = await response.json();
-        console.log('SelectDoctor: Doctors fetched:', doctorList);
-        setDoctors(doctorList);
+        const data = await response.json();
+        console.log('SelectDoctor: Doctors fetched:', data.doctors);
+        setDoctors(data.doctors || []);
         setError(
-          doctorList.length === 0
+          data.doctors.length === 0
             ? specialty === 'All'
               ? 'No doctors available at this time.'
               : `No doctors found for specialty: ${specialty}.`
@@ -61,13 +64,16 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
     };
 
     fetchDoctors();
-  }, [specialty, user, role, patientId, navigate, apiBaseUrl]);
+  }, [specialty, user, firebaseUser, role, patientId, navigate, apiBaseUrl]);
 
   async function fetchWithRetry(url, options, retries = 3, backoff = 1000) {
     for (let attempt = 1; attempt <= retries; attempt++) {
       try {
         const response = await fetch(url, options);
-        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(`HTTP error! status: ${response.status}, message: ${errorData.error?.message || response.statusText}`);
+        }
         return response;
       } catch (error) {
         if (attempt === retries) throw error;
@@ -83,7 +89,7 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
       return;
     }
 
-    setLoading(true);
+    setLoadingDoctorId(doctorId);
     setError('');
 
     try {
@@ -110,14 +116,16 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
       setError(
         `Error assigning doctor: ${
           err.message.includes('404')
-            ? 'Endpoint not found. Please ensure the server is updated.'
+            ? 'Doctor assignment endpoint not found. Please contact support.'
             : err.message.includes('403')
-            ? 'Access denied. Please verify your role.'
+            ? 'Access denied. Please verify your role or log in again.'
+            : err.message.includes('400')
+            ? 'Invalid request. Please ensure all data is correct.'
             : err.message
         }`
       );
     } finally {
-      setLoading(false);
+      setLoadingDoctorId(null);
     }
   };
 
@@ -145,7 +153,7 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
     <div className="select-doctor-container">
       <div className="header">
         <h2>Select a Doctor</h2>
-        <button onClick={handleLogoutClick} className="logout-button" disabled={loading}>
+        <button onClick={handleLogoutClick} className="logout-button" disabled={loading || loadingDoctorId}>
           Logout
         </button>
       </div>
@@ -156,7 +164,8 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
           id="specialty-filter"
           value={specialty}
           onChange={(e) => setSpecialty(e.target.value)}
-          disabled={loading}
+          disabled={loading || loadingDoctorId}
+          aria-label="Filter doctors by specialty"
         >
           <option value="All">All Specialties</option>
           {SPECIALTIES.map((spec) => (
@@ -167,26 +176,26 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
         </select>
       </div>
 
-      {error && <p className="error-message">{error}</p>}
+      {error && <p className="error-message" role="alert">{error}</p>}
       {loading ? (
-        <p className="loading-message">Loading doctors...</p>
+        <p className="loading-message" role="status">Loading doctors...</p>
       ) : (
-        <table>
+        <table role="grid">
           <thead>
             <tr>
-              <th>Doctor Name</th>
-              <th>Age</th>
-              <th>Sex</th>
-              <th>Experience</th>
-              <th>Role</th>
-              <th>Specialty</th>
-              <th>Action</th>
+              <th scope="col">Doctor Name</th>
+              <th scope="col">Age</th>
+              <th scope="col">Sex</th>
+              <th scope="col">Experience</th>
+              <th scope="col">Role</th>
+              <th scope="col">Specialty</th>
+              <th scope="col">Action</th>
             </tr>
           </thead>
           <tbody>
             {doctors.length === 0 ? (
               <tr>
-                <td colSpan="7">
+                <td colSpan="7" className="no-data">
                   {specialty === 'All'
                     ? 'No doctors available.'
                     : `No doctors found for specialty: ${specialty}.`}
@@ -194,7 +203,7 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
               </tr>
             ) : (
               doctors.map((doctor) => (
-                <tr key={doctor.id || doctor.doctorId}>
+                <tr key={doctor.doctorId || doctor.id}>
                   <td>{doctor.name || 'N/A'}</td>
                   <td>{doctor.age || 'N/A'}</td>
                   <td>{doctor.sex || 'N/A'}</td>
@@ -203,11 +212,13 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
                   <td>{doctor.specialty || 'N/A'}</td>
                   <td>
                     <button
-                      onClick={() => handleDoctorSelect(doctor.id || doctor.doctorId)}
+                      onClick={() => handleDoctorSelect(doctor.doctorId || doctor.id)}
                       className="select-button"
-                      disabled={loading}
+                      disabled={loading || loadingDoctorId === (doctor.doctorId || doctor.id)}
+                      aria-label={`Select doctor ${doctor.name || 'N/A'}`}
+                      aria-busy={loadingDoctorId === (doctor.doctorId || doctor.id) ? 'true' : 'false'}
                     >
-                      Select
+                      {loadingDoctorId === (doctor.doctorId || doctor.id) ? 'Selecting...' : 'Select'}
                     </button>
                   </td>
                 </tr>
@@ -331,7 +342,8 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
           box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
         }
 
-        th, td {
+        th,
+        td {
           padding: 15px;
           text-align: left;
           font-size: 1rem;
@@ -352,6 +364,12 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
         tr:hover:not(:first-child) {
           background: #e9ecef;
           transition: background 0.2s ease;
+        }
+
+        .no-data {
+          text-align: center;
+          color: #666;
+          font-style: italic;
         }
 
         .select-button {
@@ -375,41 +393,58 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
         }
 
         @keyframes fadeIn {
-          from { opacity: 0; }
-          to { opacity: 1; }
+          from {
+            opacity: 0;
+          }
+          to {
+            opacity: 1;
+          }
         }
 
         @keyframes pulse {
-          0% { opacity: 1; }
-          50% { opacity: 0.5; }
-          100% { opacity: 1; }
+          0% {
+            opacity: 1;
+          }
+          50% {
+            opacity: 0.5;
+          }
+          100% {
+            opacity: 1;
+          }
         }
 
         @media (max-width: 768px) {
-          th, td {
+          th,
+          td {
             padding: 10px;
             font-size: 0.9rem;
           }
+
           .select-doctor-container {
             padding: 15px;
           }
+
           h2 {
             font-size: 1.5rem;
           }
         }
 
         @media (max-width: 480px) {
-          th, td {
+          th,
+          td {
             padding: 8px;
             font-size: 0.8rem;
           }
+
           .filter-container {
             flex-direction: column;
             align-items: flex-start;
           }
+
           select {
             width: 100%;
           }
+
           h2 {
             font-size: 1.2rem;
           }
