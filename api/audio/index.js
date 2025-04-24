@@ -23,7 +23,6 @@ if (!admin.apps.length) {
 // Initialize Google Cloud Clients
 let serviceAccountKey;
 try {
-  // In Vercel, use environment variable; locally, use a service account file
   if (process.env.GCS_SERVICE_ACCOUNT_KEY) {
     serviceAccountKey = JSON.parse(Buffer.from(process.env.GCS_SERVICE_ACCOUNT_KEY, 'base64').toString());
   } else {
@@ -37,7 +36,7 @@ try {
 }
 
 const storage = new Storage({ credentials: serviceAccountKey });
-const bucketName = process.env.GCS_BUCKET_NAME || 'fir-project-vercel'; // Ensure this matches your actual GCS bucket name
+const bucketName = process.env.GCS_BUCKET_NAME || 'fir-project-vercel';
 const bucket = storage.bucket(bucketName);
 
 let speechClient;
@@ -112,9 +111,12 @@ export default async function handler(req, res) {
 
   // Handle preflight CORS requests
   if (req.method === 'OPTIONS') {
+    console.log('Handling OPTIONS preflight request');
     res.status(200).end();
     return;
   }
+
+  console.log(`Received request: ${req.method} ${req.url}`);
 
   if (req.method !== 'POST') {
     console.error('Method not allowed:', req.method);
@@ -123,6 +125,7 @@ export default async function handler(req, res) {
   }
 
   const pathSegments = req.url.split('/').filter(Boolean);
+  console.log('Path segments:', pathSegments);
   const endpoint = pathSegments[1]; // "audio"
   const subEndpoint = pathSegments[2]; // "upload-audio"
 
@@ -139,7 +142,7 @@ export default async function handler(req, res) {
 
     if (endpoint !== 'audio' || subEndpoint !== 'upload-audio') {
       console.error(`Endpoint not found: /${endpoint}/${subEndpoint}`);
-      return res.status(404).json({ error: { code: 404, message: 'Endpoint not found' } });
+      return res.status(404).json({ error: { code: 404, message: `Endpoint not found: /${endpoint}/${subEndpoint}` } });
     }
 
     // Apply multer middleware to parse the audio file
@@ -212,7 +215,7 @@ export default async function handler(req, res) {
       warning: !speechClient ? 'Speech-to-text service unavailable' : undefined,
     });
   } catch (error) {
-    console.error(`Error in /api/audio/upload-audio:`, error.message);
+    console.error(`Error in /api/audio/upload-audio:`, error.message, error.stack);
     if (error.message.includes('Invalid file type')) {
       return res.status(400).json({ error: { code: 400, message: error.message } });
     }
