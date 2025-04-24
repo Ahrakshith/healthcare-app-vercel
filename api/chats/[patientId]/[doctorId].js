@@ -16,11 +16,13 @@ if (!admin.apps.length) {
 const db = admin.firestore();
 
 // Initialize GCS
-const serviceAccountKeyPath = process.env.REACT_APP_GCS_SERVICE_ACCOUNT_KEY
-  ? JSON.parse(Buffer.from(process.env.REACT_APP_GCS_SERVICE_ACCOUNT_KEY, 'base64').toString())
-  : JSON.parse(await import('fs').then(fs => fs.promises.readFile('./service-account.json', 'utf8')));
-const storage = new Storage({ credentials: serviceAccountKeyPath });
-const bucketName = 'healthcare-app-d8997-audio';
+const storage = new Storage({
+  credentials: {
+    client_email: process.env.GCS_CLIENT_EMAIL,
+    private_key: process.env.GCS_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+  },
+});
+const bucketName = 'fir-project-vercel';
 const bucket = storage.bucket(bucketName);
 
 // Initialize Pusher
@@ -28,7 +30,7 @@ const pusher = new Pusher({
   appId: process.env.PUSHER_APP_ID,
   key: process.env.PUSHER_KEY,
   secret: process.env.PUSHER_SECRET,
-  cluster: 'ap2',
+  cluster: process.env.PUSHER_CLUSTER,
   useTLS: true,
 });
 

@@ -32,10 +32,10 @@ export default async function handler(req, res) {
 
   try {
     await admin.auth().getUser(uid);
-    const authResponse = pusher.authenticate(socket_id, channel_name);
+    const authResponse = pusher.authenticateUser(uid, socket_id, channel_name);
     res.status(200).json(authResponse);
   } catch (error) {
-    console.error('Pusher auth failed:', error);
+    console.error('Pusher auth failed:', error.message);
     res.status(401).json({ error: 'Unauthorized: Invalid UID' });
   }
 }
