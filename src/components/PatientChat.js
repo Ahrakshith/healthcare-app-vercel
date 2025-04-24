@@ -619,16 +619,20 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
             translatedText = await translateText(text, 'en', 'kn');
           }
 
+          const message = {
+            sender: 'patient',
+            text,
+            translatedText: translatedText || '',
+            timestamp: new Date().toISOString(),
+            language: transcriptionLanguage,
+            recordingLanguage: transcriptionLanguage,
+            doctorId,
+            userId: effectivePatientId,
+          };
+
           const formData = new FormData();
           formData.append('audio', audioBlob, `audio_${new Date().toISOString()}.webm`);
-          formData.append('sender', 'patient');
-          formData.append('text', text);
-          formData.append('translatedText', translatedText || '');
-          formData.append('timestamp', new Date().toISOString());
-          formData.append('language', transcriptionLanguage);
-          formData.append('recordingLanguage', transcriptionLanguage);
-          formData.append('doctorId', doctorId);
-          formData.append('userId', effectivePatientId);
+          formData.append('message', JSON.stringify(message));
 
           const idToken = await firebaseUser.getIdToken(true);
           const response = await fetch(`${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`, {
@@ -641,7 +645,10 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
             credentials: 'include',
           });
 
-          if (!response.ok) throw new Error(`Failed to save message: ${response.statusText}`);
+          if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(`Failed to save message: ${response.statusText} - ${errorData.error.message}`);
+          }
           const data = await response.json();
           setMessages((prev) => [...prev, data.newMessage].sort((a, b) => a.timestamp.localeCompare(b.timestamp)));
         } catch (err) {
@@ -702,13 +709,17 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       return;
     }
 
+    const message = {
+      sender: 'patient',
+      timestamp: new Date().toISOString(),
+      doctorId,
+      userId: effectivePatientId,
+      messageType: 'image',
+    };
+
     const formData = new FormData();
     formData.append('image', file);
-    formData.append('sender', 'patient');
-    formData.append('timestamp', new Date().toISOString());
-    formData.append('doctorId', doctorId);
-    formData.append('userId', effectivePatientId);
-    formData.append('messageType', 'image');
+    formData.append('message', JSON.stringify(message));
 
     try {
       const idToken = await firebaseUser.getIdToken(true);
@@ -723,8 +734,8 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       });
 
       if (!response.ok) {
-        let errorMessage = `Image upload failed: ${response.statusText}`;
-        throw new Error(errorMessage);
+        const errorData = await response.json();
+        throw new Error(`Image upload failed: ${response.statusText} - ${errorData.error.message}`);
       }
 
       const data = await response.json();
@@ -757,7 +768,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   const handleSendText = async () => {
     if (!textInput.trim()) return;
 
-    const newMessage = {
+    const message = {
       sender: 'patient',
       text: textInput,
       translatedText: null,
@@ -769,10 +780,10 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     };
 
     setMessages((prev) => {
-      if (!prev.some((msg) => msg.timestamp === newMessage.timestamp && msg.text === newMessage.text)) {
-        return [...prev, newMessage].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+      if (!prev.some((msg) => msg.timestamp === message.timestamp && msg.text === message.text)) {
+        return [...prev, message].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
       }
-      console.log('PatientChat.js: Skipped duplicate text message:', newMessage.timestamp, newMessage.text);
+      console.log('PatientChat.js: Skipped duplicate text message:', message.timestamp, message.text);
       return prev;
     });
     setTextInput('');
@@ -786,19 +797,26 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           'x-user-uid': effectiveUserId,
           'Authorization': `Bearer ${idToken}`,
         },
-        body: JSON.stringify(newMessage),
+        body: JSON.stringify({ message }),
         credentials: 'include',
       });
-      if (!response.ok) throw new Error(`Failed to save text message: ${response.statusText}`);
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(`Failed to save text message: ${response.statusText} - ${errorData.error.message}`);
+      }
       const data = await response.json();
-      setMessages((prev) => [...prev.filter(msg => msg.timestamp !== newMessage.timestamp), data.newMessage].sort((a, b) => a.timestamp.localeCompare(b.timestamp)));
+      setMessages((prev) =>
+        [...prev.filter((msg) => msg.timestamp !== message.timestamp), data.newMessage].sort((a, b) =>
+          a.timestamp.localeCompare(b.timestamp)
+        )
+      );
     } catch (err) {
       setError(`Failed to save text message: ${err.message}`);
     }
   };
 
   const handleQuickReply = async (replyText) => {
-    const quickMessage = {
+    const message = {
       sender: 'patient',
       text: replyText,
       translatedText: null,
@@ -810,10 +828,10 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     };
 
     setMessages((prev) => {
-      if (!prev.some((msg) => msg.timestamp === quickMessage.timestamp && msg.text === quickMessage.text)) {
-        return [...prev, quickMessage].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+      if (!prev.some((msg) => msg.timestamp === message.timestamp && msg.text === message.text)) {
+        return [...prev, message].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
       }
-      console.log('PatientChat.js: Skipped duplicate quick reply:', quickMessage.timestamp, quickMessage.text);
+      console.log('PatientChat.js: Skipped duplicate quick reply:', message.timestamp, message.text);
       return prev;
     });
 
@@ -826,12 +844,19 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           'x-user-uid': effectiveUserId,
           'Authorization': `Bearer ${idToken}`,
         },
-        body: JSON.stringify(quickMessage),
+        body: JSON.stringify({ message }),
         credentials: 'include',
       });
-      if (!response.ok) throw new Error(`Failed to save quick reply message: ${response.statusText}`);
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(`Failed to save quick reply message: ${response.statusText} - ${errorData.error.message}`);
+      }
       const data = await response.json();
-      setMessages((prev) => [...prev.filter(msg => msg.timestamp !== quickMessage.timestamp), data.newMessage].sort((a, b) => a.timestamp.localeCompare(b.timestamp)));
+      setMessages((prev) =>
+        [...prev.filter((msg) => msg.timestamp !== message.timestamp), data.newMessage].sort((a, b) =>
+          a.timestamp.localeCompare(b.timestamp)
+        )
+      );
     } catch (err) {
       setError(`Failed to save quick reply message: ${err.message}`);
     }
