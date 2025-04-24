@@ -1,18 +1,47 @@
 import admin from 'firebase-admin';
 import Pusher from 'pusher';
 
-// Initialize Firebase Admin (assuming already initialized in index.js, reuse app)
+// Initialize Firebase Admin
+if (!admin.apps.length) {
+  try {
+    const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n');
+    if (!process.env.FIREBASE_PROJECT_ID || !privateKey || !process.env.FIREBASE_CLIENT_EMAIL) {
+      throw new Error('Missing Firebase credentials: FIREBASE_PROJECT_ID, FIREBASE_PRIVATE_KEY, or FIREBASE_CLIENT_EMAIL');
+    }
+
+    admin.initializeApp({
+      credential: admin.credential.cert({
+        projectId: process.env.FIREBASE_PROJECT_ID,
+        privateKey,
+        clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+      }),
+    });
+    console.log('Firebase Admin initialized successfully in assign.js');
+  } catch (error) {
+    console.error('Firebase Admin initialization failed in assign.js:', error.message);
+    throw new Error(`Firebase Admin initialization failed: ${error.message}`);
+  }
+}
+
 const db = admin.firestore();
 
-// Initialize Pusher (assuming already initialized in index.js, reuse instance)
+// Initialize Pusher
 let pusher;
-if (process.env.PUSHER_APP_ID && process.env.PUSHER_KEY && process.env.PUSHER_SECRET && process.env.PUSHER_CLUSTER) {
+try {
+  if (!process.env.PUSHER_APP_ID || !process.env.PUSHER_KEY || !process.env.PUSHER_SECRET || !process.env.PUSHER_CLUSTER) {
+    throw new Error('Missing Pusher credentials: PUSHER_APP_ID, PUSHER_KEY, PUSHER_SECRET, or PUSHER_CLUSTER');
+  }
+
   pusher = new Pusher({
     appId: process.env.PUSHER_APP_ID,
     key: process.env.PUSHER_KEY,
     secret: process.env.PUSHER_SECRET,
     cluster: process.env.PUSHER_CLUSTER,
   });
+  console.log('Pusher initialized successfully in assign.js');
+} catch (error) {
+  console.error('Pusher initialization failed in assign.js:', error.message);
+  throw new Error(`Pusher initialization failed: ${error.message}`);
 }
 
 // Retry logic
