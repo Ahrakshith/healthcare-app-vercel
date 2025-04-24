@@ -47,6 +47,14 @@ const uploadWithRetry = async (file, buffer, metadata, retries = 3, backoff = 10
   }
 };
 
+// Validate message sender
+const validateSender = (sender) => {
+  const validSenders = ['patient', 'doctor'];
+  if (!validSenders.includes(sender)) {
+    throw new Error('Invalid sender type');
+  }
+};
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', process.env.FRONTEND_URL || '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -102,14 +110,15 @@ export default async function handler(req, res) {
 
       const [contents] = await file.download();
       const data = JSON.parse(contents.toString('utf8'));
-      return res.json({ messages: data.messages || [] });
+      return res.json({ messages: data.messages || [], userRole });
     } else if (req.method === 'POST') {
       const { message } = req.body;
-      const sender = message?.sender;
-
-      if (!['patient', 'doctor'].includes(sender)) {
-        return res.status(400).json({ error: 'Invalid sender type' });
+      if (!message || typeof message !== 'object') {
+        return res.status(400).json({ error: 'Message object is required' });
       }
+
+      const sender = message.sender;
+      validateSender(sender);
 
       let expectedId;
       if (sender === 'doctor') {
@@ -143,7 +152,7 @@ export default async function handler(req, res) {
       const [exists] = await file.exists();
       if (exists) {
         const [contents] = await file.download();
-        chatData = JSON.parse(contents.toString('utf8'));
+        chatData = JSON.parse(contents.toString('utf8')) || { messages: [] };
       }
 
       const newMessage = {
@@ -158,6 +167,9 @@ export default async function handler(req, res) {
       // Trigger Pusher event for real-time updates
       await pusher.trigger(`chat-${patientId}-${doctorId}`, 'new-message', newMessage);
 
+      // Optionally save to Firestore for redundancy
+      await db.collection('chats').doc(`${patientId}-${doctorId}`).set(chatData);
+
       return res.status(200).json({ message: 'Message saved' });
     }
 
@@ -165,6 +177,9 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: `Method ${req.method} Not Allowed` });
   } catch (error) {
     console.error(`Error in /api/chats/${patientId}/${doctorId} (${req.method}):`, error.message);
+    if (error.message === 'Invalid sender type') {
+      return res.status(400).json({ error: error.message });
+    }
     return res.status(500).json({ error: 'Failed to process request', details: error.message });
   }
 }

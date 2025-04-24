@@ -47,6 +47,13 @@ const uploadWithRetry = async (file, buffer, metadata, retries = 3, backoff = 10
   }
 };
 
+// Validate request body for POST
+const validatePostBody = ({ patientId, doctorId }) => {
+  if (!patientId || !doctorId) {
+    throw new Error('patientId and doctorId are required');
+  }
+};
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', process.env.FRONTEND_URL || '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -76,15 +83,13 @@ export default async function handler(req, res) {
           }
         })
       );
-      const filteredNotifications = notifications.filter((n) => n);
+      const filteredNotifications = notifications.filter((n) => n !== null && n !== undefined);
       console.log(`Fetched ${filteredNotifications.length} admin notifications`);
       return res.status(200).json(filteredNotifications);
     } else if (req.method === 'POST') {
-      const { patientName, age, sex, description, disease, medicine, patientId, doctorId } = req.body;
-      if (!patientId || !doctorId) {
-        return res.status(400).json({ error: 'patientId and doctorId are required' });
-      }
+      validatePostBody(req.body);
 
+      const { patientName, age, sex, description, disease, medicine, patientId, doctorId } = req.body;
       const notificationId = `${Date.now()}`;
       const notificationData = {
         patientName: patientName || 'Unknown',
@@ -102,10 +107,10 @@ export default async function handler(req, res) {
       await uploadWithRetry(notificationFile, JSON.stringify(notificationData), { contentType: 'application/json' });
       console.log(`Notification ${notificationId} saved to GCS`);
 
-      // Emit to Pusher
+      // Emit to Pusher for real-time updates
       await pusher.trigger(`chat-${patientId}-${doctorId}`, 'missedDoseAlert', notificationData);
 
-      // Optionally save to Firestore for redundancy
+      // Save to Firestore for redundancy
       await db.collection('admin_notifications').doc(notificationId).set(notificationData);
 
       return res.status(200).json({ message: 'Notification saved', notificationId });
@@ -115,6 +120,9 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: `Method ${req.method} Not Allowed` });
   } catch (error) {
     console.error(`Error in /api/admin (${req.method}):`, error.message);
+    if (error.message === 'patientId and doctorId are required') {
+      return res.status(400).json({ error: error.message });
+    }
     return res.status(500).json({ error: 'Failed to process request', details: error.message });
   }
 }
