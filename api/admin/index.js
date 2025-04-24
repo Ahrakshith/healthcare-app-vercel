@@ -47,7 +47,7 @@ try {
   throw new Error(`GCS initialization failed: ${error.message}`);
 }
 
-const bucketName = 'healthcare-app-d887-bucket'; // Update to the correct bucket in healthcare-app-d887 project
+const bucketName = 'fir-project-vercel'; // Update to the correct bucket in healthcare-app-d887 project
 const bucket = storage.bucket(bucketName);
 
 // Initialize Pusher
