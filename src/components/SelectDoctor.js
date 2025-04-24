@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
-import { db, auth } from '../services/firebase.js'; // Ensure firebase.js exports auth
+import { db, auth } from '../services/firebase.js';
 import { SPECIALTIES } from '../constants/specialties.js';
-import { signOut } from 'firebase/auth'; // For logout functionality
+import { signOut } from 'firebase/auth';
 
 function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
   const [specialty, setSpecialty] = useState('All');
@@ -55,6 +55,20 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
     return () => unsubscribe();
   }, [specialty, user, role, patientId, navigate]);
 
+  async function fetchWithRetry(url, options, retries = 3, backoff = 1000) {
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        const response = await fetch(url, options);
+        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+        return response;
+      } catch (error) {
+        if (attempt === retries) throw error;
+        console.warn(`Retry ${attempt}/${retries} failed for ${url}: ${error.message}`);
+        await new Promise((resolve) => setTimeout(resolve, backoff * attempt));
+      }
+    }
+  }
+
   const handleDoctorSelect = async (doctorId) => {
     if (!patientId) {
       setError('Patient ID not found. Please log in again.');
@@ -68,7 +82,7 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
     try {
       const idToken = await firebaseUser.getIdToken(true);
       const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
-      const response = await fetch(`${apiUrl}/assign-doctor`, {
+      const response = await fetchWithRetry(`${apiUrl}/doctors/assign`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${idToken}`,
@@ -83,23 +97,13 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
       const responseText = await response.text();
       console.log('Raw AssignDoctor API response:', responseText);
 
-      if (!response.ok) {
-        let errorData;
-        try {
-          errorData = JSON.parse(responseText);
-        } catch {
-          throw new Error(`AssignDoctor failed: ${response.status} - ${responseText || 'Unknown error'}`);
-        }
-        throw new Error(errorData.error?.message || errorData.error || 'Failed to assign doctor');
-      }
-
       const result = JSON.parse(responseText);
       console.log(`SelectDoctor: Assigned doctor ${doctorId} to patient ${patientId}`, result);
 
       navigate(`/patient/language-preference/${patientId}/${doctorId}`);
     } catch (err) {
       console.error('SelectDoctor: Error assigning doctor:', err.message);
-      setError(`Error assigning doctor: ${err.message}`);
+      setError(`Error assigning doctor: ${err.message.includes('404') ? 'Endpoint not found. Please contact support.' : err.message}`);
     } finally {
       setLoading(false);
     }
@@ -107,8 +111,8 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
 
   const handleLogoutClick = async () => {
     try {
-      await signOut(auth); // Firebase logout
-      handleLogout(); // Custom logout handler (e.g., clears state)
+      await signOut(auth);
+      handleLogout();
       navigate('/login');
       console.log('Logged out successfully');
     } catch (err) {
