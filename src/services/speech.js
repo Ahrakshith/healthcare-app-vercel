@@ -18,15 +18,14 @@ async function transcribeAudio(audioBlob, languageCode = 'en-US', userId) {
     throw new Error('Invalid userId: Must be a non-empty string.');
   }
 
-  !isProduction && console.log(`transcribeAudio: Starting transcription with languageCode=${languageCode}, uid=${userId}`);
+  !isProduction && console.log(`transcribeAudio: Starting with languageCode=${languageCode}, uid=${userId}`);
 
   const formData = new FormData();
   formData.append('audio', audioBlob, 'recording.webm');
   formData.append('language', languageCode);
-  formData.append('uid', userId);
 
   try {
-    !isProduction && console.log('transcribeAudio: Sending request to /api/audio/upload-audio');
+    !isProduction && console.log('transcribeAudio: Sending to /api/audio/upload-audio');
     const response = await fetch(`${API_BASE_URL}/api/audio/upload-audio`, {
       method: 'POST',
       headers: { 'x-user-uid': userId },
@@ -100,7 +99,7 @@ async function detectLanguage(text, userId) {
     throw new Error('Invalid userId: Must be a non-empty string.');
   }
 
-  !isProduction && console.log(`detectLanguage: Detecting language for text="${truncate(text)}"`);
+  !isProduction && console.log(`detectLanguage: Detecting for text="${truncate(text)}"`);
 
   try {
     const response = await fetch(`${API_BASE_URL}/api/speech/translate`, {
@@ -167,7 +166,7 @@ async function translateText(text, sourceLanguageCode, targetLanguageCode, userI
     const normalizedTarget = normalizeLanguageCode(targetLanguageCode);
 
     if (normalizedSource === normalizedTarget) {
-      !isProduction && console.log('translateText: Source and target languages are the same, returning original text.');
+      !isProduction && console.log('translateText: Same source and target language, returning original text.');
       return text;
     }
 
@@ -213,7 +212,7 @@ async function textToSpeechConvert(text, languageCode = 'en-US', userId) {
   }
 
   !isProduction &&
-    console.log(`textToSpeechConvert: Converting text="${truncate(text)}" to speech with languageCode=${languageCode}`);
+    console.log(`textToSpeechConvert: Converting text="${truncate(text)}" with languageCode=${languageCode}`);
 
   try {
     const normalizedLanguageCode = languageCode.toLowerCase().startsWith('kn') ? 'kn-IN' : 'en-US';
