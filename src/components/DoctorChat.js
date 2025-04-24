@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { collection, query, where, onSnapshot, getDocs, doc, getDoc } from 'firebase/firestore';
 import { db } from '../services/firebase.js';
@@ -23,6 +23,7 @@ function DoctorChat({ user, role, handleLogout }) {
   const [failedUpload, setFailedUpload] = useState(null);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [loadingPatients, setLoadingPatients] = useState(true);
+  const [loadingAudio, setLoadingAudio] = useState(false);
   const [diagnosisPrompt, setDiagnosisPrompt] = useState(null);
   const [doctorId, setDoctorId] = useState(null);
   const [recording, setRecording] = useState(false);
@@ -38,6 +39,8 @@ function DoctorChat({ user, role, handleLogout }) {
   const audioChunksRef = useRef([]);
   const streamRef = useRef(null);
   const navigate = useNavigate();
+
+  const apiBaseUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -121,7 +124,7 @@ function DoctorChat({ user, role, handleLogout }) {
     // Initialize Pusher
     const pusher = new Pusher('2ed44c3ce3ef227d9924', {
       cluster: 'ap2',
-      authEndpoint: `${process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api'}/pusher/auth`,
+      authEndpoint: `${apiBaseUrl}/pusher/auth`,
       auth: {
         headers: {
           'x-user-uid': user.uid,
@@ -129,13 +132,13 @@ function DoctorChat({ user, role, handleLogout }) {
       },
     });
 
-    // Subscribe to the chat channel for this patient-doctor pair
+    // Subscribe to the chat channel
     const channel = pusher.subscribe(`chat-${selectedPatientId}-${doctorId}`);
 
     // Listen for new messages
     channel.bind('message', (message) => {
       setMessages((prev) => {
-        if (!prev.some((msg) => msg.timestamp === message.timestamp && (!msg.text || msg.text === message.text))) {
+        if (!prev.some((msg) => msg.timestamp === message.timestamp && msg.text === message.text)) {
           const updatedMessages = [...prev, message].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
           if (message.sender === 'patient') {
             setPatientMessageTimestamps((prevTimestamps) => ({
@@ -159,12 +162,11 @@ function DoctorChat({ user, role, handleLogout }) {
       }
     });
 
-    // Fetch initial messages from API
+    // Fetch initial messages
     const fetchMessages = async () => {
       setLoadingMessages(true);
       try {
-        const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
-        const response = await fetch(`${apiUrl}/chats/${selectedPatientId}/${doctorId}`, {
+        const response = await fetch(`${apiBaseUrl}/chats/${selectedPatientId}/${doctorId}`, {
           headers: { 'x-user-uid': user.uid },
           credentials: 'include',
         });
@@ -174,49 +176,11 @@ function DoctorChat({ user, role, handleLogout }) {
           throw new Error(`Failed to fetch messages: ${response.status} - ${errorText}`);
         }
 
-        let data;
-        try {
-          data = await response.json();
-        } catch (jsonError) {
-          throw new Error(`Failed to parse response as JSON: ${jsonError.message}`);
-        }
-
+        const data = await response.json();
         const fetchedMessages = data.messages || [];
-        const validatedMessages = await Promise.all(
-          fetchedMessages.map(async (msg) => {
-            const updatedMsg = { ...msg };
-            if (msg.audioUrl) {
-              try {
-                const response = await fetch(msg.audioUrl, { method: 'HEAD' });
-                if (!response.ok) updatedMsg.audioUrl = null;
-              } catch {
-                updatedMsg.audioUrl = null;
-              }
-            }
-            if (msg.audioUrlEn) {
-              try {
-                const response = await fetch(msg.audioUrlEn, { method: 'HEAD' });
-                if (!response.ok) updatedMsg.audioUrlEn = null;
-              } catch {
-                updatedMsg.audioUrlEn = null;
-              }
-            }
-            if (msg.audioUrlKn) {
-              try {
-                const response = await fetch(msg.audioUrlKn, { method: 'HEAD' });
-                if (!response.ok) updatedMsg.audioUrlKn = null;
-              } catch {
-                updatedMsg.audioUrlKn = null;
-              }
-            }
-            return updatedMsg;
-          })
-        );
+        setMessages(fetchedMessages.sort((a, b) => a.timestamp.localeCompare(b.timestamp)));
 
-        const sortedMessages = validatedMessages.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-        setMessages(sortedMessages);
-
-        const patientMessages = sortedMessages.filter((msg) => msg.sender === 'patient');
+        const patientMessages = fetchedMessages.filter((msg) => msg.sender === 'patient');
         if (patientMessages.length > 0) {
           setPatientMessageTimestamps((prev) => ({
             ...prev,
@@ -233,6 +197,7 @@ function DoctorChat({ user, role, handleLogout }) {
       }
     };
 
+    // Fetch language preference
     const fetchLanguagePreference = async () => {
       try {
         const patientRef = doc(db, 'patients', selectedPatientId);
@@ -243,10 +208,10 @@ function DoctorChat({ user, role, handleLogout }) {
       }
     };
 
+    // Fetch missed dose alerts
     const fetchMissedDoseAlerts = async () => {
       try {
-        const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
-        const response = await fetch(`${apiUrl}/admin`, {
+        const response = await fetch(`${apiBaseUrl}/admin`, {
           headers: { 'x-user-uid': user.uid },
           credentials: 'include',
         });
@@ -256,13 +221,7 @@ function DoctorChat({ user, role, handleLogout }) {
           throw new Error(`Failed to fetch alerts: ${response.status} - ${errorText}`);
         }
 
-        let notifications;
-        try {
-          notifications = await response.json();
-        } catch (jsonError) {
-          throw new Error(`Failed to parse alerts response as JSON: ${jsonError.message}`);
-        }
-
+        const notifications = await response.json();
         if (!Array.isArray(notifications)) {
           throw new Error('Invalid response format: Expected an array of notifications');
         }
@@ -285,7 +244,7 @@ function DoctorChat({ user, role, handleLogout }) {
       pusher.unsubscribe(`chat-${selectedPatientId}-${doctorId}`);
       pusher.disconnect();
     };
-  }, [selectedPatientId, user?.uid, doctorId]);
+  }, [selectedPatientId, user?.uid, doctorId, apiBaseUrl]);
 
   // Diagnosis Prompt Logic
   useEffect(() => {
@@ -296,9 +255,10 @@ function DoctorChat({ user, role, handleLogout }) {
 
     const timestamps = patientMessageTimestamps[selectedPatientId];
     const now = new Date();
+    const assignmentTime = new Date(patientAssignment.timestamp);
+    const hoursSinceAssignment = (now - assignmentTime) / (1000 * 60 * 60);
 
     if (!timestamps || !timestamps.firstMessageTime) {
-      const hoursSinceAssignment = (now - new Date(patientAssignment.timestamp)) / (1000 * 60 * 60);
       if (hoursSinceAssignment <= 24) {
         setDiagnosisPrompt(selectedPatientId);
       } else {
@@ -344,8 +304,7 @@ function DoctorChat({ user, role, handleLogout }) {
           patientId: selectedPatientId,
         };
         try {
-          const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
-          const response = await fetch(`${apiUrl}/chats/${selectedPatientId}/${doctorId}`, {
+          const response = await fetch(`${apiBaseUrl}/chats/${selectedPatientId}/${doctorId}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
             body: JSON.stringify(message),
@@ -361,7 +320,7 @@ function DoctorChat({ user, role, handleLogout }) {
         }
       }
     },
-    [selectedPatientId, languagePreference, doctorId, user.uid]
+    [selectedPatientId, languagePreference, doctorId, user.uid, apiBaseUrl]
   );
 
   const retryUpload = useCallback(
@@ -369,14 +328,10 @@ function DoctorChat({ user, role, handleLogout }) {
       try {
         setError('');
         setFailedUpload(null);
+        setLoadingAudio(true);
         const transcriptionResult = await transcribeAudio(audioBlob, language, user.uid);
         if (!transcriptionResult.audioUrl) {
           setError('Transcription succeeded, but no audio URL was returned.');
-          return null;
-        }
-        const response = await fetch(transcriptionResult.audioUrl, { method: 'HEAD' });
-        if (!response.ok) {
-          setError(`Audio URL inaccessible: ${transcriptionResult.audioUrl}`);
           return null;
         }
         return transcriptionResult;
@@ -384,6 +339,8 @@ function DoctorChat({ user, role, handleLogout }) {
         setError(`Failed to transcribe audio: ${err.message}`);
         setFailedUpload({ audioBlob, language });
         return null;
+      } finally {
+        setLoadingAudio(false);
       }
     },
     [user.uid]
@@ -407,9 +364,11 @@ function DoctorChat({ user, role, handleLogout }) {
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
         if (audioBlob.size === 0) {
           setError('Recorded audio is empty.');
+          setLoadingAudio(false);
           return;
         }
 
+        setLoadingAudio(true);
         let transcriptionResult;
         let transcribedText;
         let translatedText = null;
@@ -422,11 +381,7 @@ function DoctorChat({ user, role, handleLogout }) {
           audioUrl = transcriptionResult.audioUrl;
           if (!audioUrl) {
             setError('Transcription succeeded, but no audio URL was returned.');
-            return;
-          }
-          const response = await fetch(audioUrl, { method: 'HEAD' });
-          if (!response.ok) {
-            setError(`Audio URL inaccessible: ${audioUrl}`);
+            setLoadingAudio(false);
             return;
           }
 
@@ -439,6 +394,7 @@ function DoctorChat({ user, role, handleLogout }) {
         } catch (err) {
           setError(`Failed to process audio: ${err.message}`);
           setFailedUpload({ audioBlob, language: 'en-US' });
+          setLoadingAudio(false);
           return;
         }
 
@@ -457,8 +413,7 @@ function DoctorChat({ user, role, handleLogout }) {
         };
 
         try {
-          const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
-          const response = await fetch(`${apiUrl}/chats/${selectedPatientId}/${doctorId}`, {
+          const response = await fetch(`${apiBaseUrl}/chats/${selectedPatientId}/${doctorId}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
             body: JSON.stringify(message),
@@ -473,6 +428,8 @@ function DoctorChat({ user, role, handleLogout }) {
           });
         } catch (err) {
           setError(`Failed to send message: ${err.message}`);
+        } finally {
+          setLoadingAudio(false);
         }
       };
 
@@ -481,7 +438,7 @@ function DoctorChat({ user, role, handleLogout }) {
     } catch (err) {
       setError(`Failed to start recording: ${err.message}`);
     }
-  }, [selectedPatientId, languagePreference, user.uid]);
+  }, [selectedPatientId, languagePreference, user.uid, apiBaseUrl]);
 
   const stopRecording = useCallback(() => {
     if (mediaRecorder) {
@@ -497,6 +454,7 @@ function DoctorChat({ user, role, handleLogout }) {
       return;
     }
 
+    setLoadingAudio(true);
     let translatedText = null;
     let audioUrlEn;
     let audioUrlKn = null;
@@ -522,8 +480,7 @@ function DoctorChat({ user, role, handleLogout }) {
         patientId: selectedPatientId,
       };
 
-      const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
-      const response = await fetch(`${apiUrl}/chats/${selectedPatientId}/${doctorId}`, {
+      const response = await fetch(`${apiBaseUrl}/chats/${selectedPatientId}/${doctorId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
         body: JSON.stringify(message),
@@ -539,8 +496,10 @@ function DoctorChat({ user, role, handleLogout }) {
       setNewMessage('');
     } catch (err) {
       setError(`Failed to send message: ${err.message}`);
+    } finally {
+      setLoadingAudio(false);
     }
-  }, [newMessage, selectedPatientId, user?.uid, doctorId, languagePreference]);
+  }, [newMessage, selectedPatientId, user?.uid, doctorId, languagePreference, apiBaseUrl]);
 
   const sendAction = useCallback(
     async () => {
@@ -591,9 +550,8 @@ function DoctorChat({ user, role, handleLogout }) {
       };
 
       try {
-        const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
-        // Send message to chat (stored in GCS)
-        const chatResponse = await fetch(`${apiUrl}/chats/${selectedPatientId}/${doctorId}`, {
+        // Send message to chat
+        const chatResponse = await fetch(`${apiBaseUrl}/chats/${selectedPatientId}/${doctorId}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
           body: JSON.stringify(message),
@@ -608,7 +566,7 @@ function DoctorChat({ user, role, handleLogout }) {
         });
 
         // Update patient record
-        await fetch(`${apiUrl}/patients/${selectedPatientId}`, {
+        await fetch(`${apiBaseUrl}/patients/${selectedPatientId}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
           body: JSON.stringify({
@@ -624,7 +582,7 @@ function DoctorChat({ user, role, handleLogout }) {
         const disease = actionType === 'Prescription' ? messages
           .filter((msg) => msg.sender === 'doctor' && msg.diagnosis)
           .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0]?.diagnosis : diagnosis;
-        await fetch(`${apiUrl}/admin`, {
+        await fetch(`${apiBaseUrl}/admin`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
           body: JSON.stringify({
@@ -648,7 +606,7 @@ function DoctorChat({ user, role, handleLogout }) {
         setError(`Failed to send action: ${err.message}`);
       }
     },
-    [actionType, diagnosis, prescription, selectedPatientId, doctorId, user.uid, selectedPatientName, patients, messages]
+    [actionType, diagnosis, prescription, selectedPatientId, doctorId, user.uid, selectedPatientName, patients, messages, apiBaseUrl]
   );
 
   const readAloud = useCallback(
@@ -690,8 +648,7 @@ function DoctorChat({ user, role, handleLogout }) {
 
   const onLogout = async () => {
     try {
-      const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
-      const response = await fetch(`${apiUrl}/misc/logout`, {
+      const response = await fetch(`${apiBaseUrl}/misc/logout`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
         credentials: 'include',
@@ -700,28 +657,52 @@ function DoctorChat({ user, role, handleLogout }) {
       if (!response.ok) {
         throw new Error(`Logout failed: ${response.statusText}`);
       }
-
+    } catch (err) {
+      setError(`Failed to log out: ${err.message}`);
+    } finally {
       if (handleLogout) {
         handleLogout();
       }
       navigate('/login');
-    } catch (err) {
-      setError(`Failed to log out: ${err.message}`);
     }
   };
+
+  // Memoize patient list rendering to prevent unnecessary re-renders
+  const patientList = useMemo(() => (
+    <ul className="patient-list">
+      {patients.map((patient) => (
+        <li
+          key={patient.patientId}
+          className={`patient-item ${selectedPatientId === patient.patientId ? 'selected' : ''}`}
+          onClick={() => {
+            setSelectedPatientId(patient.patientId);
+            setSelectedPatientName(patient.patientName);
+            setMissedDoseAlerts([]);
+            setMenuOpen(false);
+          }}
+          tabIndex={0}
+          role="button"
+          aria-label={`Select patient ${patient.patientName}`}
+        >
+          <span>{patient.patientName}</span>
+          <small>{new Date(patient.timestamp).toLocaleDateString()}</small>
+        </li>
+      ))}
+    </ul>
+  ), [patients, selectedPatientId]);
 
   return (
     <div className="doctor-chat-container">
       <div className="chat-header">
-        <button className="hamburger-button" onClick={() => setMenuOpen(!menuOpen)}>
+        <button className="hamburger-button" onClick={() => setMenuOpen(!menuOpen)} aria-label="Toggle patient menu">
           ☰
         </button>
         <h2>{selectedPatientId ? `Chat with ${selectedPatientName}` : 'Doctor Dashboard'}</h2>
         <div className="header-actions">
-          <button onClick={() => setDoctorProfile(doctorProfile)} className="profile-button">
+          <button onClick={() => setDoctorProfile(doctorProfile)} className="profile-button" aria-label="View doctor profile">
             Profile
           </button>
-          <button onClick={onLogout} className="logout-button">
+          <button onClick={onLogout} className="logout-button" aria-label="Log out">
             Logout
           </button>
         </div>
@@ -730,7 +711,7 @@ function DoctorChat({ user, role, handleLogout }) {
         <div className={`patient-sidebar ${menuOpen ? 'open' : ''}`}>
           <div className="sidebar-header">
             <h3>Assigned Patients</h3>
-            <button className="close-menu" onClick={() => setMenuOpen(false)}>
+            <button className="close-menu" onClick={() => setMenuOpen(false)} aria-label="Close patient menu">
               ✕
             </button>
           </div>
@@ -739,26 +720,7 @@ function DoctorChat({ user, role, handleLogout }) {
           ) : patients.length === 0 ? (
             <p className="no-patients">No patients assigned.</p>
           ) : (
-            <ul className="patient-list">
-              {patients.map((patient) => (
-                <li
-                  key={patient.patientId}
-                  className={`patient-item ${selectedPatientId === patient.patientId ? 'selected' : ''}`}
-                  onClick={() => {
-                    setSelectedPatientId(patient.patientId);
-                    setSelectedPatientName(patient.patientName);
-                    setMissedDoseAlerts([]);
-                    setMenuOpen(false);
-                  }}
-                  tabIndex={0}
-                  role="button"
-                  aria-label={`Select patient ${patient.patientName}`}
-                >
-                  <span>{patient.patientName}</span>
-                  <small>{new Date(patient.timestamp).toLocaleDateString()}</small>
-                </li>
-              ))}
-            </ul>
+            patientList
           )}
         </div>
         <div className="chat-content">
@@ -768,7 +730,7 @@ function DoctorChat({ user, role, handleLogout }) {
               <p><strong>Name:</strong> {doctorProfile.name}</p>
               <p><strong>Doctor ID:</strong> {doctorProfile.doctorId}</p>
               <p><strong>Email:</strong> {doctorProfile.email}</p>
-              <button onClick={() => setDoctorProfile(null)} className="close-section-button">
+              <button onClick={() => setDoctorProfile(null)} className="close-section-button" aria-label="Close profile">
                 Close
               </button>
             </div>
@@ -792,10 +754,10 @@ function DoctorChat({ user, role, handleLogout }) {
                   Chat now?
                 </p>
                 <div className="prompt-buttons">
-                  <button onClick={() => handleDiagnosisDecision(true)} className="accept-button">
+                  <button onClick={() => handleDiagnosisDecision(true)} className="accept-button" aria-label="Accept chat">
                     Yes
                   </button>
-                  <button onClick={() => handleDiagnosisDecision(false)} className="decline-button">
+                  <button onClick={() => handleDiagnosisDecision(false)} className="decline-button" aria-label="Decline chat">
                     No
                   </button>
                 </div>
@@ -808,7 +770,7 @@ function DoctorChat({ user, role, handleLogout }) {
                     {missedDoseAlerts.map((alert) => (
                       <div key={alert.id} className="alert-item">
                         <p>{alert.message || `Patient missed doses.`}</p>
-                        <button onClick={() => dismissAlert(alert.id)} className="dismiss-button">
+                        <button onClick={() => dismissAlert(alert.id)} className="dismiss-button" aria-label="Dismiss alert">
                           Dismiss
                         </button>
                       </div>
@@ -834,7 +796,7 @@ function DoctorChat({ user, role, handleLogout }) {
                                   <p className="primary-text">{msg.text || 'No transcription'}</p>
                                   {msg.audioUrl && (
                                     <div className="audio-container">
-                                      <audio controls>
+                                      <audio controls aria-label="Patient audio message">
                                         <source src={msg.audioUrl} type="audio/webm" />
                                         Your browser does not support the audio element.
                                       </audio>
@@ -848,6 +810,7 @@ function DoctorChat({ user, role, handleLogout }) {
                                       <button
                                         onClick={() => readAloud(msg.audioUrlEn, 'en', msg.text)}
                                         className="read-aloud-button"
+                                        aria-label="Read aloud in English"
                                       >
                                         🔊 (English)
                                       </button>
@@ -862,7 +825,7 @@ function DoctorChat({ user, role, handleLogout }) {
                                   )}
                                   {msg.audioUrl && (
                                     <div className="audio-container">
-                                      <audio controls>
+                                      <audio controls aria-label="Patient audio message">
                                         <source src={msg.audioUrl} type="audio/webm" />
                                         Your browser does not support the audio element.
                                       </audio>
@@ -877,6 +840,7 @@ function DoctorChat({ user, role, handleLogout }) {
                                         <button
                                           onClick={() => readAloud(msg.audioUrlKn, 'kn', msg.text)}
                                           className="read-aloud-button"
+                                          aria-label="Read aloud in Kannada"
                                         >
                                           🔊 (Kannada)
                                         </button>
@@ -887,6 +851,7 @@ function DoctorChat({ user, role, handleLogout }) {
                                             readAloud(msg.audioUrlEn, 'en', msg.translatedText || msg.text)
                                           }
                                           className="read-aloud-button"
+                                          aria-label="Read aloud in English"
                                         >
                                           🔊 (English)
                                         </button>
@@ -911,7 +876,7 @@ function DoctorChat({ user, role, handleLogout }) {
                                   )}
                                   {msg.audioUrl && (
                                     <div className="audio-container">
-                                      <audio controls>
+                                      <audio controls aria-label="Doctor audio message">
                                         <source src={msg.audioUrl} type="audio/webm" />
                                         Your browser does not support the audio element.
                                       </audio>
@@ -926,6 +891,7 @@ function DoctorChat({ user, role, handleLogout }) {
                                         <button
                                           onClick={() => readAloud(msg.audioUrlKn, 'kn', msg.translatedText || msg.text)}
                                           className="read-aloud-button"
+                                          aria-label="Read aloud in Kannada"
                                         >
                                           🔊 (Kannada)
                                         </button>
@@ -934,6 +900,7 @@ function DoctorChat({ user, role, handleLogout }) {
                                         <button
                                           onClick={() => readAloud(msg.audioUrlEn, 'en', msg.text)}
                                           className="read-aloud-button"
+                                          aria-label="Read aloud in English"
                                         >
                                           🔊 (English)
                                         </button>
@@ -950,6 +917,7 @@ function DoctorChat({ user, role, handleLogout }) {
                                       <button
                                         onClick={() => readAloud(null, 'en', msg.diagnosis)}
                                         className="read-aloud-button"
+                                        aria-label="Read diagnosis aloud"
                                       >
                                         🔊
                                       </button>
@@ -983,21 +951,28 @@ function DoctorChat({ user, role, handleLogout }) {
                       <button
                         onClick={() => retryUpload(failedUpload.audioBlob, failedUpload.language)}
                         className="retry-button"
+                        aria-label="Retry audio upload"
                       >
                         Retry Upload
                       </button>
                     )}
-                    <button onClick={dismissError} className="dismiss-error-button">
+                    <button onClick={dismissError} className="dismiss-error-button" aria-label="Dismiss error">
                       Dismiss
                     </button>
+                  </div>
+                )}
+                {loadingAudio && (
+                  <div className="loading-audio">
+                    <p>Processing audio...</p>
                   </div>
                 )}
                 <div className="controls">
                   <div className="recording-buttons">
                     <button
                       onClick={startRecording}
-                      disabled={recording}
-                      className={recording ? 'disabled-button' : 'start-button'}
+                      disabled={recording || loadingAudio}
+                      className={recording || loadingAudio ? 'disabled-button' : 'start-button'}
+                      aria-label="Start recording"
                     >
                       🎙️ Record
                     </button>
@@ -1005,12 +980,14 @@ function DoctorChat({ user, role, handleLogout }) {
                       onClick={stopRecording}
                       disabled={!recording}
                       className={!recording ? 'disabled-button' : 'stop-button'}
+                      aria-label="Stop recording"
                     >
                       🛑 Stop
                     </button>
                     <button
                       onClick={() => setShowActionModal(true)}
                       className="action-button"
+                      aria-label="Open diagnosis/prescription modal"
                     >
                       ⚕️ Diagnosis/Prescription
                     </button>
@@ -1023,10 +1000,13 @@ function DoctorChat({ user, role, handleLogout }) {
                       placeholder="Type a message (English only)..."
                       onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
                       aria-label="Type a message to the patient"
+                      disabled={loadingAudio}
                     />
                     <button
                       onClick={sendMessage}
                       className="send-button"
+                      disabled={loadingAudio}
+                      aria-label="Send message"
                     >
                       Send
                     </button>
@@ -1099,7 +1079,7 @@ function DoctorChat({ user, role, handleLogout }) {
             </div>
             <div className="modal-buttons">
               {actionType && (
-                <button onClick={sendAction} className="submit-button">
+                <button onClick={sendAction} className="submit-button" aria-label={`Submit ${actionType}`}>
                   Send {actionType}
                 </button>
               )}
@@ -1111,6 +1091,7 @@ function DoctorChat({ user, role, handleLogout }) {
                   setPrescription({ medicine: '', dosage: '', frequency: '', duration: '' });
                 }}
                 className="close-modal"
+                aria-label="Close modal"
               >
                 Close
               </button>
@@ -1687,6 +1668,13 @@ function DoctorChat({ user, role, handleLogout }) {
           transform: scale(1.05);
         }
 
+        .loading-audio {
+          color: #6E48AA;
+          font-size: 0.9rem;
+          text-align: center;
+          margin-bottom: 20px;
+        }
+
         .controls {
           background: rgba(44, 26, 61, 0.8);
           backdrop-filter: blur(10px);
@@ -1811,6 +1799,12 @@ function DoctorChat({ user, role, handleLogout }) {
         .send-button:hover {
           background: #5A3E8B;
           transform: scale(1.05);
+        }
+
+        .send-button:disabled {
+          background: #666;
+          color: #A0A0A0;
+          cursor: not-allowed;
         }
 
         .no-patient-selected {
