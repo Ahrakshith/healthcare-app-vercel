@@ -1,4 +1,3 @@
-//api/audio/index.js
 import { Storage } from '@google-cloud/storage';
 import { SpeechClient } from '@google-cloud/speech';
 import admin from 'firebase-admin';
@@ -6,27 +5,44 @@ import multer from 'multer';
 
 // Initialize Firebase Admin
 if (!admin.apps.length) {
-  admin.initializeApp({
-    credential: admin.credential.cert({
-      projectId: process.env.FIREBASE_PROJECT_ID,
-      privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
-      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-    }),
-  });
+  try {
+    admin.initializeApp({
+      credential: admin.credential.cert({
+        projectId: process.env.FIREBASE_PROJECT_ID,
+        privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+        clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+      }),
+    });
+    console.log('Firebase Admin initialized successfully');
+  } catch (error) {
+    console.error('Failed to initialize Firebase Admin:', error.message);
+    throw new Error('Firebase Admin initialization failed');
+  }
 }
 
 // Initialize Google Cloud Clients
-const serviceAccountKeyPath = process.env.REACT_APP_GCS_SERVICE_ACCOUNT_KEY
-  ? JSON.parse(Buffer.from(process.env.REACT_APP_GCS_SERVICE_ACCOUNT_KEY, 'base64').toString())
-  : JSON.parse(await import('fs').then(fs => fs.promises.readFile('./service-account.json', 'utf8')));
+let serviceAccountKey;
+try {
+  // In Vercel, use environment variable; locally, use a service account file
+  if (process.env.GCS_SERVICE_ACCOUNT_KEY) {
+    serviceAccountKey = JSON.parse(Buffer.from(process.env.GCS_SERVICE_ACCOUNT_KEY, 'base64').toString());
+  } else {
+    const fs = await import('fs').then((module) => module.promises);
+    serviceAccountKey = JSON.parse(await fs.readFile('./service-account.json', 'utf8'));
+  }
+  console.log('Google Cloud service account key loaded successfully');
+} catch (error) {
+  console.error('Failed to load Google Cloud service account key:', error.message);
+  throw new Error('Google Cloud service account key loading failed');
+}
 
-const storage = new Storage({ credentials: serviceAccountKeyPath });
-const bucketName = 'fir-project-vercelgcloud storage buckets get-iam-policy gs://fir-project-vercel';
+const storage = new Storage({ credentials: serviceAccountKey });
+const bucketName = process.env.GCS_BUCKET_NAME || 'fir-project-vercel'; // Ensure this matches your actual GCS bucket name
 const bucket = storage.bucket(bucketName);
 
 let speechClient;
 try {
-  speechClient = new SpeechClient({ credentials: serviceAccountKeyPath });
+  speechClient = new SpeechClient({ credentials: serviceAccountKey });
   console.log('Google Speech-to-Text client initialized successfully');
 } catch (error) {
   console.error('Failed to initialize Google Speech-to-Text client:', error.message);
@@ -39,6 +55,7 @@ const uploadAudio = multer({
   limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
   fileFilter: (req, file, cb) => {
     if (!file.mimetype.includes('audio/webm')) {
+      console.error('Invalid file type:', file.mimetype);
       return cb(new Error('Invalid file type. Only audio/webm is allowed.'));
     }
     cb(null, true);
@@ -65,8 +82,9 @@ const uploadWithRetry = async (file, buffer, metadata, retries = 3, backoff = 10
 // Middleware to check Google services availability
 const checkGoogleServices = (req, res, next) => {
   if (!speechClient) {
+    console.error('Speech-to-Text service unavailable');
     return res.status(503).json({
-      error: 'Service unavailable: Google Speech-to-Text service not properly initialized',
+      error: { code: 503, message: 'Service unavailable: Google Speech-to-Text service not properly initialized' },
       details: 'Check your API keys and service account configuration',
     });
   }
@@ -87,46 +105,67 @@ const runMulter = (req, res, multerMiddleware) => {
 };
 
 export default async function handler(req, res) {
+  // Set CORS headers
   res.setHeader('Access-Control-Allow-Origin', process.env.FRONTEND_URL || 'https://healthcare-app-vercel.vercel.app');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'x-user-uid, Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'x-user-uid, Content-Type, Authorization');
 
+  // Handle preflight CORS requests
   if (req.method === 'OPTIONS') {
-    return res.status(200).end();
+    res.status(200).end();
+    return;
   }
 
   if (req.method !== 'POST') {
+    console.error('Method not allowed:', req.method);
     res.setHeader('Allow', ['POST']);
-    return res.status(405).json({ error: 'Method not allowed' });
+    return res.status(405).json({ error: { code: 405, message: 'Method not allowed. Use POST.' } });
   }
 
   const pathSegments = req.url.split('/').filter(Boolean);
   const endpoint = pathSegments[1]; // "audio"
-  const subEndpoint = pathSegments[2]; // Should be "upload-audio"
+  const subEndpoint = pathSegments[2]; // "upload-audio"
 
   try {
     const userId = req.headers['x-user-uid'];
     if (!userId) {
-      return res.status(400).json({ error: 'Firebase UID is required in x-user-uid header' });
+      console.error('Missing x-user-uid header');
+      return res.status(401).json({ error: { code: 401, message: 'Firebase UID is required in x-user-uid header' } });
     }
 
+    // Verify user exists in Firebase Auth
     await admin.auth().getUser(userId);
+    console.log(`User verified: ${userId}`);
 
     if (endpoint !== 'audio' || subEndpoint !== 'upload-audio') {
-      return res.status(404).json({ error: 'Endpoint not found' });
+      console.error(`Endpoint not found: /${endpoint}/${subEndpoint}`);
+      return res.status(404).json({ error: { code: 404, message: 'Endpoint not found' } });
     }
 
-    // Apply multer middleware
+    // Apply multer middleware to parse the audio file
     await runMulter(req, res, uploadAudio.single('audio'));
 
+    // Extract language and uid from the request body
     const language = req.body.language || 'en-US';
     const uid = req.body.uid;
 
-    if (!uid) return res.status(400).json({ error: 'User ID (uid) is required' });
-    if (!req.file) return res.status(400).json({ error: 'No audio file uploaded' });
-
-    const audioFile = req.file;
-    if (audioFile.size === 0) return res.status(400).json({ error: 'Audio file is empty' });
+    // Validate request data
+    if (!uid) {
+      console.error('Missing uid in request body');
+      return res.status(400).json({ error: { code: 400, message: 'User ID (uid) is required in body' } });
+    }
+    if (uid !== userId) {
+      console.error(`Mismatched UID: header=${userId}, body=${uid}`);
+      return res.status(403).json({ error: { code: 403, message: 'Mismatched user ID in header and body' } });
+    }
+    if (!req.file) {
+      console.error('No audio file uploaded');
+      return res.status(400).json({ error: { code: 400, message: 'No audio file uploaded' } });
+    }
+    if (req.file.size === 0) {
+      console.error('Uploaded audio file is empty');
+      return res.status(400).json({ error: { code: 400, message: 'Audio file is empty' } });
+    }
 
     // Apply Google services check
     checkGoogleServices(req, res, () => {});
@@ -134,7 +173,7 @@ export default async function handler(req, res) {
     // Upload audio to GCS
     const fileName = `audio/${uid}/${Date.now()}-recording.webm`;
     const file = bucket.file(fileName);
-    await uploadWithRetry(file, audioFile.buffer, { contentType: audioFile.mimetype });
+    await uploadWithRetry(file, req.file.buffer, { contentType: req.file.mimetype });
     const audioUrl = `https://storage.googleapis.com/${bucketName}/${fileName}`;
     console.log(`Audio uploaded to GCS: ${audioUrl}`);
 
@@ -151,7 +190,7 @@ export default async function handler(req, res) {
       };
 
       const request = {
-        audio: { content: audioFile.buffer.toString('base64') },
+        audio: { content: req.file.buffer.toString('base64') },
         config,
       };
 
@@ -160,6 +199,7 @@ export default async function handler(req, res) {
         ? response.results.map((result) => result.alternatives[0].transcript).join('\n')
         : 'No transcription available';
       translatedText = transcriptionText; // Translation handled elsewhere
+      console.log(`Transcription successful for ${fileName}: "${transcriptionText}"`);
     } catch (transcriptionError) {
       console.error('Transcription error:', transcriptionError.message);
     }
@@ -174,11 +214,11 @@ export default async function handler(req, res) {
   } catch (error) {
     console.error(`Error in /api/audio/upload-audio:`, error.message);
     if (error.message.includes('Invalid file type')) {
-      return res.status(400).json({ error: error.message });
+      return res.status(400).json({ error: { code: 400, message: error.message } });
     }
     if (error.code === 'LIMIT_FILE_SIZE') {
-      return res.status(400).json({ error: 'File too large. Maximum size is 5MB.' });
+      return res.status(400).json({ error: { code: 400, message: 'File too large. Maximum size is 5MB.' } });
     }
-    return res.status(500).json({ error: 'Failed to upload audio', details: error.message });
+    return res.status(500).json({ error: { code: 500, message: 'Failed to upload audio', details: error.message } });
   }
 }

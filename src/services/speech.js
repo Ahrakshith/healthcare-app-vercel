@@ -23,10 +23,11 @@ async function transcribeAudio(audioBlob, languageCode = 'en-US', userId) {
   const formData = new FormData();
   formData.append('audio', audioBlob, 'recording.webm');
   formData.append('language', languageCode);
+  formData.append('uid', userId); // Ensure uid is sent in the body
 
   try {
     !isProduction && console.log('transcribeAudio: Sending to /api/audio/upload-audio');
-    const response = await fetch(`${API_BASE_URL}/api/audio/upload-audio`, {
+    const response = await fetch(`${API_BASE_URL}/audio/upload-audio`, { // Fixed: Removed extra /api
       method: 'POST',
       headers: { 'x-user-uid': userId },
       body: formData,
@@ -38,7 +39,7 @@ async function transcribeAudio(audioBlob, languageCode = 'en-US', userId) {
       let errorMessage = `Transcription failed: ${response.status} - ${response.statusText}`;
       try {
         const errorJson = JSON.parse(errorText);
-        errorMessage = errorJson.error || errorText;
+        errorMessage = errorJson.error?.message || errorText;
       } catch {
         errorMessage = errorText || 'Unknown server error';
       }
@@ -102,7 +103,7 @@ async function detectLanguage(text, userId) {
   !isProduction && console.log(`detectLanguage: Detecting for text="${truncate(text)}"`);
 
   try {
-    const response = await fetch(`${API_BASE_URL}/api/speech/translate`, {
+    const response = await fetch(`${API_BASE_URL}/speech/translate`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -170,7 +171,7 @@ async function translateText(text, sourceLanguageCode, targetLanguageCode, userI
       return text;
     }
 
-    const response = await fetch(`${API_BASE_URL}/api/speech/translate`, {
+    const response = await fetch(`${API_BASE_URL}/speech/translate`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -216,7 +217,7 @@ async function textToSpeechConvert(text, languageCode = 'en-US', userId) {
 
   try {
     const normalizedLanguageCode = languageCode.toLowerCase().startsWith('kn') ? 'kn-IN' : 'en-US';
-    const response = await fetch(`${API_BASE_URL}/api/speech/text-to-speech`, {
+    const response = await fetch(`${API_BASE_URL}/speech/text-to-speech`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
