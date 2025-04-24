@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { collection, onSnapshot, query, where } from 'firebase/firestore';
-import { db, auth } from '../services/firebase.js';
+import { auth } from '../services/firebase.js';
 import { SPECIALTIES } from '../constants/specialties.js';
 import { signOut } from 'firebase/auth';
 
@@ -11,6 +10,8 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const navigate = useNavigate();
+
+  const apiBaseUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
 
   useEffect(() => {
     if (!user || role !== 'patient' || !patientId) {
@@ -22,18 +23,26 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
 
     console.log('Fetching doctors for patient:', { patientId, uid: user.uid });
 
-    const q = specialty === 'All'
-      ? query(collection(db, 'doctors'))
-      : query(collection(db, 'doctors'), where('specialty', '==', specialty));
+    const fetchDoctors = async () => {
+      setLoading(true);
+      try {
+        const url = specialty === 'All' ? `${apiBaseUrl}/doctors` : `${apiBaseUrl}/doctors/by-specialty/${specialty}`;
+        const response = await fetch(url, {
+          headers: {
+            'x-user-uid': user.uid,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+          },
+          credentials: 'include',
+        });
 
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        const doctorList = snapshot.docs.map((doc) => ({
-          doctorId: doc.id,
-          ...doc.data(),
-        }));
-        console.log('SelectDoctor: Real-time doctors fetched:', doctorList);
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`);
+        }
+
+        const doctorList = await response.json();
+        console.log('SelectDoctor: Doctors fetched:', doctorList);
         setDoctors(doctorList);
         setError(
           doctorList.length === 0
@@ -42,18 +51,17 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
               : `No doctors found for specialty: ${specialty}.`
             : ''
         );
-        setLoading(false);
-      },
-      (err) => {
-        console.error('SelectDoctor: Firestore error:', err.message);
+      } catch (err) {
+        console.error('SelectDoctor: Fetch error:', err.message);
         setError(`Failed to load doctors: ${err.message}`);
         setDoctors([]);
+      } finally {
         setLoading(false);
       }
-    );
+    };
 
-    return () => unsubscribe();
-  }, [specialty, user, role, patientId, navigate]);
+    fetchDoctors();
+  }, [specialty, user, role, patientId, navigate, apiBaseUrl]);
 
   async function fetchWithRetry(url, options, retries = 3, backoff = 1000) {
     for (let attempt = 1; attempt <= retries; attempt++) {
@@ -81,8 +89,7 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
 
     try {
       const idToken = await firebaseUser.getIdToken(true);
-      const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
-      const response = await fetchWithRetry(`${apiUrl}/doctors/assign`, {
+      const response = await fetchWithRetry(`${apiBaseUrl}/doctors/assign`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${idToken}`,
@@ -91,6 +98,7 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
           'Accept': 'application/json',
         },
         body: JSON.stringify({ patientId, doctorId }),
+        credentials: 'include',
       });
 
       console.log('AssignDoctor API response status:', response.status);
@@ -103,7 +111,11 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
       navigate(`/patient/language-preference/${patientId}/${doctorId}`);
     } catch (err) {
       console.error('SelectDoctor: Error assigning doctor:', err.message);
-      setError(`Error assigning doctor: ${err.message.includes('404') ? 'Endpoint not found. Please contact support.' : err.message}`);
+      setError(
+        `Error assigning doctor: ${
+          err.message.includes('404') ? 'Endpoint not found. Please contact support.' : err.message
+        }`
+      );
     } finally {
       setLoading(false);
     }
@@ -112,6 +124,15 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
   const handleLogoutClick = async () => {
     try {
       await signOut(auth);
+      // Optionally call the logout API for server-side cleanup
+      await fetch(`${apiBaseUrl}/misc/logout`, {
+        method: 'POST',
+        headers: {
+          'x-user-uid': user.uid,
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+      });
       handleLogout();
       navigate('/login');
       console.log('Logged out successfully');
@@ -174,7 +195,7 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
               </tr>
             ) : (
               doctors.map((doctor) => (
-                <tr key={doctor.doctorId}>
+                <tr key={doctor.id || doctor.doctorId}>
                   <td>{doctor.name || 'N/A'}</td>
                   <td>{doctor.age || 'N/A'}</td>
                   <td>{doctor.sex || 'N/A'}</td>
@@ -183,7 +204,7 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
                   <td>{doctor.specialty || 'N/A'}</td>
                   <td>
                     <button
-                      onClick={() => handleDoctorSelect(doctor.doctorId)}
+                      onClick={() => handleDoctorSelect(doctor.id || doctor.doctorId)}
                       className="select-button"
                       disabled={loading}
                     >

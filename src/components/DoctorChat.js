@@ -122,21 +122,21 @@ function DoctorChat({ user, role, handleLogout }) {
     if (!selectedPatientId || !user?.uid || !doctorId) return;
 
     // Initialize Pusher
-    const pusher = new Pusher('2ed44c3ce3ef227d9924', {
-      cluster: 'ap2',
-      authEndpoint: `${apiBaseUrl}/pusher/auth`,
-      auth: {
-        headers: {
-          'x-user-uid': user.uid,
-        },
-      },
-    });
+     const pusher = new Pusher(process.env.REACT_APP_PUSHER_APP_ID || '2ed44c3ce3ef227d9924', {
+        cluster: process.env.REACT_APP_PUSHER_CLUSTER || 'ap2',
+         authEndpoint: `${apiBaseUrl}/pusher/auth`,
+         auth: {
+            headers: {
+                 'x-user-uid': user.uid,
+             },
+         },
+     });
 
     // Subscribe to the chat channel
     const channel = pusher.subscribe(`chat-${selectedPatientId}-${doctorId}`);
 
     // Listen for new messages
-    channel.bind('message', (message) => {
+    channel.bind('new-message', (message) => {
       setMessages((prev) => {
         if (!prev.some((msg) => msg.timestamp === message.timestamp && msg.text === message.text)) {
           const updatedMessages = [...prev, message].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
@@ -173,7 +173,7 @@ function DoctorChat({ user, role, handleLogout }) {
 
         if (!response.ok) {
           const errorText = await response.text();
-          throw new Error(`Failed to fetch messages: ${response.status} - ${errorText}`);
+          throw new Error(`HTTP ${response.status}: ${errorText || 'Failed to fetch messages'}`);
         }
 
         const data = await response.json();
@@ -192,6 +192,7 @@ function DoctorChat({ user, role, handleLogout }) {
         }
       } catch (err) {
         setError(`Error fetching messages: ${err.message}`);
+        console.error('Fetch messages error:', err);
       } finally {
         setLoadingMessages(false);
       }
@@ -218,7 +219,7 @@ function DoctorChat({ user, role, handleLogout }) {
 
         if (!response.ok) {
           const errorText = await response.text();
-          throw new Error(`Failed to fetch alerts: ${response.status} - ${errorText}`);
+          throw new Error(`HTTP ${response.status}: ${errorText || 'Failed to fetch alerts'}`);
         }
 
         const notifications = await response.json();
@@ -233,6 +234,7 @@ function DoctorChat({ user, role, handleLogout }) {
         );
       } catch (err) {
         setError(`Failed to fetch alerts: ${err.message}`);
+        console.error('Fetch alerts error:', err);
       }
     };
 
@@ -310,13 +312,14 @@ function DoctorChat({ user, role, handleLogout }) {
             body: JSON.stringify(message),
             credentials: 'include',
           });
-          if (!response.ok) throw new Error(`Failed to send message: ${response.statusText}`);
+          if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`);
           setPatients((prev) => prev.filter((p) => p.patientId !== selectedPatientId));
           setSelectedPatientId(null);
           setSelectedPatientName('');
           setDiagnosisPrompt(null);
         } catch (err) {
           setError(`Failed to send message: ${err.message}`);
+          console.error('Diagnosis decision error:', err);
         }
       }
     },
@@ -338,6 +341,7 @@ function DoctorChat({ user, role, handleLogout }) {
       } catch (err) {
         setError(`Failed to transcribe audio: ${err.message}`);
         setFailedUpload({ audioBlob, language });
+        console.error('Retry upload error:', err);
         return null;
       } finally {
         setLoadingAudio(false);
@@ -395,6 +399,7 @@ function DoctorChat({ user, role, handleLogout }) {
           setError(`Failed to process audio: ${err.message}`);
           setFailedUpload({ audioBlob, language: 'en-US' });
           setLoadingAudio(false);
+          console.error('Audio processing error:', err);
           return;
         }
 
@@ -419,7 +424,7 @@ function DoctorChat({ user, role, handleLogout }) {
             body: JSON.stringify(message),
             credentials: 'include',
           });
-          if (!response.ok) throw new Error(`Failed to save message: ${response.statusText}`);
+          if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`);
           setMessages((prev) => {
             if (!prev.some((msg) => msg.timestamp === message.timestamp && msg.text === message.text)) {
               return [...prev, message].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
@@ -428,6 +433,7 @@ function DoctorChat({ user, role, handleLogout }) {
           });
         } catch (err) {
           setError(`Failed to send message: ${err.message}`);
+          console.error('Send message error:', err);
         } finally {
           setLoadingAudio(false);
         }
@@ -437,6 +443,7 @@ function DoctorChat({ user, role, handleLogout }) {
       setRecording(true);
     } catch (err) {
       setError(`Failed to start recording: ${err.message}`);
+      console.error('Recording error:', err);
     }
   }, [selectedPatientId, languagePreference, user.uid, apiBaseUrl]);
 
@@ -486,7 +493,7 @@ function DoctorChat({ user, role, handleLogout }) {
         body: JSON.stringify(message),
         credentials: 'include',
       });
-      if (!response.ok) throw new Error(`Failed to send message: ${response.statusText}`);
+      if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`);
       setMessages((prev) => {
         if (!prev.some((msg) => msg.timestamp === message.timestamp && msg.text === message.text)) {
           return [...prev, message].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
@@ -496,6 +503,7 @@ function DoctorChat({ user, role, handleLogout }) {
       setNewMessage('');
     } catch (err) {
       setError(`Failed to send message: ${err.message}`);
+      console.error('Send message error:', err);
     } finally {
       setLoadingAudio(false);
     }
@@ -557,7 +565,8 @@ function DoctorChat({ user, role, handleLogout }) {
           body: JSON.stringify(message),
           credentials: 'include',
         });
-        if (!chatResponse.ok) throw new Error(`Failed to send message: ${chatResponse.statusText}`);
+        if (!chatResponse.ok) throw new Error(`HTTP ${chatResponse.status}: ${await chatResponse.text()}`);
+
         setMessages((prev) => {
           if (!prev.some((msg) => msg.timestamp === message.timestamp)) {
             return [...prev, message].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
@@ -565,7 +574,7 @@ function DoctorChat({ user, role, handleLogout }) {
           return prev;
         });
 
-        // Update patient record
+        // Update patient record (assuming /api/patients/:patientId exists)
         await fetch(`${apiBaseUrl}/patients/${selectedPatientId}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
@@ -582,7 +591,7 @@ function DoctorChat({ user, role, handleLogout }) {
         const disease = actionType === 'Prescription' ? messages
           .filter((msg) => msg.sender === 'doctor' && msg.diagnosis)
           .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0]?.diagnosis : diagnosis;
-        await fetch(`${apiBaseUrl}/admin`, {
+        const adminResponse = await fetch(`${apiBaseUrl}/admin`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
           body: JSON.stringify({
@@ -597,6 +606,7 @@ function DoctorChat({ user, role, handleLogout }) {
           }),
           credentials: 'include',
         });
+        if (!adminResponse.ok) throw new Error(`HTTP ${adminResponse.status}: ${await adminResponse.text()}`);
 
         setDiagnosis('');
         setPrescription({ medicine: '', dosage: '', frequency: '', duration: '' });
@@ -604,6 +614,7 @@ function DoctorChat({ user, role, handleLogout }) {
         setActionType('');
       } catch (err) {
         setError(`Failed to send action: ${err.message}`);
+        console.error('Send action error:', err);
       }
     },
     [actionType, diagnosis, prescription, selectedPatientId, doctorId, user.uid, selectedPatientName, patients, messages, apiBaseUrl]
@@ -622,6 +633,7 @@ function DoctorChat({ user, role, handleLogout }) {
         audioRef.current.play();
       } catch (err) {
         setError(`Failed to read aloud: ${err.message}`);
+        console.error('Read aloud error:', err);
       }
     },
     []
@@ -659,6 +671,7 @@ function DoctorChat({ user, role, handleLogout }) {
       }
     } catch (err) {
       setError(`Failed to log out: ${err.message}`);
+      console.error('Logout error:', err);
     } finally {
       if (handleLogout) {
         handleLogout();

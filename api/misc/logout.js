@@ -1,3 +1,4 @@
+//api/misc/logout.js
 import { Storage } from '@google-cloud/storage';
 import admin from 'firebase-admin';
 

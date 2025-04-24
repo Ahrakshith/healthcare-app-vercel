@@ -1,3 +1,4 @@
+//api/users/[uid].js
 import admin from 'firebase-admin';
 
 console.log('Function loaded at', new Date().toISOString());

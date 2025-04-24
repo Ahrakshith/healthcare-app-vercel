@@ -1,3 +1,4 @@
+//api/pusher/auth.js
 import Pusher from 'pusher';
 import admin from 'firebase-admin';
 
