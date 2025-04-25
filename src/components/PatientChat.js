@@ -30,7 +30,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   const [adherenceRate, setAdherenceRate] = useState(0);
   const [missedDoses, setMissedDoses] = useState(0);
   const [missedDoseAlerts, setMissedDoseAlerts] = useState([]);
-  const [doctorPrompt, setDoctorPrompt] = useState(null); // For Yes/No prompt
+  const [doctorPrompt, setDoctorPrompt] = useState(null);
   const audioChunksRef = useRef([]);
   const audioRef = useRef(new Audio());
   const streamRef = useRef(null);
@@ -44,8 +44,8 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   const effectiveUserId = user?.uid || '';
   const effectivePatientId = urlPatientId || patientId || '';
   const apiBaseUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
-  const pusherKey = process.env.REACT_APP_PUSHER_KEY || 'your-pusher-key';
-  const pusherCluster = process.env.REACT_APP_PUSHER_CLUSTER || 'ap2';
+  const pusherKey = process.env.PUSHER_KEY || '2ed44c3ce3ef227d9924';
+  const pusherCluster = process.env.PUSHER_CLUSTER || 'ap2';
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -97,7 +97,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           const data = patientDoc.data();
           const pref = data.languagePreference || 'en';
           setLanguagePreference(pref);
-          setTranscriptionLanguage(pref);
+          setTranscriptionLanguage(pref); // Set default transcription language to preference
           setProfileData({
             name: data.name || 'N/A',
             patientId: effectivePatientId,
@@ -141,7 +141,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       const lastContact = localStorage.getItem(`lastContact_${effectivePatientId}_${doctorId}`);
       const now = new Date();
       if (!lastContact || (now - new Date(lastContact) > 7 * 24 * 60 * 60 * 1000)) {
-        setDoctorPrompt(true); // Trigger Yes/No prompt
+        setDoctorPrompt(true);
       }
     };
 
@@ -184,7 +184,14 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       pusherRef.current.connection.bind('error', (err) => {
         console.error('Pusher connection error:', err);
         setError('Failed to connect to real-time messaging. Attempting to reconnect...');
-        setTimeout(() => pusherRef.current.connect(), 2000);
+        setTimeout(() => {
+          if (pusherRef.current) pusherRef.current.connect();
+        }, 2000);
+      });
+
+      pusherRef.current.connection.bind('connected', () => {
+        console.log('Pusher connected successfully');
+        setError(''); // Clear error on successful connection
       });
 
       const channel = pusherRef.current.subscribe(`chat-${effectivePatientId}-${doctorId}`);
@@ -273,11 +280,13 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   const normalizeLanguageCode = useCallback((code) => {
     switch (code?.toLowerCase()) {
       case 'kn':
+      case 'kn-in':
         return 'kn-IN';
       case 'en':
+      case 'en-us':
         return 'en-US';
       default:
-        return code || 'en-US';
+        return 'en-US';
     }
   }, []);
 
@@ -690,21 +699,20 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           const transcriptionResult = await transcribeAudio(audioBlob, normalizedTranscriptionLanguage, effectiveUserId);
           text = transcriptionResult.transcription || 'Transcription failed';
 
-          if (languagePreference === 'en' && transcriptionLanguage === 'kn') {
-            translatedText = await translateText(text, 'kn', 'en');
-          } else if (languagePreference === 'kn' && transcriptionLanguage === 'en') {
-            translatedText = await translateText(text, 'en', 'kn');
-          } else if (languagePreference === 'kn') {
-            translatedText = await translateText(text, 'kn', 'en');
+          // Handle translations based on recording language and patient preference
+          if (normalizedTranscriptionLanguage === 'kn-IN') {
+            translatedText = transcriptionResult.translatedText || await translateText(text, 'kn-IN', 'en-US', effectiveUserId);
+          } else if (normalizedTranscriptionLanguage === 'en-US' && languagePreference === 'kn') {
+            translatedText = await translateText(text, 'en-US', 'kn-IN', effectiveUserId);
           }
 
           const message = {
             sender: 'patient',
-            text: languagePreference === 'kn' ? text : translatedText || text,
-            translatedText: languagePreference === 'kn' ? translatedText : null,
+            text,
+            translatedText,
             timestamp: new Date().toISOString(),
-            language: transcriptionLanguage,
-            recordingLanguage: transcriptionLanguage,
+            language: normalizedTranscriptionLanguage,
+            recordingLanguage: normalizedTranscriptionLanguage,
             doctorId,
             userId: effectivePatientId,
             audioUrl: transcriptionResult.audioUrl,
@@ -845,15 +853,15 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     }
   };
 
-  const readAloud = async (audioUrl, lang, fallbackText) => {
+  const readAloud = async (text, lang) => {
     try {
-      if (!audioUrl && (!fallbackText || typeof fallbackText !== 'string' || fallbackText.trim() === '')) {
-        setError('Cannot read aloud: No valid audio or text provided.');
+      if (!text || typeof text !== 'string' || text.trim() === '') {
+        setError('Cannot read aloud: No valid text provided.');
         return;
       }
       const normalizedLang = normalizeLanguageCode(lang);
-      const audioToPlay = audioUrl || (await textToSpeechConvert(fallbackText.trim(), normalizedLang));
-      audioRef.current.src = audioToPlay;
+      const audioUrl = await textToSpeechConvert(text.trim(), normalizedLang, effectiveUserId);
+      audioRef.current.src = audioUrl;
       await audioRef.current.play();
     } catch (err) {
       console.error('Error reading aloud:', err);
@@ -975,10 +983,9 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     if (response === 'yes') {
       setDoctorPrompt(false);
       localStorage.setItem(`lastContact_${effectivePatientId}_${doctorId}`, new Date().toISOString());
-      // Notify server to enable chat (implement server-side logic)
     } else {
       setDoctorPrompt(false);
-      navigate('/login'); // Redirect if No
+      navigate('/login');
     }
   };
 
@@ -1164,11 +1171,8 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                           <button
                             onClick={() =>
                               readAloud(
-                                null,
-                                languagePreference,
-                                languagePreference === 'kn'
-                                  ? msg.translatedDiagnosis || msg.diagnosis
-                                  : msg.diagnosis
+                                languagePreference === 'kn' ? msg.translatedDiagnosis || msg.diagnosis : msg.diagnosis,
+                                languagePreference
                               )
                             }
                             className="read-aloud-button"
@@ -1232,25 +1236,23 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                   className={`message ${msg.sender === 'patient' ? 'patient-message' : 'doctor-message'}`}
                 >
                   <div className="message-content">
-                    {msg.sender === 'patient' && (
+                    {msg.sender === 'patient' && msg.audioUrl && (
                       <>
-                        {languagePreference === 'en' ? (
+                        {msg.recordingLanguage === 'en-US' ? (
                           <div className="message-block">
                             <p className="primary-text">{msg.text || 'No transcription'}</p>
-                            {msg.audioUrl && (
-                              <div className="audio-container">
-                                <audio controls src={msg.audioUrl} />
-                                <button
-                                  onClick={() => readAloud(msg.audioUrl, 'en', msg.text)}
-                                  className="read-aloud-button"
-                                >
-                                  🔊 (English)
-                                </button>
-                                <a href={msg.audioUrl} download className="download-link">
-                                  Download Audio
-                                </a>
-                              </div>
-                            )}
+                            <div className="audio-container">
+                              <audio controls src={msg.audioUrl} />
+                              <button
+                                onClick={() => readAloud(msg.text, 'en')}
+                                className="read-aloud-button"
+                              >
+                                🔊 (English)
+                              </button>
+                              <a href={msg.audioUrl} download className="download-link">
+                                Download Audio
+                              </a>
+                            </div>
                           </div>
                         ) : (
                           <div className="message-block">
@@ -1258,29 +1260,32 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                             {msg.translatedText && (
                               <p className="translated-text">English: {msg.translatedText}</p>
                             )}
-                            {msg.audioUrl && (
-                              <div className="audio-container">
-                                <audio controls src={msg.audioUrl} />
-                                <button
-                                  onClick={() => readAloud(msg.audioUrl, 'kn', msg.text)}
-                                  className="read-aloud-button"
-                                >
-                                  🔊 (Kannada)
-                                </button>
-                                <button
-                                  onClick={() => readAloud(msg.audioUrl, 'en', msg.translatedText || msg.text)}
-                                  className="read-aloud-button"
-                                >
-                                  🔊 (English)
-                                </button>
-                                <a href={msg.audioUrl} download className="download-link">
-                                  Download Audio
-                                </a>
-                              </div>
-                            )}
+                            <div className="audio-container">
+                              <audio controls src={msg.audioUrl} />
+                              <button
+                                onClick={() => readAloud(msg.text, 'kn')}
+                                className="read-aloud-button"
+                              >
+                                🔊 (Kannada)
+                              </button>
+                              <button
+                                onClick={() => readAloud(msg.translatedText || msg.text, 'en')}
+                                className="read-aloud-button"
+                              >
+                                🔊 (English)
+                              </button>
+                              <a href={msg.audioUrl} download className="download-link">
+                                Download Audio
+                              </a>
+                            </div>
                           </div>
                         )}
                       </>
+                    )}
+                    {msg.sender === 'patient' && !msg.audioUrl && (
+                      <div className="message-block">
+                        <p className="primary-text">{msg.text || 'No transcription'}</p>
+                      </div>
                     )}
                     {msg.sender === 'doctor' && (
                       <div className="message-block">
@@ -1299,7 +1304,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                             <audio controls src={msg.audioUrl} />
                             {languagePreference === 'en' ? (
                               <button
-                                onClick={() => readAloud(msg.audioUrl, 'en', msg.text)}
+                                onClick={() => readAloud(msg.text, 'en')}
                                 className="read-aloud-button"
                               >
                                 🔊 (English)
@@ -1307,13 +1312,13 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                             ) : (
                               <>
                                 <button
-                                  onClick={() => readAloud(msg.audioUrl, 'kn', msg.text)}
+                                  onClick={() => readAloud(msg.text, 'kn')}
                                   className="read-aloud-button"
                                 >
                                   🔊 (Kannada)
                                 </button>
                                 <button
-                                  onClick={() => readAloud(msg.audioUrl, 'en', msg.translatedText || msg.text)}
+                                  onClick={() => readAloud(msg.translatedText || msg.text, 'en')}
                                   className="read-aloud-button"
                                 >
                                   🔊 (English)
@@ -1863,11 +1868,6 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           text-decoration: underline;
         }
 
-        .read-aloud-buttons {
-          display: flex;
-          gap: 10px;
-        }
-
         .read-aloud-button {
           padding: 6px 12px;
           background: rgba(255, 255, 255, 0.1);
@@ -2086,9 +2086,6 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           color: #FFFFFF;
           transition: border-color 0.3s ease, box-shadow 0.3s ease;
         }
-
-
-
 
         .text-input-container input:focus {
           outline: none;
