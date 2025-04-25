@@ -27,7 +27,7 @@ async function transcribeAudio(audioBlob, languageCode = 'en-US', userId) {
 
   try {
     !isProduction && console.log('transcribeAudio: Sending to /api/audio/upload-audio');
-    const response = await fetch(`${API_BASE_URL}/audio/upload-audio`, { // Fixed: Removed extra /api
+    const response = await fetch(`${API_BASE_URL}/audio`, { // Fixed: Removed extra /api
       method: 'POST',
       headers: { 'x-user-uid': userId },
       body: formData,
