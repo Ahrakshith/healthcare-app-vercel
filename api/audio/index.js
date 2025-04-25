@@ -50,7 +50,7 @@ const initStorage = async () => {
       throw new Error('GCS_SERVICE_ACCOUNT_KEY environment variable is not set');
     }
     console.log('Using GCS_SERVICE_ACCOUNT_KEY from environment variable');
-    const serviceAccountKey = JSON.parse(Buffer.from(process.env.GCS_SERVICE_ACCOUNT_KEY, 'base64').toString());
+    const serviceAccountKey = JSON.parse(process.env.GCS_SERVICE_ACCOUNT_KEY); // Removed base64 decoding
     console.log('Google Cloud service account key loaded successfully');
 
     storage = new Storage({ credentials: serviceAccountKey });
@@ -108,7 +108,7 @@ const getServiceAccountKey = async () => {
   if (!process.env.GCS_SERVICE_ACCOUNT_KEY) {
     throw new Error('GCS_SERVICE_ACCOUNT_KEY environment variable is not set');
   }
-  return JSON.parse(Buffer.from(process.env.GCS_SERVICE_ACCOUNT_KEY, 'base64').toString());
+  return JSON.parse(process.env.GCS_SERVICE_ACCOUNT_KEY); // Removed base64 decoding
 };
 
 // Multer configuration for audio uploads
@@ -240,6 +240,7 @@ export default async function handler(req, res) {
       const fileName = `audio/${uid}/${Date.now()}-recording.webm`;
       const file = bucket.file(fileName);
       await uploadWithRetry(file, req.file.buffer, { contentType: req.file.mimetype });
+      const bucketName = process.env.GCS_BUCKET_NAME || 'fir-project-vercel'; // Ensure bucketName is defined
       const audioUrl = `https://storage.googleapis.com/${bucketName}/${fileName}`;
       console.log(`Audio uploaded to GCS: ${audioUrl}`);
 
@@ -285,6 +286,7 @@ export default async function handler(req, res) {
         const fileName = `tts/${Date.now()}.mp3`;
         const file = bucket.file(fileName);
         await uploadWithRetry(file, response.audioContent, { contentType: 'audio/mp3' });
+        const bucketName = process.env.GCS_BUCKET_NAME || 'fir-project-vercel'; // Ensure bucketName is defined
         const audioUrl = `https://storage.googleapis.com/${bucketName}/${fileName}`;
         return res.status(200).json({ audioUrl });
       } else {
