@@ -1,4 +1,29 @@
+Below is the complete and updated `PatientChat.js` based on your current code, incorporating the project flow you described (speech-to-text, text-to-speech, message format adjustments), while retaining the profile, reminder system, and doctor's recommendations. The changes align with your specifications for language preferences (English/Kannada), recording behavior, message formatting for both patient and doctor sides, and the use of Pusher for real-time messaging. Authentication remains Firebase-based, with chats stored in Firestore and audio uploaded to GCS.
 
+### Key Updates
+1. **Language Preference and Recording**:
+   - Language toggle defaults to `languagePreference` (English or Kannada) at the bottom left.
+   - Recording uses `navigator.mediaDevices.getUserMedia` and `MediaRecorder`, with transcription adapting to `transcriptionLanguage`.
+   - Text input remains English-only, while audio recording supports Kannada/English with translation as per your format.
+2. **Message Format**:
+   - **Patient (English Preference)**: `[Translated English text]`, `[Audio playback]`, `[Read aloud: English]`, `[Download audio]`.
+   - **Patient (Kannada Preference)**: `[Translated Kannada text]`, `[Translated English text]`, `[Audio playback]`, `[Read aloud: Kannada] [Read aloud: English]`, `[Download audio]`.
+   - **Doctor (Patient English Preference)**: `[Translated English text]`, `[Audio playback]`, `[Read aloud: English]`, `[Download audio]`.
+   - **Doctor (Patient Kannada Preference)**: `[Translated Kannada text]`, `[Translated English text]`, `[Audio playback]`, `[Read aloud: Kannada] [Read aloud: English]`, `[Download audio]`.
+3. **Doctor Prompt**:
+   - Implemented a Yes/No prompt for the doctor on first contact or after 7 days (client-side logic; server-side integration would be needed for persistence).
+4. **Retained Features**:
+   - Profile view, reminder system (with adherence and missed dose alerts), and doctor's recommendations.
+5. **Technical Adjustments**:
+   - Removed `react-speech-recognition` dependency (replaced with manual transcription via `transcribeAudio` service).
+   - Ensured Pusher integration remains intact.
+   - Added proper error handling and retry logic for audio uploads.
+
+---
+
+### Updated `PatientChat.js`
+
+```javascript
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Pusher from 'pusher-js';
@@ -30,6 +55,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   const [adherenceRate, setAdherenceRate] = useState(0);
   const [missedDoses, setMissedDoses] = useState(0);
   const [missedDoseAlerts, setMissedDoseAlerts] = useState([]);
+  const [doctorPrompt, setDoctorPrompt] = useState(null); // For Yes/No prompt
   const audioChunksRef = useRef([]);
   const audioRef = useRef(new Audio());
   const streamRef = useRef(null);
@@ -127,7 +153,6 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           snoozeCount: doc.data().snoozeCount || 0,
           scheduledTime: doc.data().scheduledTime,
         }));
-
         setReminders(fetchedReminders);
         scheduleReminders(fetchedReminders);
         calculateAdherenceRate(fetchedReminders);
@@ -137,8 +162,17 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       }
     };
 
+    const checkDoctorPrompt = async () => {
+      const lastContact = localStorage.getItem(`lastContact_${effectivePatientId}_${doctorId}`);
+      const now = new Date();
+      if (!lastContact || (now - new Date(lastContact) > 7 * 24 * 60 * 60 * 1000)) {
+        setDoctorPrompt(true); // Trigger Yes/No prompt
+      }
+    };
+
     fetchPatientData();
     fetchReminders();
+    checkDoctorPrompt();
 
     return () => {
       if (pusherRef.current) {
@@ -165,115 +199,100 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   useEffect(() => {
     if (!languagePreference) return;
 
-    pusherRef.current = new Pusher(pusherKey, {
-      cluster: pusherCluster,
-      authEndpoint: `${apiBaseUrl}/pusher/auth`,
-      auth: {
-        headers: { 'x-user-uid': effectiveUserId },
-      },
-    });
-
-    pusherRef.current.connection.bind('error', (err) => {
-      console.error('Pusher connection error:', err);
-      setError('Failed to connect to real-time messaging. Please refresh the page.');
-    });
-
-    const channel = pusherRef.current.subscribe(`chat-${effectivePatientId}-${doctorId}`);
-
-    channel.bind('newMessage', (message) => {
-      console.log('PatientChat.js: Received new message:', {
-        ...message,
-        audioUrl: message.audioUrl ? '[Audio URL]' : null,
-      });
-      setMessages((prev) => {
-        if (!prev.some((msg) => msg.timestamp === message.timestamp && (!msg.text || msg.text === message.text))) {
-          return [...prev, message].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-        }
-        console.log('PatientChat.js: Skipped duplicate message:', message.timestamp, message.text);
-        return prev;
+    try {
+      pusherRef.current = new Pusher(pusherKey, {
+        cluster: pusherCluster,
+        authEndpoint: `${apiBaseUrl}/pusher/auth`,
+        auth: { headers: { 'x-user-uid': effectiveUserId } },
       });
 
-      if (message.sender === 'doctor' && (message.diagnosis || message.prescription)) {
-        validatePrescription(message.diagnosis, message.prescription, message.timestamp);
-      }
-    });
+      pusherRef.current.connection.bind('error', (err) => {
+        console.error('Pusher connection error:', err);
+        setError('Failed to connect to real-time messaging. Attempting to reconnect...');
+        setTimeout(() => pusherRef.current.connect(), 2000);
+      });
 
-    channel.bind('missedDoseAlert', (alert) => {
-      setMissedDoseAlerts((prev) => [...prev, { ...alert, id: Date.now().toString() }]);
-    });
-
-    const fetchMessages = async () => {
-      try {
-        console.log('Fetching messages:', {
-          url: `${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`,
-          userId: effectiveUserId,
+      const channel = pusherRef.current.subscribe(`chat-${effectivePatientId}-${doctorId}`);
+      channel.bind('newMessage', (message) => {
+        console.log('PatientChat.js: Received new message:', {
+          ...message,
+          audioUrl: message.audioUrl ? '[Audio URL]' : null,
         });
-        const idToken = await firebaseUser.getIdToken(true);
-        const response = await fetch(`${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`, {
-          headers: {
-            'x-user-uid': effectiveUserId,
-            Authorization: `Bearer ${idToken}`,
-          },
-          credentials: 'include',
-        });
-        if (!response.ok) {
-          if (response.status === 404) {
-            console.log('Chat not found, initializing empty chat');
-            setMessages([]);
-            return;
+        setMessages((prev) => {
+          if (!prev.some((msg) => msg.timestamp === message.timestamp && (!msg.text || msg.text === message.text))) {
+            return [...prev, message].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
           }
-          const errorData = await response.json();
-          throw new Error(`Failed to fetch messages: ${response.statusText} - ${errorData.error?.message || 'Unknown error'}`);
+          console.log('PatientChat.js: Skipped duplicate message:', message.timestamp, message.text);
+          return prev;
+        });
+
+        if (message.sender === 'doctor' && (message.diagnosis || message.prescription)) {
+          validatePrescription(message.diagnosis, message.prescription, message.timestamp);
         }
-        const data = await response.json();
-        const fetchedMessages = data.messages || [];
+      });
 
-        const validatedMessages = await Promise.all(
-          fetchedMessages.map(async (msg) => {
-            const updatedMsg = { ...msg };
-            if (msg.audioUrl) {
-              const response = await fetch(msg.audioUrl, { method: 'HEAD' });
-              if (!response.ok) updatedMsg.audioUrl = null;
-            }
-            if (msg.audioUrlEn) {
-              const response = await fetch(msg.audioUrlEn, { method: 'HEAD' });
-              if (!response.ok) updatedMsg.audioUrlEn = null;
-            }
-            if (msg.audioUrlKn) {
-              const response = await fetch(msg.audioUrlKn, { method: 'HEAD' });
-              if (!response.ok) updatedMsg.audioUrlKn = null;
-            }
-            return updatedMsg;
-          })
-        );
+      channel.bind('missedDoseAlert', (alert) => {
+        setMissedDoseAlerts((prev) => [...prev, { ...alert, id: Date.now().toString() }]);
+      });
 
-        setMessages(validatedMessages.sort((a, b) => a.timestamp.localeCompare(b.timestamp)));
+      const fetchMessages = async () => {
+        try {
+          console.log('Fetching messages:', {
+            url: `${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`,
+            userId: effectiveUserId,
+          });
+          const idToken = await firebaseUser.getIdToken(true);
+          const response = await fetch(`${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`, {
+            headers: { 'x-user-uid': effectiveUserId, Authorization: `Bearer ${idToken}` },
+            credentials: 'include',
+          });
 
-        const doctorMessages = validatedMessages.filter((msg) => msg.sender === 'doctor');
-        const latestDiagnosis = doctorMessages
-          .filter((msg) => msg.diagnosis)
-          .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0]?.diagnosis || '';
-        const latestPrescription = doctorMessages
-          .filter((msg) => msg.prescription)
-          .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0]?.prescription || '';
-        if (latestDiagnosis || latestPrescription) {
-          validatePrescription(latestDiagnosis, latestPrescription, 'latest');
+          if (!response.ok) {
+            if (response.status === 404) {
+              console.log('Chat not found, initializing empty chat');
+              setMessages([]);
+              return;
+            }
+            const errorData = await response.json();
+            throw new Error(`Failed to fetch messages: ${response.statusText} - ${errorData.error?.message || 'Unknown error'}`);
+          }
+
+          const data = await response.json();
+          const fetchedMessages = data.messages || [];
+          setMessages(fetchedMessages.sort((a, b) => a.timestamp.localeCompare(b.timestamp)));
+
+          const doctorMessages = fetchedMessages.filter((msg) => msg.sender === 'doctor');
+          const latestDiagnosis = doctorMessages
+            .filter((msg) => msg.diagnosis)
+            .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0]?.diagnosis || '';
+          const latestPrescription = doctorMessages
+            .filter((msg) => msg.prescription)
+            .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0]?.prescription || '';
+          if (latestDiagnosis || latestPrescription) {
+            validatePrescription(latestDiagnosis, latestPrescription, 'latest');
+          }
+        } catch (err) {
+          console.error('Error fetching messages:', err);
+          setError(`Error fetching messages: ${err.message}`);
+          if (err.message.includes('404')) {
+            setTimeout(fetchMessages, 2000);
+          }
         }
-      } catch (err) {
-        console.error('Error fetching messages:', err);
-        setError(`Error fetching messages: ${err.message}`);
-      }
-    };
+      };
 
-    fetchMessages();
+      fetchMessages();
 
-    return () => {
-      if (pusherRef.current) {
-        pusherRef.current.unsubscribe(`chat-${effectivePatientId}-${doctorId}`);
-        pusherRef.current.disconnect();
-        console.log('PatientChat.js: Pusher disconnected');
-      }
-    };
+      return () => {
+        if (pusherRef.current) {
+          pusherRef.current.unsubscribe(`chat-${effectivePatientId}-${doctorId}`);
+          pusherRef.current.disconnect();
+          console.log('PatientChat.js: Pusher disconnected');
+        }
+      };
+    } catch (err) {
+      console.error('Pusher initialization failed:', err);
+      setError('Failed to initialize real-time messaging. Please refresh the page.');
+    }
   }, [effectiveUserId, effectivePatientId, doctorId, languagePreference, apiBaseUrl, firebaseUser, pusherKey, pusherCluster]);
 
   const normalizeLanguageCode = useCallback((code) => {
@@ -605,7 +624,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         if (!transcriptionResult.audioUrl) {
           throw new Error('Transcription succeeded, but no audio URL was returned.');
         }
-        const response = await fetch(transcriptionResult.audioUrl, { method: 'HEAD' });
+        const response = await fetch(transcriptionResult.audioUrl, { method: 'HEAD', mode: 'cors' });
         if (!response.ok) {
           throw new Error(`Audio URL inaccessible: ${transcriptionResult.audioUrl} (Status: ${response.status})`);
         }
@@ -622,12 +641,13 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           recordingLanguage: language,
           doctorId,
           userId: effectivePatientId,
+          audioUrl: transcriptionResult.audioUrl,
         };
 
         const formData = new FormData();
         formData.append('audio', audioBlob, `audio_${new Date().toISOString()}.webm`);
         formData.append('message', JSON.stringify(message));
-        formData.append('sender', 'patient'); // Ensure sender is included
+        formData.append('sender', 'patient');
 
         console.log('Sending retry upload:', {
           url: `${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`,
@@ -689,8 +709,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         }
 
         const normalizedTranscriptionLanguage = normalizeLanguageCode(transcriptionLanguage);
-        let text;
-        let translatedText = null;
+        let text, translatedText = null;
 
         try {
           const transcriptionResult = await transcribeAudio(audioBlob, normalizedTranscriptionLanguage, effectiveUserId);
@@ -700,23 +719,26 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
             translatedText = await translateText(text, 'kn', 'en');
           } else if (languagePreference === 'kn' && transcriptionLanguage === 'en') {
             translatedText = await translateText(text, 'en', 'kn');
+          } else if (languagePreference === 'kn') {
+            translatedText = await translateText(text, 'kn', 'en');
           }
 
           const message = {
             sender: 'patient',
-            text,
-            translatedText: translatedText || '',
+            text: languagePreference === 'kn' ? text : translatedText || text,
+            translatedText: languagePreference === 'kn' ? translatedText : null,
             timestamp: new Date().toISOString(),
             language: transcriptionLanguage,
             recordingLanguage: transcriptionLanguage,
             doctorId,
             userId: effectivePatientId,
+            audioUrl: transcriptionResult.audioUrl,
           };
 
           const formData = new FormData();
           formData.append('audio', audioBlob, `audio_${new Date().toISOString()}.webm`);
           formData.append('message', JSON.stringify(message));
-          formData.append('sender', 'patient'); // Ensure sender is included
+          formData.append('sender', 'patient');
 
           console.log('Sending audio message:', {
             url: `${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`,
@@ -742,6 +764,11 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           console.error('Audio processing failed:', err);
           setError(`Failed to process audio: ${err.message}`);
           setFailedUpload({ audioBlob, language: normalizedTranscriptionLanguage });
+        }
+
+        if (streamRef.current) {
+          streamRef.current.getTracks().forEach((track) => track.stop());
+          streamRef.current = null;
         }
       };
 
@@ -808,7 +835,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     const formData = new FormData();
     formData.append('image', file);
     formData.append('message', JSON.stringify(message));
-    formData.append('sender', 'patient'); // Ensure sender is included
+    formData.append('sender', 'patient');
 
     console.log('Uploading image:', {
       url: `${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`,
@@ -852,7 +879,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       const normalizedLang = normalizeLanguageCode(lang);
       const audioToPlay = audioUrl || (await textToSpeechConvert(fallbackText.trim(), normalizedLang));
       audioRef.current.src = audioToPlay;
-      audioRef.current.play();
+      await audioRef.current.play();
     } catch (err) {
       console.error('Error reading aloud:', err);
       setError(`Error reading aloud: ${err.message}`);
@@ -911,6 +938,9 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     } catch (err) {
       console.error('Failed to save text message:', err);
       setError(`Failed to save text message: ${err.message}`);
+      if (err.message.includes('404')) {
+        setTimeout(() => handleSendText(), 2000);
+      }
     }
   };
 
@@ -963,6 +993,17 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     } catch (err) {
       console.error('Failed to save quick reply:', err);
       setError(`Failed to save quick reply message: ${err.message}`);
+    }
+  };
+
+  const handleDoctorResponse = (response) => {
+    if (response === 'yes') {
+      setDoctorPrompt(false);
+      localStorage.setItem(`lastContact_${effectivePatientId}_${doctorId}`, new Date().toISOString());
+      // Notify server to enable chat (implement server-side logic)
+    } else {
+      setDoctorPrompt(false);
+      navigate('/login'); // Redirect if No
     }
   };
 
@@ -1039,6 +1080,13 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           </ul>
         </div>
         <div className="chat-content">
+          {doctorPrompt && (
+            <div className="doctor-prompt">
+              <p>Allow communication with doctor? (First contact or 7+ days)</p>
+              <button onClick={() => handleDoctorResponse('yes')}>Yes</button>
+              <button onClick={() => handleDoctorResponse('no')}>No</button>
+            </div>
+          )}
           {activeMenuOption === 'profile' && profileData && (
             <div className="profile-section">
               <h3>Patient Profile</h3>
@@ -1211,28 +1259,21 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                   <div className="message-content">
                     {msg.sender === 'patient' && (
                       <>
-                        {(msg.recordingLanguage || msg.language) === 'en' ? (
+                        {languagePreference === 'en' ? (
                           <div className="message-block">
                             <p className="primary-text">{msg.text || 'No transcription'}</p>
                             {msg.audioUrl && (
                               <div className="audio-container">
-                                <audio controls>
-                                  <source src={msg.audioUrl} type="audio/webm" />
-                                  Your browser does not support the audio element.
-                                </audio>
-                                <a href={msg.audioUrl} download className="download-link">
-                                  Download Audio
-                                </a>
-                              </div>
-                            )}
-                            {msg.audioUrlEn && (
-                              <div className="read-aloud-buttons">
+                                <audio controls src={msg.audioUrl} />
                                 <button
-                                  onClick={() => readAloud(msg.audioUrlEn, 'en', msg.text)}
+                                  onClick={() => readAloud(msg.audioUrl, 'en', msg.text)}
                                   className="read-aloud-button"
                                 >
                                   🔊 (English)
                                 </button>
+                                <a href={msg.audioUrl} download className="download-link">
+                                  Download Audio
+                                </a>
                               </div>
                             )}
                           </div>
@@ -1244,33 +1285,22 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                             )}
                             {msg.audioUrl && (
                               <div className="audio-container">
-                                <audio controls>
-                                  <source src={msg.audioUrl} type="audio/webm" />
-                                  Your browser does not support the audio element.
-                                </audio>
+                                <audio controls src={msg.audioUrl} />
+                                <button
+                                  onClick={() => readAloud(msg.audioUrl, 'kn', msg.text)}
+                                  className="read-aloud-button"
+                                >
+                                  🔊 (Kannada)
+                                </button>
+                                <button
+                                  onClick={() => readAloud(msg.audioUrl, 'en', msg.translatedText || msg.text)}
+                                  className="read-aloud-button"
+                                >
+                                  🔊 (English)
+                                </button>
                                 <a href={msg.audioUrl} download className="download-link">
                                   Download Audio
                                 </a>
-                              </div>
-                            )}
-                            {(msg.audioUrlKn || msg.audioUrlEn) && (
-                              <div className="read-aloud-buttons">
-                                {msg.audioUrlKn && (
-                                  <button
-                                    onClick={() => readAloud(msg.audioUrlKn, 'kn', msg.text)}
-                                    className="read-aloud-button"
-                                  >
-                                    🔊 (Kannada)
-                                  </button>
-                                )}
-                                {msg.audioUrlEn && (
-                                  <button
-                                    onClick={() => readAloud(msg.audioUrlEn, 'en', msg.translatedText || msg.text)}
-                                    className="read-aloud-button"
-                                  >
-                                    🔊 (English)
-                                  </button>
-                                )}
                               </div>
                             )}
                           </div>
@@ -1282,42 +1312,48 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                         {languagePreference === 'en' ? (
                           <p className="primary-text">{msg.text || 'No transcription'}</p>
                         ) : (
-                          <p className="primary-text">{msg.translatedText || msg.text || 'No transcription'}</p>
+                          <>
+                            <p className="primary-text">{msg.text || 'No transcription'}</p>
+                            {msg.translatedText && (
+                              <p className="translated-text">English: {msg.translatedText}</p>
+                            )}
+                          </>
                         )}
                         {msg.audioUrl && (
                           <div className="audio-container">
-                            <audio controls>
-                              <source src={msg.audioUrl} type="audio/webm" />
-                              Your browser does not support the audio element.
-                            </audio>
+                            <audio controls src={msg.audioUrl} />
+                            {languagePreference === 'en' ? (
+                              <button
+                                onClick={() => readAloud(msg.audioUrl, 'en', msg.text)}
+                                className="read-aloud-button"
+                              >
+                                🔊 (English)
+                              </button>
+                            ) : (
+                              <>
+                                <button
+                                  onClick={() => readAloud(msg.audioUrl, 'kn', msg.text)}
+                                  className="read-aloud-button"
+                                >
+                                  🔊 (Kannada)
+                                </button>
+                                <button
+                                  onClick={() => readAloud(msg.audioUrl, 'en', msg.translatedText || msg.text)}
+                                  className="read-aloud-button"
+                                >
+                                  🔊 (English)
+                                </button>
+                              </>
+                            )}
                             <a href={msg.audioUrl} download className="download-link">
                               Download Audio
                             </a>
                           </div>
                         )}
-                        {(msg.audioUrlKn || msg.audioUrlEn) && (
-                          <div className="read-aloud-buttons">
-                            {msg.audioUrlKn && (
-                              <button
-                                onClick={() => readAloud(msg.audioUrlKn, 'kn', msg.translatedText || msg.text)}
-                                className="read-aloud-button"
-                              >
-                                🔊 (Kannada)
-                              </button>
-                            )}
-                            {msg.audioUrlEn && (
-                              <button
-                                onClick={() => readAloud(msg.audioUrlEn, 'en', msg.text)}
-                                className="read-aloud-button"
-                              >
-                                🔊 (English)
-                              </button>
-                            )}
-                          </div>
-                        )}
                       </div>
                     )}
                     {msg.imageUrl && <img src={msg.imageUrl} alt="Patient upload" className="chat-image" />}
+                    {msg.audioError && <p className="audio-error">{msg.audioError}</p>}
                     <span className="timestamp">{new Date(msg.timestamp).toLocaleTimeString()}</span>
                   </div>
                 </div>
@@ -1331,6 +1367,11 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
               {failedUpload && failedUpload.audioBlob && (
                 <button onClick={() => retryUpload(failedUpload.audioBlob, failedUpload.language)} className="retry-button">
                   Retry Upload
+                </button>
+              )}
+              {failedUpload && failedUpload.type === 'image' && failedUpload.file && (
+                <button onClick={() => handleImageUpload({ target: { files: [failedUpload.file] } })} className="retry-button">
+                  Retry Image Upload
                 </button>
               )}
             </div>
@@ -1557,6 +1598,29 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           flex-direction: column;
           padding: 20px 30px;
           overflow-y: auto;
+        }
+
+        .doctor-prompt {
+          background: rgba(255, 255, 255, 0.05);
+          padding: 15px;
+          border-radius: 10px;
+          margin-bottom: 20px;
+          text-align: center;
+        }
+
+        .doctor-prompt button {
+          padding: 8px 20px;
+          margin: 0 10px;
+          background: #6E48AA;
+          color: #FFFFFF;
+          border: none;
+          border-radius: 20px;
+          cursor: pointer;
+          transition: background 0.3s ease;
+        }
+
+        .doctor-prompt button:hover {
+          background: #5A3E8B;
         }
 
         .profile-section,
@@ -1884,6 +1948,12 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           color: #A0A0A0;
           margin-top: 8px;
           display: block;
+        }
+
+        .audio-error {
+          font-size: 0.85rem;
+          color: #E74C3C;
+          margin-top: 5px;
         }
 
         .error-message {

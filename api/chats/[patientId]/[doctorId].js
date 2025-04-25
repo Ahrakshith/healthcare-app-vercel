@@ -102,8 +102,9 @@ const generateSignedUrl = async (filePath) => {
     const [url] = await file.getSignedUrl({
       action: 'read',
       expires: Date.now() + 1000 * 60 * 60, // 1 hour expiry
+      responseDisposition: 'inline',
     });
-    console.log(`Generated signed URL for ${filePath}`);
+    console.log(`Generated signed URL for ${filePath}: ${url}`);
     return url;
   } catch (error) {
     console.error(`Error generating signed URL for ${filePath}:`, error.message, error.stack);
@@ -176,7 +177,6 @@ export default async function handler(req, res) {
         return res.status(403).json({ error: { code: 403, message: 'You are not authorized to access this chat' } });
       }
 
-      // Check or initialize doctor assignment
       const assignmentId = `${patientId}_${doctorId}`;
       const assignmentDoc = await db.collection('doctor_assignments').doc(assignmentId).get();
       if (!assignmentDoc.exists) {
@@ -257,7 +257,6 @@ export default async function handler(req, res) {
 
         bb.on('finish', async () => {
           try {
-            // Use sender from FormData if available, otherwise from message object
             const effectiveSender = sender || message.sender;
             console.log('FormData fields:', { sender, message, effectiveSender });
             validateSender(effectiveSender);
@@ -282,7 +281,6 @@ export default async function handler(req, res) {
               return res.status(403).json({ error: { code: 403, message: `You are not authorized to send messages as this ${effectiveSender}` } });
             }
 
-            // Initialize doctor assignment if it doesn't exist
             await initializeDoctorAssignment(patientId, doctorId);
 
             const chatDir = `chats/${patientId}-${doctorId}`;
@@ -371,7 +369,6 @@ export default async function handler(req, res) {
             return res.status(403).json({ error: { code: 403, message: `You are not authorized to send messages as this ${message.sender}` } });
           }
 
-          // Initialize doctor assignment if it doesn't exist
           await initializeDoctorAssignment(patientId, doctorId);
 
           const chatFile = bucket.file(`chats/${patientId}-${doctorId}/messages.json`);
@@ -420,6 +417,6 @@ export default async function handler(req, res) {
 
 export const config = {
   api: {
-    bodyParser: false, // Required for busboy
+    bodyParser: false,
   },
 };
