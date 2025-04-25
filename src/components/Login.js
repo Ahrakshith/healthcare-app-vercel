@@ -273,7 +273,7 @@ function Login({ setUser, setRole, setPatientId, user }) {
     if (role === 'patient') {
       navigate('/patient/select-doctor');
     } else if (role === 'doctor') {
-      navigate('/doctor');
+      navigate('/doctor/chat'); // Updated to match App.js route
     } else if (role === 'admin') {
       navigate('/admin');
     } else {
