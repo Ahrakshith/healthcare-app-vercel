@@ -20,10 +20,6 @@
       "destination": "/api/chats/[patientId]/[doctorId]"
     },
     {
-      "source": "/api/users/:uid",
-      "destination": "/api/users/[uid]"
-    },
-    {
       "source": "/api/:path*",
       "destination": "/api/:path"
     },
