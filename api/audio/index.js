@@ -227,8 +227,8 @@ export default async function handler(req, res) {
 
   const pathSegments = req.url.split('/').filter(Boolean);
   console.log('Path segments:', pathSegments);
-  const endpoint = pathSegments[1]; // "audio"
-  const subEndpoint = pathSegments[2]; // "text-to-speech", "translate", or undefined
+  const endpoint = pathSegments[1] || ''; // "audio" or empty if root
+  const subEndpoint = pathSegments[2] || ''; // "text-to-speech", "translate", or empty
 
   try {
     console.log('Checking x-user-uid header...');
@@ -246,15 +246,16 @@ export default async function handler(req, res) {
     console.log(`User verified: ${userId}`);
 
     if (endpoint !== 'audio') {
-      console.error(`Endpoint not found: /${endpoint}/${subEndpoint || ''}`);
-      return res.status(404).json({ error: { code: 404, message: `Endpoint not found: /${endpoint}/${subEndpoint || ''}` } });
+      console.error(`Endpoint not found: /${endpoint}/${subEndpoint}`);
+      return res.status(404).json({ error: { code: 404, message: `Endpoint not found: /${endpoint}/${subEndpoint}` } });
     }
 
     // Apply Google services check
     const servicesAvailable = await checkGoogleServices(req, res);
     if (!servicesAvailable) return;
 
-    if (!subEndpoint) { // Handle /api/audio for speech-to-text
+    // Handle /api/audio (speech-to-text)
+    if (!subEndpoint) {
       console.log('Endpoint matched: /api/audio');
       await runMulter(req, res, uploadAudio.single('audio'));
 
@@ -301,27 +302,40 @@ export default async function handler(req, res) {
         audioUrl,
         warning: !speechClient ? 'Speech-to-Text service unavailable' : undefined,
       });
-    } else if (subEndpoint === 'text-to-speech') {
+    }
+
+    // Handle /api/audio/text-to-speech
+    if (subEndpoint === 'text-to-speech') {
+      console.log('Endpoint matched: /api/audio/text-to-speech');
       const { text, language = 'en-US' } = req.body;
-      if (!text) return res.status(400).json({ error: { code: 400, message: 'Text is required' } });
+      if (!text) {
+        console.error('Missing text parameter');
+        return res.status(400).json({ error: { code: 400, message: 'Text is required' } });
+      }
 
       if (await initTtsClient()) {
         const normalizedLanguageCode = language.toLowerCase().startsWith('kn') ? 'kn-IN' : 'en-US';
+        console.log(`Synthesizing speech with text: "${text}" in language: ${normalizedLanguageCode}`);
         const [response] = await ttsClient.synthesizeSpeech({
           input: { text },
           voice: { languageCode: normalizedLanguageCode, ssmlGender: 'NEUTRAL' },
           audioConfig: { audioEncoding: 'MP3' },
         });
-        const fileName = `tts/${Date.now()}.mp3`;
+        const fileName = `tts/${userId}/${Date.now()}-speech.mp3`;
         const file = bucket.file(fileName);
         await uploadWithRetry(file, response.audioContent, { contentType: 'audio/mp3' });
         const bucketName = process.env.GCS_BUCKET_NAME || 'fir-project-vercel';
         const audioUrl = `https://storage.googleapis.com/${bucketName}/${fileName}`;
+        console.log(`Text-to-speech audio uploaded to GCS: ${audioUrl}`);
         return res.status(200).json({ audioUrl });
       } else {
+        console.error('Text-to-Speech client unavailable');
         return res.status(503).json({ error: { code: 503, message: 'Text-to-Speech service unavailable' } });
       }
-    } else if (subEndpoint === 'translate') {
+    }
+
+    // Handle /api/audio/translate
+    if (subEndpoint === 'translate') {
       const { text, sourceLanguageCode, targetLanguageCode } = req.body;
       if (!text) return res.status(400).json({ error: { code: 400, message: 'Text is required' } });
       if (!sourceLanguageCode) return res.status(400).json({ error: { code: 400, message: 'Source language code is required' } });
@@ -330,14 +344,16 @@ export default async function handler(req, res) {
       if (sourceLanguageCode === targetLanguageCode) return res.status(200).json({ translatedText: text });
 
       if (await initTranslateClient()) {
-        const [translation] = await translateClient.translate(transcriptionText, { from: sourceLanguageCode, to: targetLanguageCode });
-        return res.status(200).json({ translatedText });
+        console.log(`Translating text from ${sourceLanguageCode} to ${targetLanguageCode}`);
+        const [translation] = await translateClient.translate(text, { from: sourceLanguageCode, to: targetLanguageCode });
+        return res.status(200).json({ translatedText: translation });
       } else {
         return res.status(503).json({ error: { code: 503, message: 'Translate service unavailable' } });
       }
     }
 
-    return res.status(404).json({ error: { code: 404, message: 'Sub-endpoint not found' } });
+    console.error(`Sub-endpoint not found: /${endpoint}/${subEndpoint}`);
+    return res.status(404).json({ error: { code: 404, message: `Sub-endpoint not found: /${endpoint}/${subEndpoint}` } });
   } catch (error) {
     console.error(`Error in /api/audio/${subEndpoint || 'unknown'}:`, error.message, error.stack);
     if (error.message.includes('Invalid file type')) return res.status(400).json({ error: { code: 400, message: error.message } });

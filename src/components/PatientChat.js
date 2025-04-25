@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Pusher from 'pusher-js';
@@ -97,7 +96,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           const data = patientDoc.data();
           const pref = data.languagePreference || 'en';
           setLanguagePreference(pref);
-          setTranscriptionLanguage(pref); // Set default transcription language to preference
+          setTranscriptionLanguage(pref);
           setProfileData({
             name: data.name || 'N/A',
             patientId: effectivePatientId,
@@ -191,7 +190,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
 
       pusherRef.current.connection.bind('connected', () => {
         console.log('Pusher connected successfully');
-        setError(''); // Clear error on successful connection
+        setError('');
       });
 
       const channel = pusherRef.current.subscribe(`chat-${effectivePatientId}-${doctorId}`);
@@ -699,7 +698,6 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           const transcriptionResult = await transcribeAudio(audioBlob, normalizedTranscriptionLanguage, effectiveUserId);
           text = transcriptionResult.transcription || 'Transcription failed';
 
-          // Handle translations based on recording language and patient preference
           if (normalizedTranscriptionLanguage === 'kn-IN') {
             translatedText = transcriptionResult.translatedText || await translateText(text, 'kn-IN', 'en-US', effectiveUserId);
           } else if (normalizedTranscriptionLanguage === 'en-US' && languagePreference === 'kn') {
@@ -853,14 +851,33 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     }
   };
 
+  const retryTextToSpeech = async (text, lang, attempts = 3) => {
+    if (attempts <= 0) {
+      throw new Error('Text-to-speech conversion failed after retries. Please try again later.');
+    }
+
+    try {
+      const normalizedLang = normalizeLanguageCode(lang);
+      const audioUrl = await textToSpeechConvert(text.trim(), normalizedLang, effectiveUserId);
+      return audioUrl;
+    } catch (err) {
+      console.error(`Text-to-speech attempt ${4 - attempts} failed:`, err);
+      if (err.message.includes('404')) {
+        throw new Error('Text-to-speech service is unavailable (404). Please contact support.');
+      }
+      setError(`Retrying text-to-speech... (Attempts remaining: ${attempts - 1})`);
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      return retryTextToSpeech(text, lang, attempts - 1);
+    }
+  };
+
   const readAloud = async (text, lang) => {
     try {
       if (!text || typeof text !== 'string' || text.trim() === '') {
         setError('Cannot read aloud: No valid text provided.');
         return;
       }
-      const normalizedLang = normalizeLanguageCode(lang);
-      const audioUrl = await textToSpeechConvert(text.trim(), normalizedLang, effectiveUserId);
+      const audioUrl = await retryTextToSpeech(text, lang);
       audioRef.current.src = audioUrl;
       await audioRef.current.play();
     } catch (err) {
@@ -2024,7 +2041,6 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           background: #219653;
           transform: scale(1.05);
         }
-
         .stop-button {
           padding: 8px 20px;
           background: #E74C3C;
