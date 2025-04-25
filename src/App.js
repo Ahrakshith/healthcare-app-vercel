@@ -17,7 +17,9 @@ const NotFound = () => {
     <div className="not-found-container">
       <h2>404 - Page Not Found</h2>
       <p>The requested path does not exist.</p>
-      <p>Go to <a href="/login">Login</a></p>
+      <p>
+        Go to <a href="/login">Login</a>
+      </p>
       <style>{`
         .not-found-container {
           min-height: 100vh;
@@ -308,25 +310,8 @@ function App() {
           }
         />
 
-        {/* Root Route with Role-Based Redirect */}
-        <Route
-          path="/"
-          element={
-            user ? (
-              role === 'patient' ? (
-                <Navigate to="/patient/select-doctor" replace />
-              ) : role === 'doctor' ? (
-                <Navigate to="/doctor/chat" replace />
-              ) : role === 'admin' ? (
-                <Navigate to="/admin" replace />
-              ) : (
-                <Navigate to="/login" replace />
-            )
-            ) : (
-              <Navigate to="/login" replace />
-            )
-          }
-        />
+        {/* Root Route - Always Redirect to Login */}
+        <Route path="/" element={<Navigate to="/login" replace />} />
 
         {/* Fallback Route for 404 */}
         <Route path="*" element={<NotFound />} />
