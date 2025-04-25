@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Pusher from 'pusher-js';
 import {
@@ -6,6 +6,7 @@ import {
   translateText,
   textToSpeechConvert,
   detectLanguage,
+  playAudio,
 } from '../services/speech.js';
 import { verifyMedicine, notifyAdmin } from '../services/medicineVerify.js';
 import { doc, getDoc, collection, addDoc, getDocs, updateDoc } from 'firebase/firestore';
@@ -31,7 +32,6 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   const [missedDoseAlerts, setMissedDoseAlerts] = useState([]);
   const [doctorPrompt, setDoctorPrompt] = useState(null);
   const audioChunksRef = useRef([]);
-  const audioRef = useRef(new Audio());
   const streamRef = useRef(null);
   const pusherRef = useRef(null);
   const messagesEndRef = useRef(null);
@@ -218,12 +218,13 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
 
       const fetchMessages = async () => {
         try {
+          const fetchUrl = `${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`;
           console.log('Fetching messages:', {
-            url: `${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`,
+            url: fetchUrl,
             userId: effectiveUserId,
           });
           const idToken = await firebaseUser.getIdToken(true);
-          const response = await fetch(`${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`, {
+          const response = await fetch(fetchUrl, {
             headers: { 'x-user-uid': effectiveUserId, Authorization: `Bearer ${idToken}` },
             credentials: 'include',
           });
@@ -632,13 +633,14 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         formData.append('message', JSON.stringify(message));
         formData.append('sender', 'patient');
 
+        const postUrl = `${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`;
         console.log('Sending retry upload:', {
-          url: `${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`,
+          url: postUrl,
           message,
         });
 
         const idToken = await firebaseUser.getIdToken(true);
-        const saveResponse = await fetch(`${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`, {
+        const saveResponse = await fetch(postUrl, {
           method: 'POST',
           headers: { 'x-user-uid': effectiveUserId, Authorization: `Bearer ${idToken}` },
           body: formData,
@@ -721,14 +723,15 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           formData.append('message', JSON.stringify(message));
           formData.append('sender', 'patient');
 
+          const postUrl = `${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`;
           console.log('Sending audio message:', {
-            url: `${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`,
+            url: postUrl,
             message,
             audioSize: audioBlob.size,
           });
 
           const idToken = await firebaseUser.getIdToken(true);
-          const response = await fetch(`${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`, {
+          const response = await fetch(postUrl, {
             method: 'POST',
             headers: { 'x-user-uid': effectiveUserId, Authorization: `Bearer ${idToken}` },
             body: formData,
@@ -818,15 +821,16 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     formData.append('message', JSON.stringify(message));
     formData.append('sender', 'patient');
 
+    const postUrl = `${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`;
     console.log('Uploading image:', {
-      url: `${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`,
+      url: postUrl,
       message,
       file: { name: file.name, type: file.type, size: file.size },
     });
 
     try {
       const idToken = await firebaseUser.getIdToken(true);
-      const response = await fetch(`${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`, {
+      const response = await fetch(postUrl, {
         method: 'POST',
         headers: { 'x-user-uid': effectiveUserId, Authorization: `Bearer ${idToken}` },
         body: formData,
@@ -878,11 +882,16 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         return;
       }
       const audioUrl = await retryTextToSpeech(text, lang);
-      audioRef.current.src = audioUrl;
-      await audioRef.current.play();
+      await playAudio(audioUrl);
     } catch (err) {
       console.error('Error reading aloud:', err);
-      setError(`Error reading aloud: ${err.message}`);
+      let errorMessage = `Error reading aloud: ${err.message}`;
+      if (err.message.includes('Failed to load audio')) {
+        errorMessage = 'Error reading aloud: Audio file could not be loaded. It may be inaccessible or unsupported.';
+      } else if (err.message.includes('Playback failed')) {
+        errorMessage = 'Error reading aloud: Audio playback failed. Please check your browser or device audio settings.';
+      }
+      setError(errorMessage);
     }
   };
 
@@ -910,12 +919,13 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     setTextInput('');
 
     try {
+      const postUrl = `${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`;
       console.log('Sending text message:', {
-        url: `${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`,
+        url: postUrl,
         message,
       });
       const idToken = await firebaseUser.getIdToken(true);
-      const response = await fetch(`${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`, {
+      const response = await fetch(postUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -965,12 +975,13 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     });
 
     try {
+      const postUrl = `${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`;
       console.log('Sending quick reply:', {
-        url: `${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`,
+        url: postUrl,
         message,
       });
       const idToken = await firebaseUser.getIdToken(true);
-      const response = await fetch(`${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`, {
+      const response = await fetch(postUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1848,6 +1859,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           flex-direction: column;
           gap: 8px;
         }
+
 
         .primary-text {
           margin: 0;

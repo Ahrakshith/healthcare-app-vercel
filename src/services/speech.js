@@ -31,7 +31,6 @@ const fetchWithRetry = async (url, options, maxRetries = 3, backoff = 1000) => {
           await new Promise((resolve) => setTimeout(resolve, delay));
           continue;
         }
-        // Include 404 in the error message for better debugging
         throw new Error(`${errorMessage} (Status: ${response.status})`);
       }
       return response;
@@ -244,22 +243,57 @@ async function textToSpeechConvert(text, languageCode = 'en-US', userId) {
       credentials: 'include',
     });
 
-    const { audioUrl } = await response.json();
-    if (!audioUrl) {
-      throw new Error('Text-to-speech response missing audioUrl.');
+    const data = await response.json();
+    if (!data.audioUrl || typeof data.audioUrl !== 'string') {
+      throw new Error('Text-to-speech response missing or invalid audioUrl.');
     }
-    !isProduction && console.log(`textToSpeechConvert: Success - Audio URL="${audioUrl}"`);
-    return audioUrl;
+    !isProduction && console.log(`textToSpeechConvert: Success - Audio URL="${data.audioUrl}"`);
+
+    // Validate the audio URL format (basic check)
+    if (!data.audioUrl.startsWith('https://storage.googleapis.com/')) {
+      !isProduction && console.warn('textToSpeechConvert: Unexpected audio URL format:', data.audioUrl);
+    }
+
+    return data.audioUrl;
   } catch (error) {
     !isProduction && console.error(`textToSpeechConvert: Error - ${error.message}`);
-    // Provide more specific error messages for common issues
+    // Enhanced error handling for specific cases
     if (error.message.includes('404')) {
-      throw new Error('Text-to-speech endpoint not found (404). Please check if the server is deployed correctly.');
+      throw new Error('Text-to-speech endpoint not found (404). Please check server deployment.');
     } else if (error.message.includes('503')) {
       throw new Error('Text-to-speech service unavailable (503). Please try again later.');
+    } else if (error.message.includes('audioUrl')) {
+      throw new Error('Text-to-speech failed: Invalid or missing audio URL from server.');
     }
     throw new Error(`Text-to-speech conversion failed: ${error.message}`);
   }
 }
 
-export { transcribeAudio, detectLanguage, translateText, textToSpeechConvert };
+// Function to play the audio and handle playback errors
+async function playAudio(audioUrl) {
+  if (!audioUrl || typeof audioUrl !== 'string') {
+    throw new Error('Invalid audio URL: Must be a non-empty string.');
+  }
+
+  !isProduction && console.log(`playAudio: Attempting to play audio from ${audioUrl}`);
+
+  return new Promise((resolve, reject) => {
+    const audio = new Audio(audioUrl);
+    audio.onloadeddata = () => {
+      !isProduction && console.log('playAudio: Audio loaded successfully');
+      audio.play().then(() => {
+        !isProduction && console.log('playAudio: Audio playback started');
+        resolve();
+      }).catch((playError) => {
+        !isProduction && console.error('playAudio: Playback failed:', playError.message);
+        reject(new Error(`Playback failed: ${playError.message}`));
+      });
+    };
+    audio.onerror = (error) => {
+      !isProduction && console.error('playAudio: Load error:', error.message);
+      reject(new Error(`Failed to load audio: ${error.message}`));
+    };
+  });
+}
+
+export { transcribeAudio, detectLanguage, translateText, textToSpeechConvert, playAudio };
