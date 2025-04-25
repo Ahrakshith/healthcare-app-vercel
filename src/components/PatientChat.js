@@ -31,6 +31,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   const [missedDoses, setMissedDoses] = useState(0);
   const [missedDoseAlerts, setMissedDoseAlerts] = useState([]);
   const [doctorPrompt, setDoctorPrompt] = useState(null);
+  const [audioLoading, setAudioLoading] = useState(false); // New state for audio loading
   const audioChunksRef = useRef([]);
   const streamRef = useRef(null);
   const pusherRef = useRef(null);
@@ -182,8 +183,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
 
       pusherRef.current.connection.bind('error', (err) => {
         console.error('Pusher connection error:', err);
-        setError('Failed to connect to real-time messaging. Attempting to reconnect...');
-        setTimeout(() => {
+        setError('Failed to connect to real-time messaging. Attempting to reconnect        setTimeout(() => {
           if (pusherRef.current) pusherRef.current.connect();
         }, 2000);
       });
@@ -875,23 +875,47 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     }
   };
 
-  const readAloud = async (text, lang) => {
+  const readAloud = async (text, lang, attempts = 3) => {
+    if (attempts <= 0) {
+      setError('Failed to read aloud after retries. Please check your network and try again.');
+      setAudioLoading(false);
+      return;
+    }
+
     try {
       if (!text || typeof text !== 'string' || text.trim() === '') {
         setError('Cannot read aloud: No valid text provided.');
+        setAudioLoading(false);
         return;
       }
+
+      setAudioLoading(true);
       const audioUrl = await retryTextToSpeech(text, lang);
+
+      // Pre-flight check for audio URL accessibility
+      const response = await fetch(audioUrl, { method: 'HEAD', mode: 'cors' });
+      if (!response.ok) {
+        throw new Error(`Audio URL inaccessible: ${audioUrl} (Status: ${response.status})`);
+      }
+
       await playAudio(audioUrl);
+      setAudioLoading(false);
     } catch (err) {
       console.error('Error reading aloud:', err);
+      if (attempts > 1 && (err.message.includes('Failed to load audio') || err.message.includes('Audio URL inaccessible'))) {
+        setError(`Retrying audio playback... (Attempts remaining: ${attempts - 1})`);
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        return readAloud(text, lang, attempts - 1);
+      }
+
       let errorMessage = `Error reading aloud: ${err.message}`;
-      if (err.message.includes('Failed to load audio')) {
+      if (err.message.includes('Failed to load audio') || err.message.includes('Audio URL inaccessible')) {
         errorMessage = 'Error reading aloud: Audio file could not be loaded. It may be inaccessible or unsupported.';
       } else if (err.message.includes('Playback failed')) {
         errorMessage = 'Error reading aloud: Audio playback failed. Please check your browser or device audio settings.';
       }
       setError(errorMessage);
+      setAudioLoading(false);
     }
   };
 
@@ -1196,17 +1220,20 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                         <div className="recommendation-item">
                           <strong>Diagnosis:</strong>{' '}
                           {languagePreference === 'kn' ? msg.translatedDiagnosis || msg.diagnosis : msg.diagnosis}
-                          <button
-                            onClick={() =>
-                              readAloud(
-                                languagePreference === 'kn' ? msg.translatedDiagnosis || msg.diagnosis : msg.diagnosis,
-                                languagePreference
-                              )
-                            }
-                            className="read-aloud-button"
-                          >
-                            🔊 ({languagePreference === 'kn' ? 'Kannada' : 'English'})
-                          </button>
+                          <div className="recommendation-actions">
+                            <button
+                              onClick={() =>
+                                readAloud(
+                                  languagePreference === 'kn' ? msg.translatedDiagnosis || msg.diagnosis : msg.diagnosis,
+                                  languagePreference
+                                )
+                              }
+                              className="read-aloud-button"
+                              disabled={audioLoading}
+                            >
+                              {audioLoading ? 'Loading...' : `🔊 (${languagePreference === 'kn' ? 'Kannada' : 'English'})`}
+                            </button>
+                          </div>
                         </div>
                       )}
                       {msg.prescription && (
@@ -1215,25 +1242,27 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                           {typeof msg.prescription === 'object'
                             ? `${msg.prescription.medicine}, ${msg.prescription.dosage}, ${msg.prescription.frequency}, ${msg.prescription.duration}`
                             : msg.prescription}
-                          <button
-                            onClick={() =>
-                              validatePrescription(msg.diagnosis, msg.prescription, msg.timestamp)
-                            }
-                            className="validate-button"
-                          >
-                            ✅ Validate
-                          </button>
-                          {validationResult[msg.timestamp] && (
-                            <span
-                              className={
-                                validationResult[msg.timestamp].includes('valid')
-                                  ? 'validation-success'
-                                  : 'validation-error'
+                          <div className="recommendation-actions">
+                            <button
+                              onClick={() =>
+                                validatePrescription(msg.diagnosis, msg.prescription, msg.timestamp)
                               }
+                              className="validate-button"
                             >
-                              {validationResult[msg.timestamp]}
-                            </span>
-                          )}
+                              ✅ Validate
+                            </button>
+                            {validationResult[msg.timestamp] && (
+                              <span
+                                className={
+                                  validationResult[msg.timestamp].includes('valid')
+                                    ? 'validation-success'
+                                    : 'validation-error'
+                                }
+                              >
+                                {validationResult[msg.timestamp]}
+                              </span>
+                            )}
+                          </div>
                         </div>
                       )}
                     </div>
@@ -1274,8 +1303,9 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                               <button
                                 onClick={() => readAloud(msg.text, 'en')}
                                 className="read-aloud-button"
+                                disabled={audioLoading}
                               >
-                                🔊 (English)
+                                {audioLoading ? 'Loading...' : '🔊 (English)'}
                               </button>
                               <a href={msg.audioUrl} download className="download-link">
                                 Download Audio
@@ -1293,14 +1323,16 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                               <button
                                 onClick={() => readAloud(msg.text, 'kn')}
                                 className="read-aloud-button"
+                                disabled={audioLoading}
                               >
-                                🔊 (Kannada)
+                                {audioLoading ? 'Loading...' : '🔊 (Kannada)'}
                               </button>
                               <button
                                 onClick={() => readAloud(msg.translatedText || msg.text, 'en')}
                                 className="read-aloud-button"
+                                disabled={audioLoading}
                               >
-                                🔊 (English)
+                                {audioLoading ? 'Loading...' : '🔊 (English)'}
                               </button>
                               <a href={msg.audioUrl} download className="download-link">
                                 Download Audio
@@ -1334,22 +1366,25 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                               <button
                                 onClick={() => readAloud(msg.text, 'en')}
                                 className="read-aloud-button"
+                                disabled={audioLoading}
                               >
-                                🔊 (English)
+                                {audioLoading ? 'Loading...' : '🔊 (English)'}
                               </button>
                             ) : (
                               <>
                                 <button
                                   onClick={() => readAloud(msg.text, 'kn')}
                                   className="read-aloud-button"
+                                  disabled={audioLoading}
                                 >
-                                  🔊 (Kannada)
+                                  {audioLoading ? 'Loading...' : '🔊 (Kannada)'}
                                 </button>
                                 <button
                                   onClick={() => readAloud(msg.translatedText || msg.text, 'en')}
                                   className="read-aloud-button"
+                                  disabled={audioLoading}
                                 >
-                                  🔊 (English)
+                                  {audioLoading ? 'Loading...' : '🔊 (English)'}
                                 </button>
                               </>
                             )}
@@ -1795,6 +1830,12 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           color: #FFFFFF;
         }
 
+        .recommendation-actions {
+          display: flex;
+          gap: 10px;
+          align-items: center;
+        }
+
         .messages-container {
           flex: 1;
           padding: 20px;
@@ -1859,7 +1900,6 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           flex-direction: column;
           gap: 8px;
         }
-
 
         .primary-text {
           margin: 0;

@@ -1,1 +1,8 @@
-[{"origin": ["https://healthcare-app-vercel.vercel.app"], "method": ["GET", "POST", "OPTIONS"], "responseHeader": ["Content-Type", "Authorization", "Access-Control-Allow-Origin"], "maxAgeSeconds": 3600}]
+[
+  {
+    "origin": ["https://healthcare-app-vercel.vercel.app"],
+    "method": ["GET", "POST", "OPTIONS"],
+    "responseHeader": ["Content-Type", "Authorization", "Access-Control-Allow-Origin"],
+    "maxAgeSeconds": 3600
+  }
+]
