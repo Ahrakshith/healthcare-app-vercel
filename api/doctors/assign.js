@@ -6,9 +6,8 @@ if (!admin.apps.length) {
   try {
     const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n');
     if (!process.env.FIREBASE_PROJECT_ID || !privateKey || !process.env.FIREBASE_CLIENT_EMAIL) {
-      throw new Error('Missing Firebase credentials: FIREBASE_PROJECT_ID, FIREBASE_PRIVATE_KEY, or FIREBASE_CLIENT_EMAIL');
+      throw new Error('Missing Firebase credentials');
     }
-
     admin.initializeApp({
       credential: admin.credential.cert({
         projectId: process.env.FIREBASE_PROJECT_ID,
@@ -18,8 +17,8 @@ if (!admin.apps.length) {
     });
     console.log('Firebase Admin initialized successfully in assign.js');
   } catch (error) {
-    console.error('Firebase Admin initialization failed in assign.js:', error.message);
-    throw new Error(`Firebase Admin initialization failed: ${error.message}`);
+    console.error('Firebase Admin initialization failed in assign.js:', error.message, error.stack);
+    throw error;
   }
 }
 
@@ -29,19 +28,19 @@ const db = admin.firestore();
 let pusher;
 try {
   if (!process.env.PUSHER_APP_ID || !process.env.PUSHER_KEY || !process.env.PUSHER_SECRET || !process.env.PUSHER_CLUSTER) {
-    throw new Error('Missing Pusher credentials: PUSHER_APP_ID, PUSHER_KEY, PUSHER_SECRET, or PUSHER_CLUSTER');
+    console.warn('Missing Pusher credentials, Pusher will be disabled');
+  } else {
+    pusher = new Pusher({
+      appId: process.env.PUSHER_APP_ID,
+      key: process.env.PUSHER_KEY,
+      secret: process.env.PUSHER_SECRET,
+      cluster: process.env.PUSHER_CLUSTER,
+      useTLS: true,
+    });
+    console.log('Pusher initialized successfully in assign.js');
   }
-
-  pusher = new Pusher({
-    appId: process.env.PUSHER_APP_ID,
-    key: process.env.PUSHER_KEY,
-    secret: process.env.PUSHER_SECRET,
-    cluster: process.env.PUSHER_CLUSTER,
-  });
-  console.log('Pusher initialized successfully in assign.js');
 } catch (error) {
-  console.error('Pusher initialization failed in assign.js:', error.message);
-  throw new Error(`Pusher initialization failed: ${error.message}`);
+  console.error('Pusher initialization failed in assign.js:', error.message, error.stack);
 }
 
 // Retry logic
@@ -50,8 +49,8 @@ async function operationWithRetry(operation, retries = 3, backoff = 1000) {
     try {
       return await operation();
     } catch (error) {
+      console.error(`Retry ${attempt}/${retries} failed:`, error.message, error.stack);
       if (attempt === retries) throw error;
-      console.warn(`Retry ${attempt}/${retries} failed: ${error.message}`);
       await new Promise((resolve) => setTimeout(resolve, backoff * attempt));
     }
   }
@@ -85,7 +84,7 @@ async function checkRole(requiredRole, req, res, next) {
 
     next();
   } catch (error) {
-    console.error(`Role check failed for UID ${userId}: ${error.message}`);
+    console.error(`Role check failed for UID ${userId}:`, error.message, error.stack);
     return res.status(500).json({ error: { code: 500, message: 'Role check failed', details: error.message } });
   }
 }
@@ -144,18 +143,20 @@ export default async function handler(req, res) {
       await operationWithRetry(() =>
         db.collection('doctor_assignments').doc(assignmentId).set(assignmentData, { merge: true })
       );
+      console.log(`Successfully saved assignment ${assignmentId}:`, assignmentData);
 
-      // Trigger Pusher event
-      const channel = `private-patient-${patientId.trim()}`;
-      await pusher.trigger(channel, 'assignmentUpdated', {
-        ...assignmentData,
-        assignmentId,
-      });
-      console.log(`Triggered assignmentUpdated on channel ${channel}`);
+      if (pusher) {
+        const channel = `private-patient-${patientId.trim()}`;
+        await pusher.trigger(channel, 'assignmentUpdated', {
+          ...assignmentData,
+          assignmentId,
+        });
+        console.log(`Triggered assignmentUpdated on channel ${channel}`);
+      }
 
       return res.status(200).json({ message: 'Doctor assigned successfully', assignment: assignmentData });
     } catch (error) {
-      console.error('Assign doctor error:', error.message);
+      console.error('Assign doctor error:', error.message, error.stack);
       return res.status(500).json({ error: { code: 500, message: 'Failed to assign doctor', details: error.message } });
     }
   });

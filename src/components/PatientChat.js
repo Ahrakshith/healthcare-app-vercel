@@ -56,7 +56,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       errorTimeoutRef.current = setTimeout(() => {
         setError('');
         setFailedUpload(null);
-      }, 5000); // Increased to 5s for better visibility
+      }, 5000);
     }
     return () => clearTimeout(errorTimeoutRef.current);
   }, [error]);
@@ -204,7 +204,13 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           },
           credentials: 'include',
         });
-        if (!response.ok && response.status !== 404) throw new Error(`Failed to fetch messages: ${response.statusText}`);
+        if (!response.ok) {
+          if (response.status === 404) {
+            setError('Chat assignment not found. Please ensure the doctor is assigned.');
+          } else {
+            throw new Error(`Failed to fetch messages: ${response.statusText}`);
+          }
+        }
         const data = await response.json();
         const fetchedMessages = data.messages || [];
 
@@ -624,7 +630,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         attempts--;
         if (attempts > 0) {
           setError(`Retrying upload... (Attempts remaining: ${attempts})`);
-          retryTimeoutRef.current = setTimeout(attemptRetry, 2000 * (4 - attempts)); // Exponential backoff
+          retryTimeoutRef.current = setTimeout(attemptRetry, 2000 * (4 - attempts));
         } else {
           setError(`Failed to transcribe audio after retries: ${err.message}`);
           setFailedUpload({ audioBlob, language });
@@ -1961,7 +1967,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           font-size: 1rem;
           font-weight: 500;
           cursor: pointer;
-          transition: background 0.3s ease, transform培育 0.3s ease;
+          transition: background 0.3s ease, transform 0.3s ease;
         }
 
         .image-upload:hover {

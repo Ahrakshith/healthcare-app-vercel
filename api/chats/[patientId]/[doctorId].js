@@ -9,7 +9,7 @@ if (!admin.apps.length) {
   try {
     const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n');
     if (!process.env.FIREBASE_PROJECT_ID || !privateKey || !process.env.FIREBASE_CLIENT_EMAIL) {
-      console.warn('Missing Firebase credentials: FIREBASE_PROJECT_ID, FIREBASE_PRIVATE_KEY, or FIREBASE_CLIENT_EMAIL');
+      console.warn('Missing Firebase credentials');
     } else {
       admin.initializeApp({
         credential: admin.credential.cert({
@@ -89,6 +89,7 @@ const uploadWithRetry = async (file, buffer, metadata, retries = 3, backoff = 10
 
 // Validate message sender
 const validateSender = (sender) => {
+  console.log('Validating sender:', sender); // Debug log
   const validSenders = ['patient', 'doctor'];
   if (!validSenders.includes(sender)) {
     throw new Error('Invalid sender type');
@@ -165,9 +166,18 @@ export default async function handler(req, res) {
         .where('patientId', '==', patientId)
         .where('doctorId', '==', doctorId)
         .get();
+      console.log(`Firestore query for patient ${patientId} and doctor ${doctorId}:`, {
+        docs: assignmentQuery.docs.map(doc => ({ id: doc.id, ...doc.data() })),
+        empty: assignmentQuery.empty,
+      });
       if (assignmentQuery.empty) {
         console.error(`No chat assignment found for patient ${patientId} and doctor ${doctorId}`);
-        return res.status(404).json({ error: { code: 404, message: 'No chat assignment found' } });
+        // Fallback: Try fetching by document ID
+        const assignmentDoc = await db.collection('doctor_assignments').doc(`${patientId}_${doctorId}`).get();
+        if (!assignmentDoc.exists) {
+          return res.status(404).json({ error: { code: 404, message: 'No chat assignment found' } });
+        }
+        console.log(`Found assignment by doc ID ${patientId}_${doctorId}:`, assignmentDoc.data());
       }
 
       const chatFile = bucket.file(`chats/${patientId}-${doctorId}/messages.json`);
@@ -201,8 +211,6 @@ export default async function handler(req, res) {
       }
 
       const contentType = req.headers['content-type'];
-      let messageData;
-
       if (contentType && contentType.includes('multipart/form-data')) {
         const bb = busboy({ headers: req.headers });
 
@@ -237,21 +245,112 @@ export default async function handler(req, res) {
         });
 
         bb.on('finish', async () => {
+          try {
+            validateSender(message.sender);
+            console.log(`Processing file upload for chat between patient ${patientId} and doctor ${doctorId}, sender: ${message.sender}`);
+
+            let expectedId;
+            if (message.sender === 'doctor') {
+              const doctorQuery = await db.collection('doctors').where('uid', '==', userId).get();
+              if (doctorQuery.empty) {
+                return res.status(404).json({ error: { code: 404, message: 'Doctor profile not found for this user' } });
+              }
+              expectedId = doctorQuery.docs[0].data().doctorId;
+            } else if (message.sender === 'patient') {
+              const patientQuery = await db.collection('patients').where('uid', '==', userId).get();
+              if (patientQuery.empty) {
+                return res.status(404).json({ error: { code: 404, message: 'Patient profile not found for this user' } });
+              }
+              expectedId = patientQuery.docs[0].data().patientId;
+            }
+
+            if ((message.sender === 'doctor' && doctorId !== expectedId) || (message.sender === 'patient' && patientId !== expectedId)) {
+              console.error(`User ${userId} not authorized to send messages as ${message.sender} in chat between patient ${patientId} and doctor ${doctorId}`);
+              return res.status(403).json({ error: { code: 403, message: `You are not authorized to send messages as this ${message.sender}` } });
+            }
+
+            const assignmentQuery = await db.collection('doctor_assignments')
+              .where('patientId', '==', patientId)
+              .where('doctorId', '==', doctorId)
+              .get();
+            if (assignmentQuery.empty) {
+              console.error(`No chat assignment found for patient ${patientId} and doctor ${doctorId}`);
+              // Fallback: Try fetching by document ID
+              const assignmentDoc = await db.collection('doctor_assignments').doc(`${patientId}_${doctorId}`).get();
+              if (!assignmentDoc.exists) {
+                return res.status(404).json({ error: { code: 404, message: 'No chat assignment found' } });
+              }
+              console.log(`Found assignment by doc ID ${patientId}_${doctorId}:`, assignmentDoc.data());
+            }
+
+            const chatDir = `chats/${patientId}-${doctorId}`;
+            const chatFile = bucket.file(`${chatDir}/messages.json`);
+            let chatData = { messages: [] };
+            const [exists] = await chatFile.exists();
+            if (exists) {
+              const [contents] = await chatFile.download();
+              chatData = JSON.parse(contents.toString('utf8')) || { messages: [] };
+            }
+
+            const newMessage = {
+              text: message.text || '',
+              timestamp: message.timestamp || new Date().toISOString(),
+              sender: message.sender,
+              senderId: userId,
+            };
+
+            if (audioFileBuffer && audioFileName) {
+              const audioFile = bucket.file(`${chatDir}/audio/${audioFileName}`);
+              await uploadWithRetry(audioFile, audioFileBuffer, { contentType: 'audio/mpeg' });
+              newMessage.audioPath = `${chatDir}/audio/${audioFileName}`;
+            }
+
+            if (imageFileBuffer && imageFileName) {
+              const imageFile = bucket.file(`${chatDir}/images/${imageFileName}`);
+              await uploadWithRetry(imageFile, imageFileBuffer, { contentType: 'image/jpeg' });
+              newMessage.imagePath = `${chatDir}/images/${imageFileName}`;
+            }
+
+            chatData.messages.push(newMessage);
+            await uploadWithRetry(chatFile, JSON.stringify(chatData), { contentType: 'application/json' });
+
+            if (pusher) {
+              await pusher.trigger(`chat-${patientId}-${doctorId}`, 'new-message', newMessage);
+              console.log(`Pusher event 'new-message' triggered on channel chat-${patientId}-${doctorId}`);
+            }
+
+            return res.status(200).json({ message: 'Message saved successfully', newMessage });
+          } catch (error) {
+            console.error(`Error processing file upload for chat between patient ${patientId} and doctor ${doctorId}:`, error.message, error.stack);
+            if (error.message === 'Invalid sender type') {
+              return res.status(400).json({ error: { code: 400, message: error.message } });
+            }
+            return res.status(500).json({ error: { code: 500, message: 'Failed to process file upload', details: error.message } });
+          }
+        });
+
+        req.pipe(bb);
+      } else {
+        const { message } = req.body;
+        if (!message || typeof message !== 'object') {
+          console.error('Missing or invalid message object in POST request');
+          return res.status(400).json({ error: { code: 400, message: 'Message object is required' } });
+        }
+
+        try {
           validateSender(message.sender);
-          console.log(`Processing file upload for chat between patient ${patientId} and doctor ${doctorId}, sender: ${message.sender}`);
+          console.log(`Processing text message for chat between patient ${patientId} and doctor ${doctorId}, sender: ${message.sender}`);
 
           let expectedId;
           if (message.sender === 'doctor') {
             const doctorQuery = await db.collection('doctors').where('uid', '==', userId).get();
             if (doctorQuery.empty) {
-              console.error(`Doctor profile not found for user ${userId}`);
               return res.status(404).json({ error: { code: 404, message: 'Doctor profile not found for this user' } });
             }
             expectedId = doctorQuery.docs[0].data().doctorId;
           } else if (message.sender === 'patient') {
             const patientQuery = await db.collection('patients').where('uid', '==', userId).get();
             if (patientQuery.empty) {
-              console.error(`Patient profile not found for user ${userId}`);
               return res.status(404).json({ error: { code: 404, message: 'Patient profile not found for this user' } });
             }
             expectedId = patientQuery.docs[0].data().patientId;
@@ -268,11 +367,15 @@ export default async function handler(req, res) {
             .get();
           if (assignmentQuery.empty) {
             console.error(`No chat assignment found for patient ${patientId} and doctor ${doctorId}`);
-            return res.status(404).json({ error: { code: 404, message: 'No chat assignment found' } });
+            // Fallback: Try fetching by document ID
+            const assignmentDoc = await db.collection('doctor_assignments').doc(`${patientId}_${doctorId}`).get();
+            if (!assignmentDoc.exists) {
+              return res.status(404).json({ error: { code: 404, message: 'No chat assignment found' } });
+            }
+            console.log(`Found assignment by doc ID ${patientId}_${doctorId}:`, assignmentDoc.data());
           }
 
-          const chatDir = `chats/${patientId}-${doctorId}`;
-          const chatFile = bucket.file(`${chatDir}/messages.json`);
+          const chatFile = bucket.file(`chats/${patientId}-${doctorId}/messages.json`);
           let chatData = { messages: [] };
           const [exists] = await chatFile.exists();
           if (exists) {
@@ -281,36 +384,12 @@ export default async function handler(req, res) {
           }
 
           const newMessage = {
-            text: message.text || '',
+            ...message,
             timestamp: message.timestamp || new Date().toISOString(),
-            sender: message.sender,
             senderId: userId,
           };
-
-          if (audioFileBuffer && audioFileName) {
-            const audioFile = bucket.file(`${chatDir}/audio/${audioFileName}`);
-            await uploadWithRetry(audioFile, audioFileBuffer, { contentType: 'audio/mpeg' });
-            newMessage.audioPath = `${chatDir}/audio/${audioFileName}`;
-
-            const audioResponse = await fetch(`${process.env.REACT_APP_API_URL}/audio`, {
-              method: 'POST',
-              headers: { 'x-user-uid': userId, 'Content-Type': 'multipart/form-data' },
-              body: new FormData().append('audio', new Blob([audioFileBuffer]), audioFileName),
-            });
-            if (audioResponse.ok) {
-              const audioData = await audioResponse.json();
-              newMessage.transcription = audioData.transcription;
-              newMessage.translatedText = audioData.translatedText;
-            }
-          }
-
-          if (imageFileBuffer && imageFileName) {
-            const imageFile = bucket.file(`${chatDir}/images/${imageFileName}`);
-            await uploadWithRetry(imageFile, imageFileBuffer, { contentType: 'image/jpeg' });
-            newMessage.imagePath = `${chatDir}/images/${imageFileName}`;
-          }
-
           chatData.messages.push(newMessage);
+
           await uploadWithRetry(chatFile, JSON.stringify(chatData), { contentType: 'application/json' });
 
           if (pusher) {
@@ -319,73 +398,13 @@ export default async function handler(req, res) {
           }
 
           return res.status(200).json({ message: 'Message saved successfully', newMessage });
-        });
-
-        req.pipe(bb);
-      } else {
-        const { message } = req.body;
-        if (!message || typeof message !== 'object') {
-          console.error('Missing or invalid message object in POST request');
-          return res.status(400).json({ error: { code: 400, message: 'Message object is required' } });
-        }
-
-        validateSender(message.sender);
-        console.log(`Processing text message for chat between patient ${patientId} and doctor ${doctorId}, sender: ${message.sender}`);
-
-        let expectedId;
-        if (message.sender === 'doctor') {
-          const doctorQuery = await db.collection('doctors').where('uid', '==', userId).get();
-          if (doctorQuery.empty) {
-            console.error(`Doctor profile not found for user ${userId}`);
-            return res.status(404).json({ error: { code: 404, message: 'Doctor profile not found for this user' } });
+        } catch (error) {
+          console.error(`Error processing text message for chat between patient ${patientId} and doctor ${doctorId}:`, error.message, error.stack);
+          if (error.message === 'Invalid sender type') {
+            return res.status(400).json({ error: { code: 400, message: error.message } });
           }
-          expectedId = doctorQuery.docs[0].data().doctorId;
-        } else if (message.sender === 'patient') {
-          const patientQuery = await db.collection('patients').where('uid', '==', userId).get();
-          if (patientQuery.empty) {
-            console.error(`Patient profile not found for user ${userId}`);
-            return res.status(404).json({ error: { code: 404, message: 'Patient profile not found for this user' } });
-          }
-          expectedId = patientQuery.docs[0].data().patientId;
+          return res.status(500).json({ error: { code: 500, message: 'Failed to process text message', details: error.message } });
         }
-
-        if ((message.sender === 'doctor' && doctorId !== expectedId) || (message.sender === 'patient' && patientId !== expectedId)) {
-          console.error(`User ${userId} not authorized to send messages as ${message.sender} in chat between patient ${patientId} and doctor ${doctorId}`);
-          return res.status(403).json({ error: { code: 403, message: `You are not authorized to send messages as this ${message.sender}` } });
-        }
-
-        const assignmentQuery = await db.collection('doctor_assignments')
-          .where('patientId', '==', patientId)
-          .where('doctorId', '==', doctorId)
-          .get();
-        if (assignmentQuery.empty) {
-          console.error(`No chat assignment found for patient ${patientId} and doctor ${doctorId}`);
-          return res.status(404).json({ error: { code: 404, message: 'No chat assignment found' } });
-        }
-
-        const chatFile = bucket.file(`chats/${patientId}-${doctorId}/messages.json`);
-        let chatData = { messages: [] };
-        const [exists] = await chatFile.exists();
-        if (exists) {
-          const [contents] = await chatFile.download();
-          chatData = JSON.parse(contents.toString('utf8')) || { messages: [] };
-        }
-
-        const newMessage = {
-          ...message,
-          timestamp: message.timestamp || new Date().toISOString(),
-          senderId: userId,
-        };
-        chatData.messages.push(newMessage);
-
-        await uploadWithRetry(chatFile, JSON.stringify(chatData), { contentType: 'application/json' });
-
-        if (pusher) {
-          await pusher.trigger(`chat-${patientId}-${doctorId}`, 'new-message', newMessage);
-          console.log(`Pusher event 'new-message' triggered on channel chat-${patientId}-${doctorId}`);
-        }
-
-        return res.status(200).json({ message: 'Message saved successfully', newMessage });
       }
     } else {
       res.setHeader('Allow', ['GET', 'POST']);
