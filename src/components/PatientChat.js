@@ -47,25 +47,25 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   const pusherCluster = process.env.PUSHER_CLUSTER || 'ap2';
 
   // Add fetch interceptor to debug the /j7akqc 404 error
- useEffect(() => {
-  const originalFetch = window.fetch;
-  window.fetch = async (...args) => {
-    console.log('Fetch request:', args[0], { method: args[1]?.method, mode: args[1]?.mode });
-    try {
-      const response = await originalFetch(...args);
-      if (!response.ok) {
-        console.warn(`Fetch failed: ${args[0]} - Status ${response.status}`);
+  useEffect(() => {
+    const originalFetch = window.fetch;
+    window.fetch = async (...args) => {
+      console.log('Fetch request:', args[0], { method: args[1]?.method, mode: args[1]?.mode });
+      try {
+        const response = await originalFetch(...args);
+        if (!response.ok) {
+          console.warn(`Fetch failed: ${args[0]} - Status ${response.status}`);
+        }
+        return response;
+      } catch (err) {
+        console.error(`Fetch error for ${args[0]}:`, err);
+        throw err;
       }
-      return response;
-    } catch (err) {
-      console.error(`Fetch error for ${args[0]}:`, err);
-      throw err;
-    }
-  };
-  return () => {
-    window.fetch = originalFetch;
-  };
-}, []);
+    };
+    return () => {
+      window.fetch = originalFetch;
+    };
+  }, []);
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -221,11 +221,18 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           audioUrl: message.audioUrl ? '[Audio URL]' : null,
         });
         setMessages((prev) => {
-          if (!prev.some((msg) => msg.timestamp === message.timestamp && (!msg.text || msg.text === message.text))) {
-            return [...prev, message].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+          const isDuplicate = prev.some(
+            (msg) =>
+              msg.timestamp === message.timestamp &&
+              msg.sender === message.sender &&
+              msg.text === message.text &&
+              msg.audioUrl === message.audioUrl
+          );
+          if (isDuplicate) {
+            console.log('PatientChat.js: Skipped duplicate message:', message.timestamp, message.text);
+            return prev;
           }
-          console.log('PatientChat.js: Skipped duplicate message:', message.timestamp, message.text);
-          return prev;
+          return [...prev, message].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
         });
 
         if (message.sender === 'doctor' && (message.diagnosis || message.prescription)) {
@@ -673,7 +680,20 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           throw new Error(`Failed to save message: ${saveResponse.statusText} - ${errorData.error?.message || 'Unknown error'}`);
         }
         const data = await saveResponse.json();
-        setMessages((prev) => [...prev, data.newMessage].sort((a, b) => a.timestamp.localeCompare(b.timestamp)));
+        setMessages((prev) => {
+          const isDuplicate = prev.some(
+            (msg) =>
+              msg.timestamp === data.newMessage.timestamp &&
+              msg.sender === data.newMessage.sender &&
+              msg.text === data.newMessage.text &&
+              msg.audioUrl === data.newMessage.audioUrl
+          );
+          if (isDuplicate) {
+            console.log('PatientChat.js: Skipped duplicate retry message:', data.newMessage.timestamp, data.newMessage.text);
+            return prev;
+          }
+          return [...prev, data.newMessage].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+        });
       } catch (err) {
         console.error('Retry upload failed:', err);
         attempts--;
@@ -764,7 +784,20 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
             throw new Error(`Failed to save message: ${response.statusText} - ${errorData.error?.message || 'Unknown error'}`);
           }
           const data = await response.json();
-          setMessages((prev) => [...prev, data.newMessage].sort((a, b) => a.timestamp.localeCompare(b.timestamp)));
+          setMessages((prev) => {
+            const isDuplicate = prev.some(
+              (msg) =>
+                msg.timestamp === data.newMessage.timestamp &&
+                msg.sender === data.newMessage.sender &&
+                msg.text === data.newMessage.text &&
+                msg.audioUrl === data.newMessage.audioUrl
+            );
+            if (isDuplicate) {
+              console.log('PatientChat.js: Skipped duplicate recording message:', data.newMessage.timestamp, data.newMessage.text);
+              return prev;
+            }
+            return [...prev, data.newMessage].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+          });
         } catch (err) {
           console.error('Audio processing failed:', err);
           setError(`Failed to process audio: ${err.message}`);
@@ -876,64 +909,65 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     }
   };
 
-const retryTextToSpeech = async (text, lang, attempts = 3) => {
-  if (attempts <= 0) {
-    throw new Error('Text-to-speech conversion failed after retries. Please try again later.');
-  }
-
-  try {
-    const normalizedLang = normalizeLanguageCode(lang);
-    const audioUrl = await textToSpeechConvert(text.trim(), normalizedLang, effectiveUserId);
-    // Pre-flight check with detailed logging
-    const response = await fetch(audioUrl, { method: 'HEAD', mode: 'cors' });
-    if (!response.ok) {
-      throw new Error(`Audio URL inaccessible: ${audioUrl} (Status: ${response.status}) - ${response.statusText}`);
+  const retryTextToSpeech = async (text, lang, attempts = 3) => {
+    if (attempts <= 0) {
+      throw new Error('Text-to-speech conversion failed after retries. Please try again later.');
     }
-    return audioUrl;
-  } catch (err) {
-    console.error(`Text-to-speech attempt ${4 - attempts} failed:`, err);
-    if (err.message.includes('404')) {
-      throw new Error('Text-to-speech service is unavailable (404). Please contact support.');
-    } else if (err.message.includes('CORS')) {
-      throw new Error('CORS policy blocked audio access. Please contact support to update server settings.');
+
+    try {
+      const normalizedLang = normalizeLanguageCode(lang);
+      const audioUrl = await textToSpeechConvert(text.trim(), normalizedLang, effectiveUserId);
+      // Pre-flight check with detailed logging
+      const response = await fetch(audioUrl, { method: 'HEAD', mode: 'cors' });
+      if (!response.ok) {
+        throw new Error(`Audio URL inaccessible: ${audioUrl} (Status: ${response.status}) - ${response.statusText}`);
+      }
+      return audioUrl;
+    } catch (err) {
+      console.error(`Text-to-speech attempt ${4 - attempts} failed:`, err);
+      if (err.message.includes('404')) {
+        throw new Error('Text-to-speech service is unavailable (404). Please contact support.');
+      } else if (err.message.includes('CORS')) {
+        throw new Error('CORS policy blocked audio access. Please contact support to update server settings.');
+      }
+      setError(`Retrying text-to-speech... (Attempts remaining: ${attempts - 1})`);
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      return retryTextToSpeech(text, lang, attempts - 1);
     }
-    setError(`Retrying text-to-speech... (Attempts remaining: ${attempts - 1})`);
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-    return retryTextToSpeech(text, lang, attempts - 1);
-  }
-};
+  };
 
-const readAloud = async (text, lang, attempts = 3) => {
-  if (attempts <= 0) {
-    setError('Failed to read aloud after retries. Please try again later.');
-    return;
-  }
-
-  try {
-    if (!text || typeof text !== 'string' || text.trim() === '') {
-      setError('Cannot read aloud: No valid text provided.');
+  const readAloud = async (text, lang, attempts = 3) => {
+    if (attempts <= 0) {
+      setError('Failed to read aloud after retries. Please try again later.');
       return;
     }
-    const audioUrl = await retryTextToSpeech(text, lang);
-    await playAudio(audioUrl);
-  } catch (err) {
-    console.error('Error reading aloud:', err);
-    if (attempts > 1 && err.message.includes('Failed to load audio')) {
-      setError(`Retrying audio playback... (Attempts remaining: ${attempts - 1})`);
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-      return readAloud(text, lang, attempts - 1);
+
+    try {
+      if (!text || typeof text !== 'string' || text.trim() === '') {
+        setError('Cannot read aloud: No valid text provided.');
+        return;
+      }
+      const audioUrl = await retryTextToSpeech(text, lang);
+      await playAudio(audioUrl);
+    } catch (err) {
+      console.error('Error reading aloud:', err);
+      if (attempts > 1 && err.message.includes('Failed to load audio')) {
+        setError(`Retrying audio playback... (Attempts remaining: ${attempts - 1})`);
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        return readAloud(text, lang, attempts - 1);
+      }
+      let errorMessage = `Error reading aloud: ${err.message}`;
+      if (err.message.includes('Failed to load audio')) {
+        errorMessage = 'Error reading aloud: Audio file could not be loaded. It may be inaccessible or unsupported.';
+      } else if (err.message.includes('CORS')) {
+        errorMessage = 'Error reading aloud: CORS policy blocked access. Please contact support.';
+      } else if (err.message.includes('Playback failed')) {
+        errorMessage = 'Error reading aloud: Audio playback failed. Please check your browser or device audio settings.';
+      }
+      setError(errorMessage);
     }
-    let errorMessage = `Error reading aloud: ${err.message}`;
-    if (err.message.includes('Failed to load audio')) {
-      errorMessage = 'Error reading aloud: Audio file could not be loaded. It may be inaccessible or unsupported.';
-    } else if (err.message.includes('CORS')) {
-      errorMessage = 'Error reading aloud: CORS policy blocked access. Please contact support.';
-    } else if (err.message.includes('Playback failed')) {
-      errorMessage = 'Error reading aloud: Audio playback failed. Please check your browser or device audio settings.';
-    }
-    setError(errorMessage);
-  }
-};
+  };
+
   const handleSendText = async () => {
     if (!textInput.trim()) return;
 
@@ -1235,17 +1269,46 @@ const readAloud = async (text, lang, attempts = 3) => {
                         <div className="recommendation-item">
                           <strong>Diagnosis:</strong>{' '}
                           {languagePreference === 'kn' ? msg.translatedDiagnosis || msg.diagnosis : msg.diagnosis}
-                          <button
-                            onClick={() =>
-                              readAloud(
-                                languagePreference === 'kn' ? msg.translatedDiagnosis || msg.diagnosis : msg.diagnosis,
-                                languagePreference
-                              )
-                            }
-                            className="read-aloud-button"
-                          >
-                            🔊 ({languagePreference === 'kn' ? 'Kannada' : 'English'})
-                          </button>
+                          <div className="read-aloud-container">
+                            {languagePreference === 'kn' ? (
+                              <>
+                                <button
+                                  onClick={() =>
+                                    readAloud(
+                                      languagePreference === 'kn' ? msg.translatedDiagnosis || msg.diagnosis : msg.diagnosis,
+                                      'kn'
+                                    )
+                                  }
+                                  className="read-aloud-button kannada"
+                                >
+                                  🔊 Kannada
+                                </button>
+                                <button
+                                  onClick={() =>
+                                    readAloud(
+                                      languagePreference === 'kn' ? msg.translatedDiagnosis || msg.diagnosis : msg.diagnosis,
+                                      'en'
+                                    )
+                                  }
+                                  className="read-aloud-button english"
+                                >
+                                  🔊 English
+                                </button>
+                              </>
+                            ) : (
+                              <button
+                                onClick={() =>
+                                  readAloud(
+                                    languagePreference === 'kn' ? msg.translatedDiagnosis || msg.diagnosis : msg.diagnosis,
+                                    'en'
+                                  )
+                                }
+                                className="read-aloud-button english"
+                              >
+                                🔊 English
+                              </button>
+                            )}
+                          </div>
                         </div>
                       )}
                       {msg.prescription && (
@@ -1310,12 +1373,14 @@ const readAloud = async (text, lang, attempts = 3) => {
                             <p className="primary-text">{msg.text || 'No transcription'}</p>
                             <div className="audio-container">
                               <audio controls src={msg.audioUrl} onError={() => setError('Failed to load audio. It may be inaccessible or unsupported.')} />
-                              <button
-                                onClick={() => readAloud(msg.text, 'en')}
-                                className="read-aloud-button"
-                              >
-                                🔊 (English)
-                              </button>
+                              <div className="read-aloud-container">
+                                <button
+                                  onClick={() => readAloud(msg.text, 'en')}
+                                  className="read-aloud-button english"
+                                >
+                                  🔊 English
+                                </button>
+                              </div>
                               <a href={msg.audioUrl} download className="download-link">
                                 Download Audio
                               </a>
@@ -1329,18 +1394,20 @@ const readAloud = async (text, lang, attempts = 3) => {
                             )}
                             <div className="audio-container">
                               <audio controls src={msg.audioUrl} onError={() => setError('Failed to load audio. It may be inaccessible or unsupported.')} />
-                              <button
-                                onClick={() => readAloud(msg.text, 'kn')}
-                                className="read-aloud-button"
-                              >
-                                🔊 (Kannada)
-                              </button>
-                              <button
-                                onClick={() => readAloud(msg.translatedText || msg.text, 'en')}
-                                className="read-aloud-button"
-                              >
-                                🔊 (English)
-                              </button>
+                              <div className="read-aloud-container">
+                                <button
+                                  onClick={() => readAloud(msg.text, 'kn')}
+                                  className="read-aloud-button kannada"
+                                >
+                                  🔊 Kannada
+                                </button>
+                                <button
+                                  onClick={() => readAloud(msg.translatedText || msg.text, 'en')}
+                                  className="read-aloud-button english"
+                                >
+                                  🔊 English
+                                </button>
+                              </div>
                               <a href={msg.audioUrl} download className="download-link">
                                 Download Audio
                               </a>
@@ -1369,29 +1436,31 @@ const readAloud = async (text, lang, attempts = 3) => {
                         {msg.audioUrl && (
                           <div className="audio-container">
                             <audio controls src={msg.audioUrl} onError={() => setError('Failed to load audio. It may be inaccessible or unsupported.')} />
-                            {languagePreference === 'en' ? (
-                              <button
-                                onClick={() => readAloud(msg.text, 'en')}
-                                className="read-aloud-button"
-                              >
-                                🔊 (English)
-                              </button>
-                            ) : (
-                              <>
+                            <div className="read-aloud-container">
+                              {languagePreference === 'en' ? (
                                 <button
-                                  onClick={() => readAloud(msg.text, 'kn')}
-                                  className="read-aloud-button"
+                                  onClick={() => readAloud(msg.text, 'en')}
+                                  className="read-aloud-button english"
                                 >
-                                  🔊 (Kannada)
+                                  🔊 English
                                 </button>
-                                <button
-                                  onClick={() => readAloud(msg.translatedText || msg.text, 'en')}
-                                  className="read-aloud-button"
-                                >
-                                  🔊 (English)
-                                </button>
-                              </>
-                            )}
+                              ) : (
+                                <>
+                                  <button
+                                    onClick={() => readAloud(msg.text, 'kn')}
+                                    className="read-aloud-button kannada"
+                                  >
+                                    🔊 Kannada
+                                  </button>
+                                  <button
+                                    onClick={() => readAloud(msg.translatedText || msg.text, 'en')}
+                                    className="read-aloud-button english"
+                                  >
+                                    🔊 English
+                                  </button>
+                                </>
+                              )}
+                            </div>
                             <a href={msg.audioUrl} download className="download-link">
                               Download Audio
                             </a>
