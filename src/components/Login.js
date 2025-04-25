@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { signInWithEmailAndPassword, signOut } from 'firebase/auth';
+import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
 import { auth } from '../services/firebase.js';
 
 function Login({ setUser, setRole, setPatientId, user }) {
@@ -14,10 +14,86 @@ function Login({ setUser, setRole, setPatientId, user }) {
 
   const { username: initialUsername, password: initialPassword } = location.state || {};
 
+  // Set initial email and password from location state (e.g., from registration)
   useEffect(() => {
     if (initialUsername) setEmail(initialUsername);
     if (initialPassword) setPassword(initialPassword);
   }, [initialUsername, initialPassword]);
+
+  // Check for existing user session on component mount
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        console.log('User already authenticated:', { uid: firebaseUser.uid, email: firebaseUser.email });
+
+        try {
+          const idToken = await firebaseUser.getIdToken(true);
+          const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
+          const response = await fetch(`${apiUrl}/users/${firebaseUser.uid}`, {
+            method: 'GET',
+            headers: {
+              'Authorization': `Bearer ${idToken}`,
+              'x-user-uid': firebaseUser.uid,
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+            },
+            credentials: 'include',
+          });
+
+          if (!response.ok) {
+            const errorText = await response.text();
+            console.error('Failed to fetch user data on auth state change:', response.status, errorText);
+            setError('Failed to fetch user data. Please log in again.');
+            await signOut(auth);
+            setUser(null);
+            setRole(null);
+            setPatientId(null);
+            localStorage.removeItem('userId');
+            localStorage.removeItem('patientId');
+            navigate('/login');
+            return;
+          }
+
+          const userData = await response.json();
+          if (!userData || !userData.role) {
+            throw new Error('Invalid user data received from server, missing role');
+          }
+
+          const updatedUser = {
+            uid: firebaseUser.uid,
+            email: firebaseUser.email,
+            role: userData.role,
+            patientId: userData.patientId || null,
+            name: userData.name || null,
+            sex: userData.sex || null,
+            age: userData.age || null,
+          };
+
+          setUser(updatedUser);
+          setRole(userData.role);
+          if (userData.role === 'patient' && userData.patientId) {
+            setPatientId(userData.patientId);
+            localStorage.setItem('patientId', userData.patientId);
+          }
+          localStorage.setItem('userId', firebaseUser.uid);
+
+          redirectUser(userData.role);
+        } catch (error) {
+          console.error('Error during auth state change:', error.message);
+          setError(`Authentication error: ${error.message}`);
+          await signOut(auth);
+          setUser(null);
+          setRole(null);
+          setPatientId(null);
+          localStorage.removeItem('userId');
+          localStorage.removeItem('patientId');
+          navigate('/login');
+        }
+      }
+    });
+
+    return () => unsubscribe();
+  }, [navigate, setUser, setRole, setPatientId]);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -59,11 +135,10 @@ function Login({ setUser, setRole, setPatientId, user }) {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
         },
-        mode: 'cors',
-        credentials: 'same-origin',
+        credentials: 'include',
       });
 
-      console.log('API response status:', response.status, 'OK:', response.ok, 'Headers:', Object.fromEntries(response.headers.entries()));
+      console.log('API response status:', response.status, 'OK:', response.ok);
       const responseText = await response.text();
       console.log('Raw API response:', responseText);
 
@@ -117,7 +192,11 @@ function Login({ setUser, setRole, setPatientId, user }) {
       } else if (error.code === 'auth/wrong-password') {
         setError('Incorrect password. Please try again.');
       } else if (error.message.includes('HTTP error')) {
-        setError('Failed to fetch user data. Please check the server or try again later.');
+        if (error.message.includes('404')) {
+          setError('User data not found on server. Please register or contact support.');
+        } else {
+          setError('Failed to fetch user data. Please check the server or try again later.');
+        }
       } else {
         setError(`Login failed: ${error.message}`);
       }
@@ -147,11 +226,10 @@ function Login({ setUser, setRole, setPatientId, user }) {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
         },
-        mode: 'cors',
-        credentials: 'same-origin',
+        credentials: 'include',
       });
 
-      console.log('Logout API response status:', response.status, 'OK:', response.ok, 'Headers:', Object.fromEntries(response.headers.entries()));
+      console.log('Logout API response status:', response.status, 'OK:', response.ok);
       const responseText = await response.text();
       console.log('Raw logout API response:', responseText);
 
@@ -201,6 +279,7 @@ function Login({ setUser, setRole, setPatientId, user }) {
     } else {
       navigate('/login');
     }
+    console.log(`Redirected to ${role} route`);
   };
 
   const goToRegister = () => {
@@ -304,18 +383,21 @@ function Login({ setUser, setRole, setPatientId, user }) {
       </div>
 
       <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap');
+
         .login-container {
           min-height: 100vh;
           display: flex;
           justify-content: center;
           align-items: center;
-          background: linear-gradient(135deg, #6e48aa, #9d50bb);
+          background: linear-gradient(135deg, #2C1A3D, #3E2A5A);
           padding: 20px;
-          font-family: 'Arial', sans-serif;
+          font-family: 'Poppins', sans-serif;
         }
 
         .login-card {
-          background: #fff;
+          background: rgba(255, 255, 255, 0.05);
+          backdrop-filter: blur(10px);
           padding: 40px;
           border-radius: 15px;
           box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
@@ -324,6 +406,7 @@ function Login({ setUser, setRole, setPatientId, user }) {
           text-align: center;
           animation: fadeIn 0.5s ease-in-out;
           transition: transform 0.3s ease, box-shadow 0.3s ease;
+          border: 1px solid rgba(255, 255, 255, 0.1);
         }
 
         .login-card:hover {
@@ -333,7 +416,7 @@ function Login({ setUser, setRole, setPatientId, user }) {
 
         h2 {
           font-size: 2.5rem;
-          color: #333;
+          color: #FFFFFF;
           margin-bottom: 30px;
           position: relative;
         }
@@ -342,7 +425,7 @@ function Login({ setUser, setRole, setPatientId, user }) {
           content: '';
           width: 50px;
           height: 4px;
-          background: #6e48aa;
+          background: #6E48AA;
           position: absolute;
           bottom: -10px;
           left: 50%;
@@ -358,7 +441,7 @@ function Login({ setUser, setRole, setPatientId, user }) {
         label {
           display: block;
           font-size: 1rem;
-          color: #555;
+          color: #E0E0E0;
           margin-bottom: 8px;
           font-weight: 500;
         }
@@ -366,27 +449,27 @@ function Login({ setUser, setRole, setPatientId, user }) {
         input {
           width: 100%;
           padding: 12px 15px;
-          border: 2px solid #ddd;
+          border: 1px solid rgba(255, 255, 255, 0.2);
           border-radius: 8px;
           font-size: 1rem;
-          color: #333;
-          background: #f9f9f9;
+          color: #FFFFFF;
+          background: rgba(255, 255, 255, 0.1);
           transition: border-color 0.3s ease, box-shadow 0.3s ease;
         }
 
         input:focus {
           outline: none;
-          border-color: #6e48aa;
+          border-color: #6E48AA;
           box-shadow: 0 0 8px rgba(110, 72, 170, 0.3);
-          background: #fff;
+          background: rgba(255, 255, 255, 0.15);
         }
 
         input::placeholder {
-          color: #aaa;
+          color: #A0A0A0;
         }
 
         .error-message {
-          color: #e74c3c;
+          color: #E74C3C;
           font-size: 0.9rem;
           margin-bottom: 20px;
           animation: shake 0.5s ease;
@@ -406,18 +489,19 @@ function Login({ setUser, setRole, setPatientId, user }) {
         }
 
         .login-button {
-          background: #6e48aa;
-          color: #fff;
+          background: #6E48AA;
+          color: #FFFFFF;
         }
 
         .logout-button {
-          background: #e74c3c;
-          color: #fff;
+          background: #E74C3C;
+          color: #FFFFFF;
           margin-top: 20px;
         }
 
         .login-button:disabled, .logout-button:disabled {
-          background: #aaa;
+          background: #666;
+          color: #A0A0A0;
           cursor: not-allowed;
         }
 
@@ -426,11 +510,11 @@ function Login({ setUser, setRole, setPatientId, user }) {
         }
 
         .login-button:hover:not(:disabled) {
-          background: #5a3e8b;
+          background: #5A3E8B;
         }
 
         .logout-button:hover:not(:disabled) {
-          background: #c0392b;
+          background: #C0392B;
         }
 
         .login-button::before, .logout-button::before {
@@ -456,11 +540,11 @@ function Login({ setUser, setRole, setPatientId, user }) {
         .register-prompt {
           margin-top: 20px;
           font-size: 0.95rem;
-          color: #555;
+          color: #E0E0E0;
         }
 
         .register-link {
-          color: #6e48aa;
+          color: #6E48AA;
           font-weight: 600;
           cursor: pointer;
           transition: color 0.3s ease, transform 0.3s ease;
@@ -468,7 +552,7 @@ function Login({ setUser, setRole, setPatientId, user }) {
         }
 
         .register-link:hover {
-          color: #5a3e8b;
+          color: #5A3E8B;
           transform: translateX(5px);
         }
 
