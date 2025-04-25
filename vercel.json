@@ -12,8 +12,16 @@
   ],
   "rewrites": [
     {
+      "source": "/api/audio/:path*",
+      "destination": "/api/audio"
+    },
+    {
+      "source": "/api/chats/:patientId/:doctorId",
+      "destination": "/api/chats/[patientId]/[doctorId]"
+    },
+    {
       "source": "/api/:path*",
-      "destination": "/api/path*"
+      "destination": "/api/:path"
     }
   ],
   "cleanUrls": true,
