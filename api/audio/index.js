@@ -12,58 +12,104 @@ const { Translate } = pkg;
 console.log('Loading /api/audio/index.js');
 
 // Initialize Firebase Admin
+let adminInitialized = false;
 if (!admin.apps.length) {
   console.log('Attempting to initialize Firebase Admin...');
   try {
+    const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n');
+    if (!process.env.FIREBASE_PROJECT_ID || !privateKey || !process.env.FIREBASE_CLIENT_EMAIL) {
+      throw new Error('Missing Firebase credentials: FIREBASE_PROJECT_ID, FIREBASE_PRIVATE_KEY, or FIREBASE_CLIENT_EMAIL');
+    }
+
     admin.initializeApp({
       credential: admin.credential.cert({
         projectId: process.env.FIREBASE_PROJECT_ID,
-        privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+        privateKey,
         clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
       }),
     });
+    adminInitialized = true;
     console.log('Firebase Admin initialized successfully');
   } catch (error) {
     console.error('Failed to initialize Firebase Admin:', error.message, error.stack);
     throw new Error('Firebase Admin initialization failed');
   }
 } else {
+  adminInitialized = true;
   console.log('Firebase Admin already initialized');
 }
 
-// Initialize Google Cloud Clients
-let serviceAccountKey;
-console.log('Attempting to initialize Google Cloud service account key...');
-try {
+const db = admin.firestore();
+
+// Initialize Google Cloud Storage
+let storage, bucket;
+const initStorage = async () => {
+  console.log('Attempting to initialize Google Cloud Storage...');
+  try {
+    if (!process.env.GCS_SERVICE_ACCOUNT_KEY) {
+      throw new Error('GCS_SERVICE_ACCOUNT_KEY environment variable is not set');
+    }
+    console.log('Using GCS_SERVICE_ACCOUNT_KEY from environment variable');
+    const serviceAccountKey = JSON.parse(Buffer.from(process.env.GCS_SERVICE_ACCOUNT_KEY, 'base64').toString());
+    console.log('Google Cloud service account key loaded successfully');
+
+    storage = new Storage({ credentials: serviceAccountKey });
+    const bucketName = process.env.GCS_BUCKET_NAME || 'fir-project-vercel';
+    console.log(`Using GCS bucket: ${bucketName}`);
+    bucket = storage.bucket(bucketName);
+    await bucket.getMetadata(); // Test bucket availability
+    console.log('Google Cloud Storage initialized successfully');
+    return true;
+  } catch (error) {
+    console.error('Failed to initialize Google Cloud Storage:', error.message, error.stack);
+    return false;
+  }
+};
+
+// Lazy initialization of Google Cloud clients
+let speechClient = null, ttsClient = null, translateClient = null;
+const initSpeechClient = async () => {
+  if (!speechClient) {
+    try {
+      speechClient = new SpeechClient({ credentials: await getServiceAccountKey() });
+      console.log('Google Speech-to-Text client initialized successfully');
+    } catch (error) {
+      console.error('Failed to initialize Speech-to-Text client:', error.message, error.stack);
+    }
+  }
+  return !!speechClient;
+};
+
+const initTtsClient = async () => {
+  if (!ttsClient) {
+    try {
+      ttsClient = new TextToSpeechClient({ credentials: await getServiceAccountKey() });
+      console.log('Google Text-to-Speech client initialized successfully');
+    } catch (error) {
+      console.error('Failed to initialize Text-to-Speech client:', error.message, error.stack);
+    }
+  }
+  return !!ttsClient;
+};
+
+const initTranslateClient = async () => {
+  if (!translateClient) {
+    try {
+      translateClient = new Translate({ credentials: await getServiceAccountKey() });
+      console.log('Google Translate client initialized successfully');
+    } catch (error) {
+      console.error('Failed to initialize Translate client:', error.message, error.stack);
+    }
+  }
+  return !!translateClient;
+};
+
+const getServiceAccountKey = async () => {
   if (!process.env.GCS_SERVICE_ACCOUNT_KEY) {
     throw new Error('GCS_SERVICE_ACCOUNT_KEY environment variable is not set');
   }
-  console.log('Using GCS_SERVICE_ACCOUNT_KEY from environment variable');
-  serviceAccountKey = JSON.parse(Buffer.from(process.env.GCS_SERVICE_ACCOUNT_KEY, 'base64').toString());
-  console.log('Google Cloud service account key loaded successfully');
-} catch (error) {
-  console.error('Failed to load Google Cloud service account key:', error.message, error.stack);
-  throw new Error('Google Cloud service account key loading failed');
-}
-
-const storage = new Storage({ credentials: serviceAccountKey });
-const bucketName = process.env.GCS_BUCKET_NAME || 'fir-project-vercel';
-console.log(`Using GCS bucket: ${bucketName}`);
-const bucket = storage.bucket(bucketName);
-
-let speechClient, ttsClient, translateClient;
-console.log('Attempting to initialize Google Cloud clients...');
-try {
-  speechClient = new SpeechClient({ credentials: serviceAccountKey });
-  console.log('Google Speech-to-Text client initialized successfully');
-  ttsClient = new TextToSpeechClient({ credentials: serviceAccountKey });
-  console.log('Google Text-to-Speech client initialized successfully');
-  translateClient = new Translate({ credentials: serviceAccountKey });
-  console.log('Google Translate client initialized successfully');
-} catch (error) {
-  console.error('Failed to initialize Google Cloud clients:', error.message, error.stack);
-  speechClient = ttsClient = translateClient = null;
-}
+  return JSON.parse(Buffer.from(process.env.GCS_SERVICE_ACCOUNT_KEY, 'base64').toString());
+};
 
 // Multer configuration for audio uploads
 console.log('Configuring Multer for audio uploads...');
@@ -72,8 +118,8 @@ const uploadAudio = multer({
   limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
   fileFilter: (req, file, cb) => {
     console.log('Multer fileFilter: Checking file type:', file ? file.mimetype : 'No file');
-    if (!file.mimetype.includes('audio/webm')) {
-      console.error('Invalid file type:', file.mimetype);
+    if (!file || !file.mimetype.includes('audio/webm')) {
+      console.error('Invalid file type:', file?.mimetype);
       return cb(new Error('Invalid file type. Only audio/webm is allowed.'));
     }
     console.log('Multer fileFilter: File type valid');
@@ -101,13 +147,12 @@ const uploadWithRetry = async (file, buffer, metadata, retries = 3, backoff = 10
 };
 
 // Middleware to check Google services availability
-const checkGoogleServices = (req, res, next) => {
+const checkGoogleServices = async (req, res, next) => {
   console.log('Checking Google services availability...');
-  if (!speechClient || !ttsClient || !translateClient) {
-    console.error('One or more Google services unavailable');
+  if (!await initStorage()) {
+    console.error('Google Cloud Storage unavailable');
     return res.status(503).json({
-      error: { code: 503, message: 'Service unavailable: Google Cloud services not properly initialized' },
-      details: 'Check your API keys and service account configuration',
+      error: { code: 503, message: 'Service unavailable: Google Cloud Storage not accessible' },
     });
   }
   console.log('Google services available');
@@ -165,6 +210,10 @@ export default async function handler(req, res) {
       return res.status(401).json({ error: { code: 401, message: 'Firebase UID is required in x-user-uid header' } });
     }
 
+    if (!adminInitialized) {
+      throw new Error('Firebase Admin not initialized');
+    }
+
     await admin.auth().getUser(userId);
     console.log(`User verified: ${userId}`);
 
@@ -174,7 +223,7 @@ export default async function handler(req, res) {
     }
 
     // Apply Google services check
-    checkGoogleServices(req, res, () => {});
+    await checkGoogleServices(req, res, () => {});
 
     if (!subEndpoint) { // Handle /api/audio for speech-to-text
       console.log('Endpoint matched: /api/audio');
@@ -196,18 +245,22 @@ export default async function handler(req, res) {
 
       let transcriptionText = 'Transcription unavailable';
       let detectedLanguage = language.split('-')[0];
-      if (speechClient) {
+      if (await initSpeechClient()) {
         const config = { encoding: 'WEBM_OPUS', sampleRateHertz: 48000, languageCode: language, enableAutomaticLanguageDetection: true };
         const request = { audio: { content: req.file.buffer.toString('base64') }, config };
         const [response] = await speechClient.recognize(request);
         transcriptionText = response.results?.length > 0 ? response.results.map((result) => result.alternatives[0].transcript).join('\n') : 'No transcription available';
         detectedLanguage = response.results?.[0]?.languageCode || language.split('-')[0];
+      } else {
+        console.warn('Speech-to-Text client unavailable, skipping transcription');
       }
 
       let translatedText = transcriptionText;
-      if (translateClient && detectedLanguage !== 'en') {
+      if (await initTranslateClient() && detectedLanguage !== 'en') {
         const [translation] = await translateClient.translate(transcriptionText, { from: detectedLanguage, to: 'en' });
         translatedText = translation;
+      } else {
+        console.warn('Translate client unavailable or same language, skipping translation');
       }
 
       return res.status(200).json({
@@ -216,24 +269,27 @@ export default async function handler(req, res) {
         languageCode: language,
         detectedLanguage: detectedLanguage,
         audioUrl,
-        warning: !speechClient ? 'Speech-to-text service unavailable' : undefined,
+        warning: !speechClient ? 'Speech-to-Text service unavailable' : undefined,
       });
     } else if (subEndpoint === 'text-to-speech') {
       const { text, language = 'en-US' } = req.body;
       if (!text) return res.status(400).json({ error: { code: 400, message: 'Text is required' } });
 
-      const normalizedLanguageCode = language.toLowerCase().startsWith('kn') ? 'kn-IN' : 'en-US';
-      const [response] = await ttsClient.synthesizeSpeech({
-        input: { text },
-        voice: { languageCode: normalizedLanguageCode, ssmlGender: 'NEUTRAL' },
-        audioConfig: { audioEncoding: 'MP3' },
-      });
-      const fileName = `tts/${Date.now()}.mp3`;
-      const file = bucket.file(fileName);
-      await uploadWithRetry(file, response.audioContent, { contentType: 'audio/mp3' });
-      const audioUrl = `https://storage.googleapis.com/${bucketName}/${fileName}`;
-
-      return res.status(200).json({ audioUrl });
+      if (await initTtsClient()) {
+        const normalizedLanguageCode = language.toLowerCase().startsWith('kn') ? 'kn-IN' : 'en-US';
+        const [response] = await ttsClient.synthesizeSpeech({
+          input: { text },
+          voice: { languageCode: normalizedLanguageCode, ssmlGender: 'NEUTRAL' },
+          audioConfig: { audioEncoding: 'MP3' },
+        });
+        const fileName = `tts/${Date.now()}.mp3`;
+        const file = bucket.file(fileName);
+        await uploadWithRetry(file, response.audioContent, { contentType: 'audio/mp3' });
+        const audioUrl = `https://storage.googleapis.com/${bucketName}/${fileName}`;
+        return res.status(200).json({ audioUrl });
+      } else {
+        return res.status(503).json({ error: { code: 503, message: 'Text-to-Speech service unavailable' } });
+      }
     } else if (subEndpoint === 'translate') {
       const { text, sourceLanguageCode, targetLanguageCode } = req.body;
       if (!text) return res.status(400).json({ error: { code: 400, message: 'Text is required' } });
@@ -242,8 +298,12 @@ export default async function handler(req, res) {
 
       if (sourceLanguageCode === targetLanguageCode) return res.status(200).json({ translatedText: text });
 
-      const [translatedText] = await translateClient.translate(text, { from: sourceLanguageCode, to: targetLanguageCode });
-      return res.status(200).json({ translatedText });
+      if (await initTranslateClient()) {
+        const [translatedText] = await translateClient.translate(text, { from: sourceLanguageCode, to: targetLanguageCode });
+        return res.status(200).json({ translatedText });
+      } else {
+        return res.status(503).json({ error: { code: 503, message: 'Translate service unavailable' } });
+      }
     }
 
     return res.status(404).json({ error: { code: 404, message: 'Sub-endpoint not found' } });
@@ -260,4 +320,5 @@ export const config = {
     bodyParser: false, // Required for multer
   },
 };
+
 console.log('Serverless function /api/audio/index.js fully loaded');

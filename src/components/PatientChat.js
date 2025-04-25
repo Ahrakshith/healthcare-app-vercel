@@ -1,7 +1,12 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Pusher from 'pusher-js';
-import { transcribeAudio, translateText, textToSpeechConvert, detectLanguage } from '../services/speech.js';
+import {
+  transcribeAudio,
+  translateText,
+  textToSpeechConvert,
+  detectLanguage,
+} from '../services/speech.js';
 import { verifyMedicine, notifyAdmin } from '../services/medicineVerify.js';
 import { doc, getDoc, collection, addDoc, getDocs, updateDoc } from 'firebase/firestore';
 import { db } from '../services/firebase.js';
@@ -31,10 +36,11 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   const messagesEndRef = useRef(null);
   const reminderTimeoutsRef = useRef(new Map());
   const errorTimeoutRef = useRef(null);
+  const retryTimeoutRef = useRef(null);
   const navigate = useNavigate();
 
-  const effectiveUserId = user?.uid;
-  const effectivePatientId = urlPatientId || patientId;
+  const effectiveUserId = user?.uid || '';
+  const effectivePatientId = urlPatientId || patientId || '';
   const apiBaseUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
 
   const scrollToBottom = useCallback(() => {
@@ -50,7 +56,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       errorTimeoutRef.current = setTimeout(() => {
         setError('');
         setFailedUpload(null);
-      }, 3000);
+      }, 5000); // Increased to 5s for better visibility
     }
     return () => clearTimeout(errorTimeoutRef.current);
   }, [error]);
@@ -59,7 +65,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     const timers = missedDoseAlerts.map((alert) =>
       setTimeout(() => {
         setMissedDoseAlerts((prev) => prev.filter((a) => a.id !== alert.id));
-      }, 3000)
+      }, 5000)
     );
     return () => timers.forEach(clearTimeout);
   }, [missedDoseAlerts]);
@@ -138,8 +144,9 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       }
       reminderTimeoutsRef.current.forEach((timeoutId) => clearTimeout(timeoutId));
       reminderTimeoutsRef.current.clear();
+      clearTimeout(retryTimeoutRef.current);
     };
-  }, [effectiveUserId, effectivePatientId, doctorId, role, navigate, handleLogout]);
+  }, [effectiveUserId, effectivePatientId, doctorId, role, navigate]);
 
   useEffect(() => {
     const doctorMessages = messages.filter((msg) => msg.sender === 'doctor' && msg.prescription);
@@ -153,22 +160,23 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   }, [messages]);
 
   useEffect(() => {
-    if (languagePreference === null) return;
+    if (!languagePreference) return;
 
     pusherRef.current = new Pusher(process.env.REACT_APP_PUSHER_KEY || 'your-pusher-key', {
       cluster: process.env.REACT_APP_PUSHER_CLUSTER || 'ap2',
       authEndpoint: `${apiBaseUrl}/pusher/auth`,
       auth: {
-        headers: {
-          'x-user-uid': effectiveUserId,
-        },
+        headers: { 'x-user-uid': effectiveUserId },
       },
     });
 
     const channel = pusherRef.current.subscribe(`chat-${effectivePatientId}-${doctorId}`);
 
     channel.bind('newMessage', (message) => {
-      console.log('PatientChat.js: Received new message:', { ...message, audioUrl: message.audioUrl ? '[Audio URL]' : null });
+      console.log('PatientChat.js: Received new message:', {
+        ...message,
+        audioUrl: message.audioUrl ? '[Audio URL]' : null,
+      });
       setMessages((prev) => {
         if (!prev.some((msg) => msg.timestamp === message.timestamp && (!msg.text || msg.text === message.text))) {
           return [...prev, message].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
@@ -192,7 +200,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         const response = await fetch(`${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`, {
           headers: {
             'x-user-uid': effectiveUserId,
-            'Authorization': `Bearer ${idToken}`,
+            Authorization: `Bearer ${idToken}`,
           },
           credentials: 'include',
         });
@@ -561,25 +569,71 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   };
 
   const retryUpload = async (audioBlob, language) => {
-    try {
-      setError('');
-      setFailedUpload(null);
-      const transcriptionResult = await transcribeAudio(audioBlob, language, effectiveUserId);
-      if (!transcriptionResult.audioUrl) {
-        setError('Transcription succeeded, but no audio URL was returned.');
-        return null;
-      }
-      const response = await fetch(transcriptionResult.audioUrl, { method: 'HEAD' });
-      if (!response.ok) {
-        setError(`Audio URL inaccessible: ${transcriptionResult.audioUrl} (Status: ${response.status})`);
-        return null;
-      }
-      return transcriptionResult;
-    } catch (err) {
-      setError(`Failed to transcribe audio on retry: ${err.message}`);
-      setFailedUpload({ audioBlob, language });
-      return null;
+    if (!audioBlob || !language) {
+      setError('Invalid retry data. Please start a new recording.');
+      return;
     }
+
+    setError('Retrying upload... (Attempts remaining: 3)');
+    let attempts = 3;
+
+    const attemptRetry = async () => {
+      try {
+        const transcriptionResult = await transcribeAudio(audioBlob, language, effectiveUserId);
+        if (!transcriptionResult.audioUrl) {
+          throw new Error('Transcription succeeded, but no audio URL was returned.');
+        }
+        const response = await fetch(transcriptionResult.audioUrl, { method: 'HEAD' });
+        if (!response.ok) {
+          throw new Error(`Audio URL inaccessible: ${transcriptionResult.audioUrl} (Status: ${response.status})`);
+        }
+        setError('');
+        setFailedUpload(null);
+        clearTimeout(retryTimeoutRef.current);
+
+        const message = {
+          sender: 'patient',
+          text: transcriptionResult.transcription || 'Transcription failed',
+          translatedText: transcriptionResult.translatedText || '',
+          timestamp: new Date().toISOString(),
+          language,
+          recordingLanguage: language,
+          doctorId,
+          userId: effectivePatientId,
+        };
+
+        const formData = new FormData();
+        formData.append('audio', audioBlob, `audio_${new Date().toISOString()}.webm`);
+        formData.append('message', JSON.stringify(message));
+
+        const idToken = await firebaseUser.getIdToken(true);
+        const response = await fetch(`${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`, {
+          method: 'POST',
+          headers: { 'x-user-uid': effectiveUserId, Authorization: `Bearer ${idToken}` },
+          body: formData,
+          credentials: 'include',
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(`Failed to save message: ${response.statusText} - ${errorData.error.message}`);
+        }
+        const data = await response.json();
+        setMessages((prev) => [...prev, data.newMessage].sort((a, b) => a.timestamp.localeCompare(b.timestamp)));
+      } catch (err) {
+        attempts--;
+        if (attempts > 0) {
+          setError(`Retrying upload... (Attempts remaining: ${attempts})`);
+          retryTimeoutRef.current = setTimeout(attemptRetry, 2000 * (4 - attempts)); // Exponential backoff
+        } else {
+          setError(`Failed to transcribe audio after retries: ${err.message}`);
+          setFailedUpload({ audioBlob, language });
+          clearTimeout(retryTimeoutRef.current);
+        }
+      }
+    };
+
+    attemptRetry();
   };
 
   const startRecording = async () => {
@@ -637,10 +691,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           const idToken = await firebaseUser.getIdToken(true);
           const response = await fetch(`${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`, {
             method: 'POST',
-            headers: {
-              'x-user-uid': effectiveUserId,
-              'Authorization': `Bearer ${idToken}`,
-            },
+            headers: { 'x-user-uid': effectiveUserId, Authorization: `Bearer ${idToken}` },
             body: formData,
             credentials: 'include',
           });
@@ -725,10 +776,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       const idToken = await firebaseUser.getIdToken(true);
       const response = await fetch(`${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`, {
         method: 'POST',
-        headers: {
-          'x-user-uid': effectiveUserId,
-          'Authorization': `Bearer ${idToken}`,
-        },
+        headers: { 'x-user-uid': effectiveUserId, Authorization: `Bearer ${idToken}` },
         body: formData,
         credentials: 'include',
       });
@@ -795,7 +843,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         headers: {
           'Content-Type': 'application/json',
           'x-user-uid': effectiveUserId,
-          'Authorization': `Bearer ${idToken}`,
+          Authorization: `Bearer ${idToken}`,
         },
         body: JSON.stringify({ message }),
         credentials: 'include',
@@ -842,7 +890,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         headers: {
           'Content-Type': 'application/json',
           'x-user-uid': effectiveUserId,
-          'Authorization': `Bearer ${idToken}`,
+          Authorization: `Bearer ${idToken}`,
         },
         body: JSON.stringify({ message }),
         credentials: 'include',
@@ -1224,11 +1272,8 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           {error && (
             <div className="error-message">
               {error}
-              {failedUpload && (
-                <button
-                  onClick={() => retryUpload(failedUpload.audioBlob, failedUpload.language)}
-                  className="retry-button"
-                >
+              {failedUpload && failedUpload.audioBlob && (
+                <button onClick={() => retryUpload(failedUpload.audioBlob, failedUpload.language)} className="retry-button">
                   Retry Upload
                 </button>
               )}
@@ -1895,6 +1940,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           background: #C0392B;
           transform: scale(1.05);
         }
+
         .disabled-button {
           padding: 8px 20px;
           background: #666;

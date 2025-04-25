@@ -7,6 +7,38 @@ const truncate = (str, maxLength = 50) => {
   return str.length > maxLength ? `${str.substring(0, maxLength)}...` : str;
 };
 
+// Utility function for fetch with retry logic
+const fetchWithRetry = async (url, options, maxRetries = 3, backoff = 1000) => {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      !isProduction && console.log(`fetchWithRetry: Attempt ${attempt} for ${url}`);
+      const response = await fetch(url, options);
+      if (!response.ok) {
+        const errorText = await response.text();
+        let errorMessage = `Request failed: ${response.status} - ${response.statusText}`;
+        try {
+          const errorJson = JSON.parse(errorText);
+          errorMessage = errorJson.error?.message || errorText;
+        } catch {
+          errorMessage = errorText || 'Unknown server error';
+        }
+        !isProduction && console.error(`fetchWithRetry: Error on attempt ${attempt} - ${errorMessage}`);
+
+        if (response.status === 503 && attempt < maxRetries) {
+          const delay = backoff * Math.pow(2, attempt - 1);
+          !isProduction && console.log(`fetchWithRetry: Retrying in ${delay}ms due to 503...`);
+          await new Promise((resolve) => setTimeout(resolve, delay));
+          continue;
+        }
+        throw new Error(errorMessage);
+      }
+      return response;
+    } catch (error) {
+      if (attempt === maxRetries) throw error;
+    }
+  }
+};
+
 async function transcribeAudio(audioBlob, languageCode = 'en-US', userId) {
   if (!audioBlob || !(audioBlob instanceof Blob)) {
     throw new Error('Invalid audio blob: Must be a valid Blob object.');
@@ -23,44 +55,21 @@ async function transcribeAudio(audioBlob, languageCode = 'en-US', userId) {
   const formData = new FormData();
   formData.append('audio', audioBlob, 'recording.webm');
   formData.append('language', languageCode);
-  formData.append('uid', userId); // Ensure uid is sent in the body
+  formData.append('uid', userId);
 
   try {
     !isProduction && console.log('transcribeAudio: Sending to /api/audio');
-    const response = await fetch(`${API_BASE_URL}/audio`, {
+    const response = await fetchWithRetry(`${API_BASE_URL}/audio`, {
       method: 'POST',
       headers: { 'x-user-uid': userId },
       body: formData,
       credentials: 'include',
     });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      let errorMessage = `Transcription failed: ${response.status} - ${response.statusText}`;
-      try {
-        const errorJson = JSON.parse(errorText);
-        errorMessage = errorJson.error?.message || errorText;
-      } catch {
-        errorMessage = errorText || 'Unknown server error';
-      }
-      !isProduction && console.error(`transcribeAudio: Error - ${errorMessage}`);
-
-      if (response.status === 503 && errorMessage.includes('Failed to upload audio to GCS')) {
-        throw new Error('Failed to upload audio to Google Cloud Storage. Please try again.');
-      }
-      if (response.status === 500 && errorMessage.includes('Google Cloud API key is missing')) {
-        throw new Error('Google Cloud API key is missing. Contact support.');
-      }
-      if (response.status === 400 && errorMessage.includes('User ID is required')) {
-        throw new Error('User ID is required for transcription.');
-      }
-      throw new Error(errorMessage);
-    }
-
     const data = await response.json();
     !isProduction && console.log('transcribeAudio: Response:', data);
 
-    const { transcription, languageCode: returnedLanguageCode, detectedLanguage, audioUrl, translatedText } = data;
+    const { transcription, languageCode: returnedLanguageCode, detectedLanguage, audioUrl, translatedText, warning } = data;
 
     if (!transcription || !audioUrl) {
       !isProduction && console.warn('transcribeAudio: Incomplete response:', data);
@@ -70,6 +79,7 @@ async function transcribeAudio(audioBlob, languageCode = 'en-US', userId) {
         detectedLanguage: detectedLanguage || languageCode.split('-')[0],
         audioUrl: audioUrl || null,
         translatedText: translatedText || transcription || '[Transcription unavailable]',
+        warning: warning || 'Incomplete response from server',
       };
     }
 
@@ -85,6 +95,7 @@ async function transcribeAudio(audioBlob, languageCode = 'en-US', userId) {
       detectedLanguage: detectedLanguage || languageCode.split('-')[0],
       audioUrl,
       translatedText: translatedText || transcription,
+      warning,
     };
   } catch (error) {
     !isProduction && console.error(`transcribeAudio: Error - ${error.message}`);
@@ -103,7 +114,7 @@ async function detectLanguage(text, userId) {
   !isProduction && console.log(`detectLanguage: Detecting for text="${truncate(text)}"`);
 
   try {
-    const response = await fetch(`${API_BASE_URL}/audio/translate`, {
+    const response = await fetchWithRetry(`${API_BASE_URL}/audio/translate`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -113,15 +124,8 @@ async function detectLanguage(text, userId) {
       credentials: 'include',
     });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      const errorMessage = errorText || 'Unknown server error';
-      !isProduction && console.error(`detectLanguage: Error - ${response.status}: ${errorMessage}`);
-      throw new Error(`Language detection failed: ${errorMessage}`);
-    }
-
-    const { detectedSourceLanguage } = await response.json();
-    const detectedLang = detectedSourceLanguage || 'en';
+    const data = await response.json();
+    const detectedLang = data.detectedSourceLanguage || 'en'; // Adjust based on API response structure
     !isProduction && console.log(`detectLanguage: Detected language="${detectedLang}"`);
     return detectedLang;
   } catch (error) {
@@ -171,7 +175,7 @@ async function translateText(text, sourceLanguageCode, targetLanguageCode, userI
       return text;
     }
 
-    const response = await fetch(`${API_BASE_URL}/audio/translate`, {
+    const response = await fetchWithRetry(`${API_BASE_URL}/audio/translate`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -184,13 +188,6 @@ async function translateText(text, sourceLanguageCode, targetLanguageCode, userI
       }),
       credentials: 'include',
     });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      const errorMessage = errorText || 'Unknown server error';
-      !isProduction && console.error(`translateText: Error - ${response.status}: ${errorMessage}`);
-      throw new Error(`Translation failed: ${errorMessage}`);
-    }
 
     const { translatedText } = await response.json();
     !isProduction && console.log(`translateText: Translated text="${truncate(translatedText)}"`);
@@ -217,7 +214,7 @@ async function textToSpeechConvert(text, languageCode = 'en-US', userId) {
 
   try {
     const normalizedLanguageCode = languageCode.toLowerCase().startsWith('kn') ? 'kn-IN' : 'en-US';
-    const response = await fetch(`${API_BASE_URL}/audio/text-to-speech`, {
+    const response = await fetchWithRetry(`${API_BASE_URL}/audio/text-to-speech`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -226,16 +223,6 @@ async function textToSpeechConvert(text, languageCode = 'en-US', userId) {
       body: JSON.stringify({ text, language: normalizedLanguageCode }),
       credentials: 'include',
     });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      const errorMessage = errorText || 'Unknown server error';
-      !isProduction && console.error(`textToSpeechConvert: Error - ${response.status}: ${errorMessage}`);
-      if (response.status === 503 && errorMessage.includes('Failed to upload audio to GCS')) {
-        throw new Error('Failed to upload text-to-speech audio to Google Cloud Storage. Please try again.');
-      }
-      throw new Error(`Text-to-speech failed: ${errorMessage}`);
-    }
 
     const { audioUrl } = await response.json();
     if (!audioUrl) {
