@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { collection, query, where, onSnapshot, getDocs, doc, getDoc } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, getDocs, doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../services/firebase.js';
 import Pusher from 'pusher-js';
 import { transcribeAudio, translateText, textToSpeechConvert } from '../services/speech.js';
@@ -34,6 +34,7 @@ function DoctorChat({ user, role, handleLogout }) {
   const [showActionModal, setShowActionModal] = useState(false);
   const [actionType, setActionType] = useState('');
   const [patientMessageTimestamps, setPatientMessageTimestamps] = useState({});
+  const [acceptedPatients, setAcceptedPatients] = useState({}); // Track accepted patients
   const audioRef = useRef(new Audio());
   const messagesEndRef = useRef(null);
   const audioChunksRef = useRef([]);
@@ -117,20 +118,39 @@ function DoctorChat({ user, role, handleLogout }) {
     return () => unsubscribe();
   }, [doctorId, selectedPatientId]);
 
+  // Fetch Accepted Patients Status
+  useEffect(() => {
+    if (!doctorId) return;
+
+    const fetchAcceptedPatients = async () => {
+      try {
+        const acceptedRef = doc(db, 'doctor_accepted_patients', doctorId);
+        const acceptedDoc = await getDoc(acceptedRef);
+        if (acceptedDoc.exists()) {
+          setAcceptedPatients(acceptedDoc.data().accepted || {});
+        }
+      } catch (err) {
+        console.error('Failed to fetch accepted patients:', err.message);
+      }
+    };
+
+    fetchAcceptedPatients();
+  }, [doctorId]);
+
   // Pusher and Data Fetching
   useEffect(() => {
     if (!selectedPatientId || !user?.uid || !doctorId) return;
 
     // Initialize Pusher
-     const pusher = new Pusher(process.env.REACT_APP_PUSHER_APP_ID || '2ed44c3ce3ef227d9924', {
-        cluster: process.env.REACT_APP_PUSHER_CLUSTER || 'ap2',
-         authEndpoint: `${apiBaseUrl}/pusher/auth`,
-         auth: {
-            headers: {
-                 'x-user-uid': user.uid,
-             },
-         },
-     });
+    const pusher = new Pusher(process.env.REACT_APP_PUSHER_APP_ID || '2ed44c3ce3ef227d9924', {
+      cluster: process.env.REACT_APP_PUSHER_CLUSTER || 'ap2',
+      authEndpoint: `${apiBaseUrl}/pusher/auth`,
+      auth: {
+        headers: {
+          'x-user-uid': user.uid,
+        },
+      },
+    });
 
     // Subscribe to the chat channel
     const channel = pusher.subscribe(`chat-${selectedPatientId}-${doctorId}`);
@@ -260,6 +280,19 @@ function DoctorChat({ user, role, handleLogout }) {
     const assignmentTime = new Date(patientAssignment.timestamp);
     const hoursSinceAssignment = (now - assignmentTime) / (1000 * 60 * 60);
 
+    // Check if patient has been accepted
+    if (acceptedPatients[selectedPatientId]) {
+      const lastMessageTime = timestamps?.lastMessageTime ? new Date(timestamps.lastMessageTime) : null;
+      const hoursSinceLastMessage = lastMessageTime ? (now - lastMessageTime) / (1000 * 60 * 60) : Infinity;
+      if (hoursSinceLastMessage >= 168) {
+        // 7 days have passed since last message, prompt again
+        setDiagnosisPrompt(selectedPatientId);
+      } else {
+        setDiagnosisPrompt(null);
+      }
+      return;
+    }
+
     if (!timestamps || !timestamps.firstMessageTime) {
       if (hoursSinceAssignment <= 24) {
         setDiagnosisPrompt(selectedPatientId);
@@ -277,7 +310,7 @@ function DoctorChat({ user, role, handleLogout }) {
     } else {
       setDiagnosisPrompt(null);
     }
-  }, [selectedPatientId, patients, patientMessageTimestamps]);
+  }, [selectedPatientId, patients, patientMessageTimestamps, acceptedPatients]);
 
   const handleDiagnosisDecision = useCallback(
     async (accept) => {
@@ -286,7 +319,28 @@ function DoctorChat({ user, role, handleLogout }) {
         return;
       }
       if (accept) {
-        setDiagnosisPrompt(null);
+        // Store acceptance status in Firestore
+        try {
+          const acceptedRef = doc(db, 'doctor_accepted_patients', doctorId);
+          await setDoc(
+            acceptedRef,
+            {
+              accepted: {
+                ...acceptedPatients,
+                [selectedPatientId]: true,
+              },
+            },
+            { merge: true }
+          );
+          setAcceptedPatients((prev) => ({
+            ...prev,
+            [selectedPatientId]: true,
+          }));
+          setDiagnosisPrompt(null);
+        } catch (err) {
+          setError(`Failed to accept patient: ${err.message}`);
+          console.error('Accept patient error:', err);
+        }
       } else {
         const message = {
           sender: 'doctor',
@@ -323,7 +377,7 @@ function DoctorChat({ user, role, handleLogout }) {
         }
       }
     },
-    [selectedPatientId, languagePreference, doctorId, user.uid, apiBaseUrl]
+    [selectedPatientId, languagePreference, doctorId, user.uid, apiBaseUrl, acceptedPatients]
   );
 
   const retryUpload = useCallback(
@@ -574,7 +628,7 @@ function DoctorChat({ user, role, handleLogout }) {
           return prev;
         });
 
-        // Update patient record (assuming /api/patients/:patientId exists)
+        // Update patient record
         await fetch(`${apiBaseUrl}/patients/${selectedPatientId}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
@@ -658,27 +712,15 @@ function DoctorChat({ user, role, handleLogout }) {
     );
   }, []);
 
-  const onLogout = async () => {
+  const onLogout = useCallback(async () => {
     try {
-      const response = await fetch(`${apiBaseUrl}/misc/logout`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
-        credentials: 'include',
-      });
-
-      if (!response.ok) {
-        throw new Error(`Logout failed: ${response.statusText}`);
-      }
+      await handleLogout();
+      navigate('/login');
     } catch (err) {
       setError(`Failed to log out: ${err.message}`);
       console.error('Logout error:', err);
-    } finally {
-      if (handleLogout) {
-        handleLogout();
-      }
-      navigate('/login');
     }
-  };
+  }, [handleLogout, navigate]);
 
   // Memoize patient list rendering to prevent unnecessary re-renders
   const patientList = useMemo(() => (
@@ -803,9 +845,9 @@ function DoctorChat({ user, role, handleLogout }) {
                       >
                         <div className="message-content">
                           {msg.sender === 'patient' && (
-                            <>
-                              {(msg.recordingLanguage || msg.language) === 'en' ? (
-                                <div className="message-block">
+                            <div className="message-block">
+                              {languagePreference === 'en' ? (
+                                <>
                                   <p className="primary-text">{msg.text || 'No transcription'}</p>
                                   {msg.audioUrl && (
                                     <div className="audio-container">
@@ -813,9 +855,6 @@ function DoctorChat({ user, role, handleLogout }) {
                                         <source src={msg.audioUrl} type="audio/webm" />
                                         Your browser does not support the audio element.
                                       </audio>
-                                      <a href={msg.audioUrl} download className="download-link">
-                                        Download Audio
-                                      </a>
                                     </div>
                                   )}
                                   {msg.audioUrlEn && (
@@ -829,9 +868,14 @@ function DoctorChat({ user, role, handleLogout }) {
                                       </button>
                                     </div>
                                   )}
-                                </div>
+                                  {msg.audioUrl && (
+                                    <a href={msg.audioUrl} download className="download-link">
+                                      Download Audio
+                                    </a>
+                                  )}
+                                </>
                               ) : (
-                                <div className="message-block">
+                                <>
                                   <p className="primary-text">{msg.text || 'No transcription'}</p>
                                   {msg.translatedText && (
                                     <p className="translated-text">English: {msg.translatedText}</p>
@@ -842,9 +886,6 @@ function DoctorChat({ user, role, handleLogout }) {
                                         <source src={msg.audioUrl} type="audio/webm" />
                                         Your browser does not support the audio element.
                                       </audio>
-                                      <a href={msg.audioUrl} download className="download-link">
-                                        Download Audio
-                                      </a>
                                     </div>
                                   )}
                                   {(msg.audioUrlEn || msg.audioUrlKn) && (
@@ -860,9 +901,7 @@ function DoctorChat({ user, role, handleLogout }) {
                                       )}
                                       {msg.audioUrlEn && (
                                         <button
-                                          onClick={() =>
-                                            readAloud(msg.audioUrlEn, 'en', msg.translatedText || msg.text)
-                                          }
+                                          onClick={() => readAloud(msg.audioUrlEn, 'en', msg.translatedText || msg.text)}
                                           className="read-aloud-button"
                                           aria-label="Read aloud in English"
                                         >
@@ -871,21 +910,26 @@ function DoctorChat({ user, role, handleLogout }) {
                                       )}
                                     </div>
                                   )}
-                                </div>
+                                  {msg.audioUrl && (
+                                    <a href={msg.audioUrl} download className="download-link">
+                                      Download Audio
+                                    </a>
+                                  )}
+                                </>
                               )}
-                            </>
+                            </div>
                           )}
                           {msg.sender === 'doctor' && (
                             <div className="message-block">
                               {msg.text && (
                                 <>
-                                  {languagePreference === 'en' ? (
-                                    <p className="primary-text">{msg.text}</p>
-                                  ) : (
+                                  {languagePreference === 'kn' ? (
                                     <>
                                       <p className="primary-text">{msg.translatedText || msg.text}</p>
-                                      {msg.text && <p className="translated-text">English: {msg.text}</p>}
+                                      <p className="translated-text">English: {msg.text}</p>
                                     </>
+                                  ) : (
+                                    <p className="primary-text">{msg.text}</p>
                                   )}
                                   {msg.audioUrl && (
                                     <div className="audio-container">
@@ -893,14 +937,11 @@ function DoctorChat({ user, role, handleLogout }) {
                                         <source src={msg.audioUrl} type="audio/webm" />
                                         Your browser does not support the audio element.
                                       </audio>
-                                      <a href={msg.audioUrl} download className="download-link">
-                                        Download Audio
-                                      </a>
                                     </div>
                                   )}
                                   {(msg.audioUrlEn || msg.audioUrlKn) && (
                                     <div className="read-aloud-buttons">
-                                      {msg.audioUrlKn && (
+                                      {msg.audioUrlKn && languagePreference === 'kn' && (
                                         <button
                                           onClick={() => readAloud(msg.audioUrlKn, 'kn', msg.translatedText || msg.text)}
                                           className="read-aloud-button"
@@ -919,6 +960,11 @@ function DoctorChat({ user, role, handleLogout }) {
                                         </button>
                                       )}
                                     </div>
+                                  )}
+                                  {msg.audioUrl && (
+                                    <a href={msg.audioUrl} download className="download-link">
+                                      Download Audio
+                                    </a>
                                   )}
                                 </>
                               )}
