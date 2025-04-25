@@ -607,18 +607,18 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         formData.append('message', JSON.stringify(message));
 
         const idToken = await firebaseUser.getIdToken(true);
-        const response = await fetch(`${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`, {
+        const saveResponse = await fetch(`${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`, {
           method: 'POST',
           headers: { 'x-user-uid': effectiveUserId, Authorization: `Bearer ${idToken}` },
           body: formData,
           credentials: 'include',
         });
 
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(`Failed to save message: ${response.statusText} - ${errorData.error.message}`);
+        if (!saveResponse.ok) {
+          const errorData = await saveResponse.json();
+          throw new Error(`Failed to save message: ${saveResponse.statusText} - ${errorData.error.message}`);
         }
-        const data = await response.json();
+        const data = await saveResponse.json();
         setMessages((prev) => [...prev, data.newMessage].sort((a, b) => a.timestamp.localeCompare(b.timestamp)));
       } catch (err) {
         attempts--;
@@ -1961,7 +1961,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           font-size: 1rem;
           font-weight: 500;
           cursor: pointer;
-          transition: background 0.3s ease, transform 0.3s ease;
+          transition: background 0.3s ease, transform培育 0.3s ease;
         }
 
         .image-upload:hover {
