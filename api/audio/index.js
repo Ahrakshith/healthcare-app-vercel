@@ -1,9 +1,12 @@
 import { Storage } from '@google-cloud/storage';
 import { SpeechClient } from '@google-cloud/speech';
 import { TextToSpeechClient } from '@google-cloud/text-to-speech';
-import { Translate } from '@google-cloud/translate';
+import pkg from '@google-cloud/translate';
 import admin from 'firebase-admin';
 import multer from 'multer';
+
+// Destructure Translate from the default export
+const { Translate } = pkg;
 
 // Log the start of the file execution
 console.log('Loading /api/audio/index.js');
