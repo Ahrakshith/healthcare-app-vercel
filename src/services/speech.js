@@ -24,17 +24,25 @@ const fetchWithRetry = async (url, options, maxRetries = 3, backoff = 1000) => {
         }
         !isProduction && console.error(`fetchWithRetry: Error on attempt ${attempt} - ${errorMessage}`);
 
-        if (response.status === 503 && attempt < maxRetries) {
+        // Retry on 503 (Service Unavailable) or 429 (Too Many Requests)
+        if ((response.status === 503 || response.status === 429) && attempt < maxRetries) {
           const delay = backoff * Math.pow(2, attempt - 1);
-          !isProduction && console.log(`fetchWithRetry: Retrying in ${delay}ms due to 503...`);
+          !isProduction && console.log(`fetchWithRetry: Retrying in ${delay}ms due to ${response.status}...`);
           await new Promise((resolve) => setTimeout(resolve, delay));
           continue;
         }
-        throw new Error(errorMessage);
+        // Include 404 in the error message for better debugging
+        throw new Error(`${errorMessage} (Status: ${response.status})`);
       }
       return response;
     } catch (error) {
-      if (attempt === maxRetries) throw error;
+      if (attempt === maxRetries) {
+        !isProduction && console.error(`fetchWithRetry: All ${maxRetries} attempts failed for ${url}: ${error.message}`);
+        throw error;
+      }
+      const delay = backoff * Math.pow(2, attempt - 1);
+      !isProduction && console.log(`fetchWithRetry: Network error, retrying in ${delay}ms...`);
+      await new Promise((resolve) => setTimeout(resolve, delay));
     }
   }
 };
@@ -222,7 +230,7 @@ async function textToSpeechConvert(text, languageCode = 'en-US', userId) {
   const normalizedLanguageCode = normalizeLanguageCode(languageCode);
   !isProduction &&
     console.log(
-      `textToSpeechConvert: Converting text="${truncate(text)}" with languageCode=${normalizedLanguageCode}`
+      `textToSpeechConvert: Converting text="${truncate(text)}" with languageCode=${normalizedLanguageCode}, uid=${userId}`
     );
 
   try {
@@ -240,10 +248,16 @@ async function textToSpeechConvert(text, languageCode = 'en-US', userId) {
     if (!audioUrl) {
       throw new Error('Text-to-speech response missing audioUrl.');
     }
-    !isProduction && console.log(`textToSpeechConvert: Audio URL="${audioUrl}"`);
+    !isProduction && console.log(`textToSpeechConvert: Success - Audio URL="${audioUrl}"`);
     return audioUrl;
   } catch (error) {
     !isProduction && console.error(`textToSpeechConvert: Error - ${error.message}`);
+    // Provide more specific error messages for common issues
+    if (error.message.includes('404')) {
+      throw new Error('Text-to-speech endpoint not found (404). Please check if the server is deployed correctly.');
+    } else if (error.message.includes('503')) {
+      throw new Error('Text-to-speech service unavailable (503). Please try again later.');
+    }
     throw new Error(`Text-to-speech conversion failed: ${error.message}`);
   }
 }
