@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { auth as firebaseAuth, db } from './services/firebase.js';
 import Login from './components/Login.js';
@@ -13,11 +13,14 @@ import './components/patient.css';
 
 // Custom 404 Component
 const NotFound = () => {
+  const location = useLocation();
   return (
     <div className="not-found-container">
       <h2>404 - Page Not Found</h2>
-      <p>The requested path does not exist.</p>
-      <p>Go to <a href="/login">Login</a></p>
+      <p>The requested path "{location.pathname}" does not exist.</p>
+      <p>
+        Go to <a href="/login">Login</a>
+      </p>
       <style>{`
         .not-found-container {
           min-height: 100vh;
@@ -62,12 +65,12 @@ function App() {
   useEffect(() => {
     const unsubscribeAuth = firebaseAuth.onAuthStateChanged(async (authUser) => {
       if (authUser) {
-        setFirebaseUser(authUser); // Store Firebase Auth user
-        const userId = authUser.uid;
         if (process.env.NODE_ENV !== 'production') {
-          console.log('App.js: Authenticated user detected, UID:', userId);
+          console.log('App.js: Authenticated user detected, UID:', authUser.uid);
         }
+        setFirebaseUser(authUser); // Store Firebase Auth user
 
+        const userId = authUser.uid;
         const userRef = doc(db, 'users', userId);
         const unsubscribeFirestore = onSnapshot(
           userRef,
@@ -90,16 +93,16 @@ function App() {
               if (userData.role === 'patient') {
                 const pid = userData.patientId || userId;
                 setPatientId(pid);
-                localStorage.setItem('patientId', pid);
+                sessionStorage.setItem('patientId', pid); // Use sessionStorage instead of localStorage
                 if (process.env.NODE_ENV !== 'production') {
                   console.log(`App.js: Set patientId=${pid} for patient role`);
                 }
               } else {
                 setPatientId(null);
-                localStorage.removeItem('patientId');
+                sessionStorage.removeItem('patientId');
               }
 
-              localStorage.setItem('userId', userId);
+              sessionStorage.setItem('userId', userId); // Use sessionStorage instead of localStorage
               setLoading(false);
             } else {
               if (process.env.NODE_ENV !== 'production') {
@@ -132,21 +135,21 @@ function App() {
     setUser(null);
     setRole(null);
     setPatientId(null);
-    localStorage.removeItem('userId');
-    localStorage.removeItem('patientId');
+    sessionStorage.removeItem('userId');
+    sessionStorage.removeItem('patientId');
     setLoading(false);
   };
 
   const handleLogout = async () => {
     if (process.env.NODE_ENV !== 'production') {
-      console.log('App.js: Initiating logout');
+      console.log('App.js: Initiating logout for current tab');
     }
     try {
-      await firebaseAuth.signOut();
-      if (process.env.NODE_ENV !== 'production') {
-        console.log('App.js: User logged out successfully from Firebase');
-      }
+      // Clear local state only for the current tab
       handleAuthFailure();
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('App.js: Local state cleared successfully');
+      }
     } catch (err) {
       console.error('App.js: Logout error:', err.message);
       setError(`Failed to log out: ${err.message}`);

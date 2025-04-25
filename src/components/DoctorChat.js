@@ -34,7 +34,7 @@ function DoctorChat({ user, role, handleLogout }) {
   const [showActionModal, setShowActionModal] = useState(false);
   const [actionType, setActionType] = useState('');
   const [patientMessageTimestamps, setPatientMessageTimestamps] = useState({});
-  const [acceptedPatients, setAcceptedPatients] = useState({}); // Track accepted patients
+  const [acceptedPatients, setAcceptedPatients] = useState({});
   const audioRef = useRef(new Audio());
   const messagesEndRef = useRef(null);
   const audioChunksRef = useRef([]);
@@ -232,7 +232,12 @@ function DoctorChat({ user, role, handleLogout }) {
     // Fetch missed dose alerts
     const fetchMissedDoseAlerts = async () => {
       try {
-        const response = await fetch(`${apiBaseUrl}/admin`, {
+        const url = new URL(`${apiBaseUrl}/admin`);
+        url.searchParams.append('patientId', selectedPatientId);
+        url.searchParams.append('doctorId', doctorId);
+
+        const response = await fetch(url, {
+          method: 'GET',
           headers: { 'x-user-uid': user.uid },
           credentials: 'include',
         });
@@ -242,7 +247,8 @@ function DoctorChat({ user, role, handleLogout }) {
           throw new Error(`HTTP ${response.status}: ${errorText || 'Failed to fetch alerts'}`);
         }
 
-        const notifications = await response.json();
+        const data = await response.json();
+        const notifications = data.alerts || [];
         if (!Array.isArray(notifications)) {
           throw new Error('Invalid response format: Expected an array of notifications');
         }
@@ -363,7 +369,7 @@ function DoctorChat({ user, role, handleLogout }) {
           const response = await fetch(`${apiBaseUrl}/chats/${selectedPatientId}/${doctorId}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
-            body: JSON.stringify(message),
+            body: JSON.stringify({ message }), // Wrap in "message" object as expected by backend
             credentials: 'include',
           });
           if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`);
@@ -475,7 +481,7 @@ function DoctorChat({ user, role, handleLogout }) {
           const response = await fetch(`${apiBaseUrl}/chats/${selectedPatientId}/${doctorId}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
-            body: JSON.stringify(message),
+            body: JSON.stringify({ message }), // Wrap in "message" object
             credentials: 'include',
           });
           if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`);
@@ -499,7 +505,7 @@ function DoctorChat({ user, role, handleLogout }) {
       setError(`Failed to start recording: ${err.message}`);
       console.error('Recording error:', err);
     }
-  }, [selectedPatientId, languagePreference, user.uid, apiBaseUrl]);
+  }, [selectedPatientId, languagePreference, user.uid, apiBaseUrl, doctorId]);
 
   const stopRecording = useCallback(() => {
     if (mediaRecorder) {
@@ -544,7 +550,7 @@ function DoctorChat({ user, role, handleLogout }) {
       const response = await fetch(`${apiBaseUrl}/chats/${selectedPatientId}/${doctorId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
-        body: JSON.stringify(message),
+        body: JSON.stringify({ message }), // Wrap in "message" object
         credentials: 'include',
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`);
@@ -565,8 +571,8 @@ function DoctorChat({ user, role, handleLogout }) {
 
   const sendAction = useCallback(
     async () => {
-      if (!selectedPatientId) {
-        setError('No patient selected.');
+      if (!selectedPatientId || !doctorId) {
+        setError('No patient selected or doctor ID missing.');
         return;
       }
 
@@ -616,7 +622,7 @@ function DoctorChat({ user, role, handleLogout }) {
         const chatResponse = await fetch(`${apiBaseUrl}/chats/${selectedPatientId}/${doctorId}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
-          body: JSON.stringify(message),
+          body: JSON.stringify({ message }), // Wrap in "message" object
           credentials: 'include',
         });
         if (!chatResponse.ok) throw new Error(`HTTP ${chatResponse.status}: ${await chatResponse.text()}`);
@@ -645,7 +651,12 @@ function DoctorChat({ user, role, handleLogout }) {
         const disease = actionType === 'Prescription' ? messages
           .filter((msg) => msg.sender === 'doctor' && msg.diagnosis)
           .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0]?.diagnosis : diagnosis;
-        const adminResponse = await fetch(`${apiBaseUrl}/admin`, {
+
+        const adminUrl = new URL(`${apiBaseUrl}/admin`);
+        adminUrl.searchParams.append('patientId', selectedPatientId);
+        adminUrl.searchParams.append('doctorId', doctorId);
+
+        const adminResponse = await fetch(adminUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
           body: JSON.stringify({
