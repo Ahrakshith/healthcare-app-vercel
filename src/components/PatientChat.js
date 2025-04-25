@@ -1,3 +1,54 @@
+Based on the provided Vercel logs and the `PatientChat.js` code you shared for Vercel deployment, the primary issues are:
+
+1. **HTTP 400 Bad Request** and **HTTP 404 Not Found** errors when interacting with the `/api/chats/xxh3zc/j7akqc` endpoint.
+2. **Invalid sender type** error in the backend (`/api/chats/[patientId]/[doctorId].js`), indicating that the `sender` field is either missing or not properly validated.
+3. **Environment-specific issues** between local and Vercel deployments, particularly with API URLs and WebSocket configurations.
+
+The logs suggest that the `sender` field is `undefined` during file upload processing (likely in `handleImageUpload` or audio uploads in `startRecording`/`stopRecording`). Additionally, the `404` error indicates that the chat resource may not exist or the endpoint is misconfigured. The provided `PatientChat.js` for Vercel uses `process.env.REACT_APP_API_URL` and Firebase authentication, which is an improvement over the local version, but it still needs fixes to address the errors.
+
+Below, I’ll provide an updated version of `PatientChat.js` that incorporates fixes for these issues, along with detailed explanations of the changes. The updated code will:
+- Ensure the `sender` field is included in all relevant API requests (e.g., image and audio uploads).
+- Handle `404` errors gracefully by initializing empty chat states.
+- Improve error logging and retry logic for robustness.
+- Use environment variables consistently for API and WebSocket URLs.
+- Add defensive checks to prevent `undefined` values from breaking the backend.
+
+---
+
+### Key Changes in the Updated Code
+
+1. **Add `sender` to `FormData` in `handleImageUpload`**:
+   - The `handleImageUpload` function now includes `sender: 'patient'` in the `FormData` to match the backend’s expected format, addressing the `Invalid sender type` error.
+
+2. **Handle `404` Errors in `fetchMessages`**:
+   - The `fetchMessages` function now explicitly handles `404` errors by setting an empty messages array, preventing the app from breaking if the chat resource doesn’t exist.
+
+3. **Improve `startRecording` and `stopRecording`**:
+   - Ensure the `sender` field is included in the `FormData` for audio uploads.
+   - Add logging to trace the request body and response for debugging.
+
+4. **Consistent API URL Usage**:
+   - Use `apiBaseUrl` consistently for all API calls, ensuring compatibility with Vercel’s environment variables.
+
+5. **Enhanced Error Logging**:
+   - Add detailed console logs for API requests and responses to help debug issues in Vercel logs.
+   - Log the `FormData` contents before sending to verify the `sender` field.
+
+6. **WebSocket (Pusher) Robustness**:
+   - Add error handling for Pusher connection failures to prevent silent failures.
+   - Log connection status and message receipts.
+
+7. **Chat Resource Initialization**:
+   - Add a fallback in `fetchMessages` to handle cases where the chat resource is missing, setting an empty messages array.
+
+8. **Retry Logic for Uploads**:
+   - Enhance the `retryUpload` function to log retry attempts and include the `sender` field in retries.
+
+---
+
+### Updated `PatientChat.js`
+
+```javascript
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Pusher from 'pusher-js';
@@ -42,6 +93,8 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   const effectiveUserId = user?.uid || '';
   const effectivePatientId = urlPatientId || patientId || '';
   const apiBaseUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
+  const pusherKey = process.env.REACT_APP_PUSHER_KEY || 'your-pusher-key';
+  const pusherCluster = process.env.REACT_APP_PUSHER_CLUSTER || 'ap2';
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -162,12 +215,17 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   useEffect(() => {
     if (!languagePreference) return;
 
-    pusherRef.current = new Pusher(process.env.REACT_APP_PUSHER_KEY || 'your-pusher-key', {
-      cluster: process.env.REACT_APP_PUSHER_CLUSTER || 'ap2',
+    pusherRef.current = new Pusher(pusherKey, {
+      cluster: pusherCluster,
       authEndpoint: `${apiBaseUrl}/pusher/auth`,
       auth: {
         headers: { 'x-user-uid': effectiveUserId },
       },
+    });
+
+    pusherRef.current.connection.bind('error', (err) => {
+      console.error('Pusher connection error:', err);
+      setError('Failed to connect to real-time messaging. Please refresh the page.');
     });
 
     const channel = pusherRef.current.subscribe(`chat-${effectivePatientId}-${doctorId}`);
@@ -196,6 +254,10 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
 
     const fetchMessages = async () => {
       try {
+        console.log('Fetching messages:', {
+          url: `${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`,
+          userId: effectiveUserId,
+        });
         const idToken = await firebaseUser.getIdToken(true);
         const response = await fetch(`${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`, {
           headers: {
@@ -206,10 +268,12 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         });
         if (!response.ok) {
           if (response.status === 404) {
-            setError('Chat assignment not found. Please ensure the doctor is assigned.');
-          } else {
-            throw new Error(`Failed to fetch messages: ${response.statusText}`);
+            console.log('Chat not found, initializing empty chat');
+            setMessages([]);
+            return;
           }
+          const errorData = await response.json();
+          throw new Error(`Failed to fetch messages: ${response.statusText} - ${errorData.error?.message || 'Unknown error'}`);
         }
         const data = await response.json();
         const fetchedMessages = data.messages || [];
@@ -246,6 +310,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           validatePrescription(latestDiagnosis, latestPrescription, 'latest');
         }
       } catch (err) {
+        console.error('Error fetching messages:', err);
         setError(`Error fetching messages: ${err.message}`);
       }
     };
@@ -259,7 +324,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         console.log('PatientChat.js: Pusher disconnected');
       }
     };
-  }, [effectiveUserId, effectivePatientId, doctorId, languagePreference, apiBaseUrl, firebaseUser]);
+  }, [effectiveUserId, effectivePatientId, doctorId, languagePreference, apiBaseUrl, firebaseUser, pusherKey, pusherCluster]);
 
   const normalizeLanguageCode = useCallback((code) => {
     switch (code?.toLowerCase()) {
@@ -585,6 +650,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
 
     const attemptRetry = async () => {
       try {
+        console.log('Retrying upload with:', { language, audioBlobSize: audioBlob.size });
         const transcriptionResult = await transcribeAudio(audioBlob, language, effectiveUserId);
         if (!transcriptionResult.audioUrl) {
           throw new Error('Transcription succeeded, but no audio URL was returned.');
@@ -611,6 +677,12 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         const formData = new FormData();
         formData.append('audio', audioBlob, `audio_${new Date().toISOString()}.webm`);
         formData.append('message', JSON.stringify(message));
+        formData.append('sender', 'patient'); // Ensure sender is included
+
+        console.log('Sending retry upload:', {
+          url: `${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`,
+          message,
+        });
 
         const idToken = await firebaseUser.getIdToken(true);
         const saveResponse = await fetch(`${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`, {
@@ -622,11 +694,12 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
 
         if (!saveResponse.ok) {
           const errorData = await saveResponse.json();
-          throw new Error(`Failed to save message: ${saveResponse.statusText} - ${errorData.error.message}`);
+          throw new Error(`Failed to save message: ${saveResponse.statusText} - ${errorData.error?.message || 'Unknown error'}`);
         }
         const data = await saveResponse.json();
         setMessages((prev) => [...prev, data.newMessage].sort((a, b) => a.timestamp.localeCompare(b.timestamp)));
       } catch (err) {
+        console.error('Retry upload failed:', err);
         attempts--;
         if (attempts > 0) {
           setError(`Retrying upload... (Attempts remaining: ${attempts})`);
@@ -693,6 +766,13 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           const formData = new FormData();
           formData.append('audio', audioBlob, `audio_${new Date().toISOString()}.webm`);
           formData.append('message', JSON.stringify(message));
+          formData.append('sender', 'patient'); // Ensure sender is included
+
+          console.log('Sending audio message:', {
+            url: `${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`,
+            message,
+            audioSize: audioBlob.size,
+          });
 
           const idToken = await firebaseUser.getIdToken(true);
           const response = await fetch(`${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`, {
@@ -704,20 +784,21 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
 
           if (!response.ok) {
             const errorData = await response.json();
-            throw new Error(`Failed to save message: ${response.statusText} - ${errorData.error.message}`);
+            throw new Error(`Failed to save message: ${response.statusText} - ${errorData.error?.message || 'Unknown error'}`);
           }
           const data = await response.json();
           setMessages((prev) => [...prev, data.newMessage].sort((a, b) => a.timestamp.localeCompare(b.timestamp)));
         } catch (err) {
+          console.error('Audio processing failed:', err);
           setError(`Failed to process audio: ${err.message}`);
           setFailedUpload({ audioBlob, language: normalizedTranscriptionLanguage });
-          return;
         }
       };
 
       recorder.start();
       setRecording(true);
     } catch (err) {
+      console.error('Error starting recording:', err);
       setError(`Error starting recording: ${err.message}`);
     }
   };
@@ -777,6 +858,13 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     const formData = new FormData();
     formData.append('image', file);
     formData.append('message', JSON.stringify(message));
+    formData.append('sender', 'patient'); // Ensure sender is included
+
+    console.log('Uploading image:', {
+      url: `${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`,
+      message,
+      file: { name: file.name, type: file.type, size: file.size },
+    });
 
     try {
       const idToken = await firebaseUser.getIdToken(true);
@@ -789,7 +877,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
 
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(`Image upload failed: ${response.statusText} - ${errorData.error.message}`);
+        throw new Error(`Image upload failed: ${response.statusText} - ${errorData.error?.message || 'Unknown error'}`);
       }
 
       const data = await response.json();
@@ -799,6 +887,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
 
       setMessages((prev) => [...prev, data.newMessage].sort((a, b) => a.timestamp.localeCompare(b.timestamp)));
     } catch (err) {
+      console.error('Image upload failed:', err);
       setError(err.message);
       setFailedUpload({ file, type: 'image' });
     }
@@ -815,6 +904,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       audioRef.current.src = audioToPlay;
       audioRef.current.play();
     } catch (err) {
+      console.error('Error reading aloud:', err);
       setError(`Error reading aloud: ${err.message}`);
     }
   };
@@ -843,6 +933,10 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     setTextInput('');
 
     try {
+      console.log('Sending text message:', {
+        url: `${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`,
+        message,
+      });
       const idToken = await firebaseUser.getIdToken(true);
       const response = await fetch(`${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`, {
         method: 'POST',
@@ -856,7 +950,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       });
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(`Failed to save text message: ${response.statusText} - ${errorData.error.message}`);
+        throw new Error(`Failed to save text message: ${response.statusText} - ${errorData.error?.message || 'Unknown error'}`);
       }
       const data = await response.json();
       setMessages((prev) =>
@@ -865,6 +959,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         )
       );
     } catch (err) {
+      console.error('Failed to save text message:', err);
       setError(`Failed to save text message: ${err.message}`);
     }
   };
@@ -890,6 +985,10 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     });
 
     try {
+      console.log('Sending quick reply:', {
+        url: `${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`,
+        message,
+      });
       const idToken = await firebaseUser.getIdToken(true);
       const response = await fetch(`${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`, {
         method: 'POST',
@@ -903,7 +1002,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       });
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(`Failed to save quick reply message: ${response.statusText} - ${errorData.error.message}`);
+        throw new Error(`Failed to save quick reply message: ${response.statusText} - ${errorData.error?.message || 'Unknown error'}`);
       }
       const data = await response.json();
       setMessages((prev) =>
@@ -912,6 +1011,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         )
       );
     } catch (err) {
+      console.error('Failed to save quick reply:', err);
       setError(`Failed to save quick reply message: ${err.message}`);
     }
   };
@@ -1991,6 +2091,9 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           color: #FFFFFF;
           transition: border-color 0.3s ease, box-shadow 0.3s ease;
         }
+
+
+
 
         .text-input-container input:focus {
           outline: none;
