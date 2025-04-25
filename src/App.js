@@ -55,8 +55,8 @@ const NotFound = () => {
 };
 
 function App() {
-  const [firebaseUser, setFirebaseUser] = useState(null); // Firebase Auth user
-  const [user, setUser] = useState(null); // Combined user data
+  const [firebaseUser, setFirebaseUser] = useState(null);
+  const [user, setUser] = useState(null);
   const [role, setRole] = useState(null);
   const [patientId, setPatientId] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -68,7 +68,7 @@ function App() {
         if (process.env.NODE_ENV !== 'production') {
           console.log('App.js: Authenticated user detected, UID:', authUser.uid);
         }
-        setFirebaseUser(authUser); // Store Firebase Auth user
+        setFirebaseUser(authUser);
 
         const userId = authUser.uid;
         const userRef = doc(db, 'users', userId);
@@ -93,7 +93,7 @@ function App() {
               if (userData.role === 'patient') {
                 const pid = userData.patientId || userId;
                 setPatientId(pid);
-                sessionStorage.setItem('patientId', pid); // Use sessionStorage instead of localStorage
+                sessionStorage.setItem('patientId', pid);
                 if (process.env.NODE_ENV !== 'production') {
                   console.log(`App.js: Set patientId=${pid} for patient role`);
                 }
@@ -102,7 +102,7 @@ function App() {
                 sessionStorage.removeItem('patientId');
               }
 
-              sessionStorage.setItem('userId', userId); // Use sessionStorage instead of localStorage
+              sessionStorage.setItem('userId', userId);
               setLoading(false);
             } else {
               if (process.env.NODE_ENV !== 'production') {
@@ -116,7 +116,7 @@ function App() {
             setError(`Failed to fetch user data: ${error.message}`);
             handleAuthFailure();
           }
-        );
+       );
 
         return () => unsubscribeFirestore();
       } else {
@@ -145,7 +145,6 @@ function App() {
       console.log('App.js: Initiating logout for current tab');
     }
     try {
-      // Clear local state only for the current tab
       handleAuthFailure();
       if (process.env.NODE_ENV !== 'production') {
         console.log('App.js: Local state cleared successfully');
@@ -190,7 +189,6 @@ function App() {
         </div>
       )}
       <Routes>
-        {/* Public Routes */}
         <Route
           path="/login"
           element={
@@ -215,8 +213,6 @@ function App() {
             />
           }
         />
-
-        {/* Patient Routes */}
         <Route
           path="/patient/select-doctor"
           element={
@@ -264,8 +260,6 @@ function App() {
             )
           }
         />
-
-        {/* Doctor Route */}
         <Route
           path="/doctor/chat"
           element={
@@ -280,8 +274,6 @@ function App() {
             )
           }
         />
-
-        {/* Admin Route */}
         <Route
           path="/admin"
           element={
@@ -297,8 +289,6 @@ function App() {
             )
           }
         />
-
-        {/* Root Route with Role-Based Redirect */}
         <Route
           path="/"
           element={
@@ -317,8 +307,6 @@ function App() {
             )
           }
         />
-
-        {/* Fallback Route for 404 */}
         <Route path="*" element={<NotFound />} />
       </Routes>
 
