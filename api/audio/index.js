@@ -1,12 +1,9 @@
 import { Storage } from '@google-cloud/storage';
 import { SpeechClient } from '@google-cloud/speech';
 import { TextToSpeechClient } from '@google-cloud/text-to-speech';
-import pkg from '@google-cloud/translate';
+import { v2 } from '@google-cloud/translate'; // Updated import for Translate v2
 import admin from 'firebase-admin';
 import multer from 'multer';
-
-// Destructure Translate from the default export
-const { Translate } = pkg;
 
 // Log the start of the file execution
 console.log('Loading /api/audio/index.js');
@@ -72,7 +69,13 @@ const initStorage = async () => {
     const bucketName = process.env.GCS_BUCKET_NAME || 'fir-project-vercel';
     console.log(`Using GCS bucket: ${bucketName}`);
     bucket = storage.bucket(bucketName);
-    await bucket.getMetadata(); // Test bucket availability
+    try {
+      await bucket.getMetadata(); // Test bucket access
+      console.log('Bucket metadata retrieved successfully');
+    } catch (error) {
+      console.warn('Failed to retrieve bucket metadata:', error.message, error.stack);
+      console.warn('Proceeding with file operations if possible (missing storage.buckets.get permission)');
+    }
     console.log('Google Cloud Storage initialized successfully');
     return true;
   } catch (error) {
@@ -110,8 +113,8 @@ const initTtsClient = async () => {
 const initTranslateClient = async () => {
   if (!translateClient) {
     try {
-      translateClient = new Translate({ credentials: await getServiceAccountKey() });
-      console.log('Google Translate client initialized successfully');
+      translateClient = new v2.Translate({ credentials: await getServiceAccountKey() });
+      console.log('Google Translate v2 client initialized successfully');
     } catch (error) {
       console.error('Failed to initialize Translate client:', error.message, error.stack);
     }
@@ -327,7 +330,7 @@ export default async function handler(req, res) {
       if (sourceLanguageCode === targetLanguageCode) return res.status(200).json({ translatedText: text });
 
       if (await initTranslateClient()) {
-        const [translatedText] = await translateClient.translate(text, { from: sourceLanguageCode, to: targetLanguageCode });
+        const [translation] = await translateClient.translate(transcriptionText, { from: sourceLanguageCode, to: targetLanguageCode });
         return res.status(200).json({ translatedText });
       } else {
         return res.status(503).json({ error: { code: 503, message: 'Translate service unavailable' } });
