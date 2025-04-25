@@ -41,7 +41,7 @@
     },
     {
       "source": "/doctor/chat",
-      "destination": "/index.html" // Explicitly added for doctor chat
+      "destination": "/index.html"
     },
     {
       "source": "/admin",
