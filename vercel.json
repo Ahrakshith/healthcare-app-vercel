@@ -12,7 +12,7 @@
   ],
   "rewrites": [
     {
-      "source": "/api/audio/:path*",
+      "source": "/api/audio/translate",
       "destination": "/api/audio"
     },
     {

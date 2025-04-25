@@ -1,6 +1,5 @@
 import { Storage } from '@google-cloud/storage';
 import { SpeechClient } from '@google-cloud/speech';
-import { TextToSpeechClient } from '@google-cloud/text-to-speech';
 import { v2 } from '@google-cloud/translate';
 import admin from 'firebase-admin';
 import multer from 'multer';
@@ -89,7 +88,7 @@ const initStorage = async () => {
 };
 
 // Lazy initialization of Google Cloud clients
-let speechClient = null, ttsClient = null, translateClient = null;
+let speechClient = null, translateClient = null;
 const initSpeechClient = async () => {
   console.log('Attempting to initialize Speech-to-Text client...');
   if (!speechClient) {
@@ -104,22 +103,6 @@ const initSpeechClient = async () => {
     console.log('Speech-to-Text client already initialized');
   }
   return !!speechClient;
-};
-
-const initTtsClient = async () => {
-  console.log('Attempting to initialize Text-to-Speech client...');
-  if (!ttsClient) {
-    try {
-      ttsClient = new TextToSpeechClient({ credentials: await getServiceAccountKey() });
-      console.log('Google Text-to-Speech client initialized successfully');
-    } catch (error) {
-      console.error('Failed to initialize Text-to-Speech client:', error.message, error.stack);
-      ttsClient = null;
-    }
-  } else {
-    console.log('Text-to-Speech client already initialized');
-  }
-  return !!ttsClient;
 };
 
 const initTranslateClient = async () => {
@@ -369,45 +352,6 @@ export default async function handler(req, res) {
         audioUrl,
         warning: !speechClient ? 'Speech-to-Text service unavailable' : undefined,
       });
-    }
-
-    // Handle /api/audio/text-to-speech
-    if (subEndpoint === 'text-to-speech') {
-      console.log('Endpoint matched: /api/audio/text-to-speech');
-      console.log('Request body:', req.body);
-      const { text, language = 'en-US' } = req.body;
-      if (!text) {
-        console.error('Missing text parameter in body');
-        return res.status(400).json({ error: { code: 400, message: 'Text is required' } });
-      }
-      console.log('Text-to-speech request - text:', text);
-      console.log('Text-to-speech request - language:', language);
-
-      console.log('Initializing Text-to-Speech client...');
-      if (await initTtsClient()) {
-        const normalizedLanguageCode = language.toLowerCase().startsWith('kn') ? 'kn-IN' : 'en-US';
-        console.log(`Synthesizing speech with text: "${text}" in language: ${normalizedLanguageCode}`);
-        const [response] = await ttsClient.synthesizeSpeech({
-          input: { text },
-          voice: { languageCode: normalizedLanguageCode, ssmlGender: 'NEUTRAL' },
-          audioConfig: { audioEncoding: 'MP3' },
-        });
-        console.log('Text-to-Speech synthesis successful, response length:', response.audioContent.length);
-
-        console.log('Uploading synthesized audio to GCS...');
-        const fileName = `tts/${userId}/${Date.now()}-speech.mp3`;
-        const file = bucket.file(fileName);
-        await uploadWithRetry(file, response.audioContent, { contentType: 'audio/mp3' });
-        const bucketName = process.env.GCS_BUCKET_NAME || 'fir-project-vercel';
-        const audioUrl = `https://storage.googleapis.com/${bucketName}/${fileName}`;
-        console.log(`Text-to-speech audio uploaded to GCS: ${audioUrl}`);
-
-        console.log('Sending response for /api/audio/text-to-speech...');
-        return res.status(200).json({ audioUrl });
-      } else {
-        console.error('Text-to-Speech client unavailable');
-        return res.status(503).json({ error: { code: 503, message: 'Text-to-Speech service unavailable' } });
-      }
     }
 
     // Handle /api/audio/translate
