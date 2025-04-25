@@ -1,4 +1,4 @@
- import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { auth as firebaseAuth, db } from './services/firebase.js';
@@ -266,7 +266,6 @@ function App() {
                 user={user}
                 role={role}
                 patientId={patientId}
-                doctorId={patientId.split('/').pop()} // Adjust this logic based on actual doctorId from params
                 handleLogout={handleLogout}
               />
             ) : (
@@ -321,7 +320,7 @@ function App() {
                 <Navigate to="/admin" replace />
               ) : (
                 <Navigate to="/login" replace />
-            )
+              )
             ) : (
               <Navigate to="/login" replace />
             )
