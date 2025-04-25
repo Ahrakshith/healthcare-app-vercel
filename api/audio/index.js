@@ -50,8 +50,23 @@ const initStorage = async () => {
       throw new Error('GCS_SERVICE_ACCOUNT_KEY environment variable is not set');
     }
     console.log('Using GCS_SERVICE_ACCOUNT_KEY from environment variable');
-    const serviceAccountKey = JSON.parse(process.env.GCS_SERVICE_ACCOUNT_KEY); // Removed base64 decoding
-    console.log('Google Cloud service account key loaded successfully');
+    let decodedKey;
+    try {
+      decodedKey = Buffer.from(process.env.GCS_SERVICE_ACCOUNT_KEY, 'base64').toString();
+      console.log('Successfully decoded GCS_SERVICE_ACCOUNT_KEY');
+    } catch (error) {
+      console.error('Failed to decode GCS_SERVICE_ACCOUNT_KEY as base64:', error.message, error.stack);
+      throw new Error('Invalid GCS_SERVICE_ACCOUNT_KEY format: not a valid base64 string');
+    }
+
+    let serviceAccountKey;
+    try {
+      serviceAccountKey = JSON.parse(decodedKey);
+      console.log('Google Cloud service account key parsed successfully');
+    } catch (error) {
+      console.error('Failed to parse decoded GCS_SERVICE_ACCOUNT_KEY as JSON:', error.message, error.stack);
+      throw new Error('Invalid GCS_SERVICE_ACCOUNT_KEY format: not a valid JSON string');
+    }
 
     storage = new Storage({ credentials: serviceAccountKey });
     const bucketName = process.env.GCS_BUCKET_NAME || 'fir-project-vercel';
@@ -108,7 +123,17 @@ const getServiceAccountKey = async () => {
   if (!process.env.GCS_SERVICE_ACCOUNT_KEY) {
     throw new Error('GCS_SERVICE_ACCOUNT_KEY environment variable is not set');
   }
-  return JSON.parse(process.env.GCS_SERVICE_ACCOUNT_KEY); // Removed base64 decoding
+  let decodedKey;
+  try {
+    decodedKey = Buffer.from(process.env.GCS_SERVICE_ACCOUNT_KEY, 'base64').toString();
+  } catch (error) {
+    throw new Error('Invalid GCS_SERVICE_ACCOUNT_KEY format: not a valid base64 string');
+  }
+  try {
+    return JSON.parse(decodedKey);
+  } catch (error) {
+    throw new Error('Invalid GCS_SERVICE_ACCOUNT_KEY format: not a valid JSON string');
+  }
 };
 
 // Multer configuration for audio uploads
@@ -147,7 +172,7 @@ const uploadWithRetry = async (file, buffer, metadata, retries = 3, backoff = 10
 };
 
 // Middleware to check Google services availability
-const checkGoogleServices = async (req, res, next) => {
+const checkGoogleServices = async (req, res) => {
   console.log('Checking Google services availability...');
   if (!await initStorage()) {
     console.error('Google Cloud Storage unavailable');
@@ -156,7 +181,7 @@ const checkGoogleServices = async (req, res, next) => {
     });
   }
   console.log('Google services available');
-  next();
+  return true;
 };
 
 // Multer middleware wrapper for Vercel
@@ -223,7 +248,8 @@ export default async function handler(req, res) {
     }
 
     // Apply Google services check
-    await checkGoogleServices(req, res, () => {});
+    const servicesAvailable = await checkGoogleServices(req, res);
+    if (!servicesAvailable) return;
 
     if (!subEndpoint) { // Handle /api/audio for speech-to-text
       console.log('Endpoint matched: /api/audio');
@@ -240,7 +266,7 @@ export default async function handler(req, res) {
       const fileName = `audio/${uid}/${Date.now()}-recording.webm`;
       const file = bucket.file(fileName);
       await uploadWithRetry(file, req.file.buffer, { contentType: req.file.mimetype });
-      const bucketName = process.env.GCS_BUCKET_NAME || 'fir-project-vercel'; // Ensure bucketName is defined
+      const bucketName = process.env.GCS_BUCKET_NAME || 'fir-project-vercel';
       const audioUrl = `https://storage.googleapis.com/${bucketName}/${fileName}`;
       console.log(`Audio uploaded to GCS: ${audioUrl}`);
 
@@ -286,7 +312,7 @@ export default async function handler(req, res) {
         const fileName = `tts/${Date.now()}.mp3`;
         const file = bucket.file(fileName);
         await uploadWithRetry(file, response.audioContent, { contentType: 'audio/mp3' });
-        const bucketName = process.env.GCS_BUCKET_NAME || 'fir-project-vercel'; // Ensure bucketName is defined
+        const bucketName = process.env.GCS_BUCKET_NAME || 'fir-project-vercel';
         const audioUrl = `https://storage.googleapis.com/${bucketName}/${fileName}`;
         return res.status(200).json({ audioUrl });
       } else {
