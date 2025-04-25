@@ -1,9 +1,11 @@
 import { Storage } from '@google-cloud/storage';
 import { SpeechClient } from '@google-cloud/speech';
+import { TextToSpeechClient } from '@google-cloud/text-to-speech';
+import { Translate } from '@google-cloud/translate';
 import admin from 'firebase-admin';
 import multer from 'multer';
 
-// Log the start of the file execution to confirm the file is loaded
+// Log the start of the file execution
 console.log('Loading /api/audio/index.js');
 
 // Initialize Firebase Admin
@@ -49,14 +51,18 @@ const bucketName = process.env.GCS_BUCKET_NAME || 'fir-project-vercel';
 console.log(`Using GCS bucket: ${bucketName}`);
 const bucket = storage.bucket(bucketName);
 
-let speechClient;
-console.log('Attempting to initialize Google Speech-to-Text client...');
+let speechClient, ttsClient, translateClient;
+console.log('Attempting to initialize Google Cloud clients...');
 try {
   speechClient = new SpeechClient({ credentials: serviceAccountKey });
   console.log('Google Speech-to-Text client initialized successfully');
+  ttsClient = new TextToSpeechClient({ credentials: serviceAccountKey });
+  console.log('Google Text-to-Speech client initialized successfully');
+  translateClient = new Translate({ credentials: serviceAccountKey });
+  console.log('Google Translate client initialized successfully');
 } catch (error) {
-  console.error('Failed to initialize Google Speech-to-Text client:', error.message, error.stack);
-  speechClient = null;
+  console.error('Failed to initialize Google Cloud clients:', error.message, error.stack);
+  speechClient = ttsClient = translateClient = null;
 }
 
 // Multer configuration for audio uploads
@@ -97,10 +103,10 @@ const uploadWithRetry = async (file, buffer, metadata, retries = 3, backoff = 10
 // Middleware to check Google services availability
 const checkGoogleServices = (req, res, next) => {
   console.log('Checking Google services availability...');
-  if (!speechClient) {
-    console.error('Speech-to-Text service unavailable');
+  if (!speechClient || !ttsClient || !translateClient) {
+    console.error('One or more Google services unavailable');
     return res.status(503).json({
-      error: { code: 503, message: 'Service unavailable: Google Speech-to-Text service not properly initialized' },
+      error: { code: 503, message: 'Service unavailable: Google Cloud services not properly initialized' },
       details: 'Check your API keys and service account configuration',
     });
   }
@@ -140,13 +146,6 @@ export default async function handler(req, res) {
     return;
   }
 
-  console.log(`Processing request: ${req.method} ${req.url}`);
-
-  // Fallback response for debugging
-  if (req.url === '/api/audio/upload-audio' && req.method === 'POST') {
-    console.log('Direct match: /api/audio/upload-audio POST request received');
-  }
-
   if (req.method !== 'POST') {
     console.error('Method not allowed:', req.method);
     res.setHeader('Allow', ['POST']);
@@ -156,7 +155,7 @@ export default async function handler(req, res) {
   const pathSegments = req.url.split('/').filter(Boolean);
   console.log('Path segments:', pathSegments);
   const endpoint = pathSegments[1]; // "audio"
-  const subEndpoint = pathSegments[2]; // "upload-audio"
+  const subEndpoint = pathSegments[2]; // "text-to-speech", "translate", or undefined
 
   try {
     console.log('Checking x-user-uid header...');
@@ -166,112 +165,96 @@ export default async function handler(req, res) {
       return res.status(401).json({ error: { code: 401, message: 'Firebase UID is required in x-user-uid header' } });
     }
 
-    // Verify user exists in Firebase Auth
-    console.log(`Verifying user: ${userId}`);
     await admin.auth().getUser(userId);
     console.log(`User verified: ${userId}`);
 
-    console.log(`Checking endpoint: /${endpoint}/${subEndpoint}`);
-    if (endpoint !== 'audio' || subEndpoint !== 'upload-audio') {
-      console.error(`Endpoint not found: /${endpoint}/${subEndpoint}`);
-      return res.status(404).json({ error: { code: 404, message: `Endpoint not found: /${endpoint}/${subEndpoint}` } });
+    if (endpoint !== 'audio') {
+      console.error(`Endpoint not found: /${endpoint}/${subEndpoint || ''}`);
+      return res.status(404).json({ error: { code: 404, message: `Endpoint not found: /${endpoint}/${subEndpoint || ''}` } });
     }
-
-    console.log('Endpoint matched: /api/audio/upload-audio');
-
-    // Apply multer middleware to parse the audio file
-    console.log('Applying Multer middleware...');
-    await runMulter(req, res, uploadAudio.single('audio'));
-
-    // Extract language and uid from the request body
-    console.log('Extracting request body...');
-    const language = req.body.language || 'en-US';
-    const uid = req.body.uid;
-    console.log(`Request body - language: ${language}, uid: ${uid}`);
-
-    // Validate request data
-    if (!uid) {
-      console.error('Missing uid in request body');
-      return res.status(400).json({ error: { code: 400, message: 'User ID (uid) is required in body' } });
-    }
-    if (uid !== userId) {
-      console.error(`Mismatched UID: header=${userId}, body=${uid}`);
-      return res.status(403).json({ error: { code: 403, message: 'Mismatched user ID in header and body' } });
-    }
-    if (!req.file) {
-      console.error('No audio file uploaded');
-      return res.status(400).json({ error: { code: 400, message: 'No audio file uploaded' } });
-    }
-    if (req.file.size === 0) {
-      console.error('Uploaded audio file is empty');
-      return res.status(400).json({ error: { code: 400, message: 'Audio file is empty' } });
-    }
-    console.log(`Audio file received: ${req.file.originalname}, size: ${req.file.size} bytes`);
 
     // Apply Google services check
-    console.log('Checking Google services...');
     checkGoogleServices(req, res, () => {});
 
-    // Upload audio to GCS
-    console.log('Uploading audio to GCS...');
-    const fileName = `audio/${uid}/${Date.now()}-recording.webm`;
-    const file = bucket.file(fileName);
-    await uploadWithRetry(file, req.file.buffer, { contentType: req.file.mimetype });
-    const audioUrl = `https://storage.googleapis.com/${bucketName}/${fileName}`;
-    console.log(`Audio uploaded to GCS: ${audioUrl}`);
+    if (!subEndpoint) { // Handle /api/audio for speech-to-text
+      console.log('Endpoint matched: /api/audio');
+      await runMulter(req, res, uploadAudio.single('audio'));
 
-    // Perform transcription
-    console.log('Performing transcription...');
-    let transcriptionText = 'Transcription unavailable';
-    let translatedText = transcriptionText;
+      const language = req.body.language || 'en-US';
+      const uid = req.body.uid;
 
-    try {
-      const config = {
-        encoding: 'WEBM_OPUS',
-        sampleRateHertz: 48000,
+      if (!uid) return res.status(400).json({ error: { code: 400, message: 'User ID (uid) is required in body' } });
+      if (uid !== userId) return res.status(403).json({ error: { code: 403, message: 'Mismatched user ID in header and body' } });
+      if (!req.file) return res.status(400).json({ error: { code: 400, message: 'No audio file uploaded' } });
+      if (req.file.size === 0) return res.status(400).json({ error: { code: 400, message: 'Audio file is empty' } });
+
+      const fileName = `audio/${uid}/${Date.now()}-recording.webm`;
+      const file = bucket.file(fileName);
+      await uploadWithRetry(file, req.file.buffer, { contentType: req.file.mimetype });
+      const audioUrl = `https://storage.googleapis.com/${bucketName}/${fileName}`;
+      console.log(`Audio uploaded to GCS: ${audioUrl}`);
+
+      let transcriptionText = 'Transcription unavailable';
+      let detectedLanguage = language.split('-')[0];
+      if (speechClient) {
+        const config = { encoding: 'WEBM_OPUS', sampleRateHertz: 48000, languageCode: language, enableAutomaticLanguageDetection: true };
+        const request = { audio: { content: req.file.buffer.toString('base64') }, config };
+        const [response] = await speechClient.recognize(request);
+        transcriptionText = response.results?.length > 0 ? response.results.map((result) => result.alternatives[0].transcript).join('\n') : 'No transcription available';
+        detectedLanguage = response.results?.[0]?.languageCode || language.split('-')[0];
+      }
+
+      let translatedText = transcriptionText;
+      if (translateClient && detectedLanguage !== 'en') {
+        const [translation] = await translateClient.translate(transcriptionText, { from: detectedLanguage, to: 'en' });
+        translatedText = translation;
+      }
+
+      return res.status(200).json({
+        transcription: transcriptionText,
+        translatedText: translatedText,
         languageCode: language,
-        enableAutomaticLanguageDetection: false,
-      };
-      console.log('Transcription config:', config);
+        detectedLanguage: detectedLanguage,
+        audioUrl,
+        warning: !speechClient ? 'Speech-to-text service unavailable' : undefined,
+      });
+    } else if (subEndpoint === 'text-to-speech') {
+      const { text, language = 'en-US' } = req.body;
+      if (!text) return res.status(400).json({ error: { code: 400, message: 'Text is required' } });
 
-      const request = {
-        audio: { content: req.file.buffer.toString('base64') },
-        config,
-      };
-      console.log('Transcription request prepared');
+      const normalizedLanguageCode = language.toLowerCase().startsWith('kn') ? 'kn-IN' : 'en-US';
+      const [response] = await ttsClient.synthesizeSpeech({
+        input: { text },
+        voice: { languageCode: normalizedLanguageCode, ssmlGender: 'NEUTRAL' },
+        audioConfig: { audioEncoding: 'MP3' },
+      });
+      const fileName = `tts/${Date.now()}.mp3`;
+      const file = bucket.file(fileName);
+      await uploadWithRetry(file, response.audioContent, { contentType: 'audio/mp3' });
+      const audioUrl = `https://storage.googleapis.com/${bucketName}/${fileName}`;
 
-      const [response] = await speechClient.recognize(request);
-      console.log('Transcription response:', response);
-      transcriptionText = response.results?.length > 0
-        ? response.results.map((result) => result.alternatives[0].transcript).join('\n')
-        : 'No transcription available';
-      translatedText = transcriptionText; // Translation handled elsewhere
-      console.log(`Transcription successful for ${fileName}: "${transcriptionText}"`);
-    } catch (transcriptionError) {
-      console.error('Transcription error:', transcriptionError.message, transcriptionError.stack);
+      return res.status(200).json({ audioUrl });
+    } else if (subEndpoint === 'translate') {
+      const { text, sourceLanguageCode, targetLanguageCode } = req.body;
+      if (!text) return res.status(400).json({ error: { code: 400, message: 'Text is required' } });
+      if (!sourceLanguageCode) return res.status(400).json({ error: { code: 400, message: 'Source language code is required' } });
+      if (!targetLanguageCode) return res.status(400).json({ error: { code: 400, message: 'Target language code is required' } });
+
+      if (sourceLanguageCode === targetLanguageCode) return res.status(200).json({ translatedText: text });
+
+      const [translatedText] = await translateClient.translate(text, { from: sourceLanguageCode, to: targetLanguageCode });
+      return res.status(200).json({ translatedText });
     }
 
-    console.log('Sending successful response...');
-    return res.status(200).json({
-      transcription: transcriptionText,
-      translatedText,
-      languageCode: language,
-      audioUrl,
-      warning: !speechClient ? 'Speech-to-text service unavailable' : undefined,
-    });
+    return res.status(404).json({ error: { code: 404, message: 'Sub-endpoint not found' } });
   } catch (error) {
-    console.error(`Error in /api/audio/upload-audio:`, error.message, error.stack);
-    if (error.message.includes('Invalid file type')) {
-      return res.status(400).json({ error: { code: 400, message: error.message } });
-    }
-    if (error.code === 'LIMIT_FILE_SIZE') {
-      return res.status(400).json({ error: { code: 400, message: 'File too large. Maximum size is 5MB.' } });
-    }
-    return res.status(500).json({ error: { code: 500, message: 'Failed to upload audio', details: error.message } });
+    console.error(`Error in /api/audio/${subEndpoint || 'unknown'}:`, error.message, error.stack);
+    if (error.message.includes('Invalid file type')) return res.status(400).json({ error: { code: 400, message: error.message } });
+    if (error.code === 'LIMIT_FILE_SIZE') return res.status(400).json({ error: { code: 400, message: 'File too large. Maximum size is 5MB.' } });
+    return res.status(500).json({ error: { code: 500, message: 'Failed to process request', details: error.message } });
   }
 }
 
-// Fallback export for debugging
 export const config = {
   api: {
     bodyParser: false, // Required for multer
