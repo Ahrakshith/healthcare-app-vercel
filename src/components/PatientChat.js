@@ -47,16 +47,25 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   const pusherCluster = process.env.PUSHER_CLUSTER || 'ap2';
 
   // Add fetch interceptor to debug the /j7akqc 404 error
-  useEffect(() => {
-    const originalFetch = window.fetch;
-    window.fetch = async (...args) => {
-      console.log('Fetch request:', args);
-      return originalFetch(...args);
-    };
-    return () => {
-      window.fetch = originalFetch;
-    };
-  }, []);
+ useEffect(() => {
+  const originalFetch = window.fetch;
+  window.fetch = async (...args) => {
+    console.log('Fetch request:', args[0], { method: args[1]?.method, mode: args[1]?.mode });
+    try {
+      const response = await originalFetch(...args);
+      if (!response.ok) {
+        console.warn(`Fetch failed: ${args[0]} - Status ${response.status}`);
+      }
+      return response;
+    } catch (err) {
+      console.error(`Fetch error for ${args[0]}:`, err);
+      throw err;
+    }
+  };
+  return () => {
+    window.fetch = originalFetch;
+  };
+}, []);
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -867,61 +876,64 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     }
   };
 
-  const retryTextToSpeech = async (text, lang, attempts = 3) => {
-    if (attempts <= 0) {
-      throw new Error('Text-to-speech conversion failed after retries. Please try again later.');
-    }
+const retryTextToSpeech = async (text, lang, attempts = 3) => {
+  if (attempts <= 0) {
+    throw new Error('Text-to-speech conversion failed after retries. Please try again later.');
+  }
 
-    try {
-      const normalizedLang = normalizeLanguageCode(lang);
-      const audioUrl = await textToSpeechConvert(text.trim(), normalizedLang, effectiveUserId);
-      // Pre-flight check to ensure the audio URL is accessible
-      const response = await fetch(audioUrl, { method: 'HEAD', mode: 'cors' });
-      if (!response.ok) {
-        throw new Error(`Audio URL inaccessible: ${audioUrl} (Status: ${response.status})`);
-      }
-      return audioUrl;
-    } catch (err) {
-      console.error(`Text-to-speech attempt ${4 - attempts} failed:`, err);
-      if (err.message.includes('404')) {
-        throw new Error('Text-to-speech service is unavailable (404). Please contact support.');
-      }
-      setError(`Retrying text-to-speech... (Attempts remaining: ${attempts - 1})`);
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-      return retryTextToSpeech(text, lang, attempts - 1);
+  try {
+    const normalizedLang = normalizeLanguageCode(lang);
+    const audioUrl = await textToSpeechConvert(text.trim(), normalizedLang, effectiveUserId);
+    // Pre-flight check with detailed logging
+    const response = await fetch(audioUrl, { method: 'HEAD', mode: 'cors' });
+    if (!response.ok) {
+      throw new Error(`Audio URL inaccessible: ${audioUrl} (Status: ${response.status}) - ${response.statusText}`);
     }
-  };
+    return audioUrl;
+  } catch (err) {
+    console.error(`Text-to-speech attempt ${4 - attempts} failed:`, err);
+    if (err.message.includes('404')) {
+      throw new Error('Text-to-speech service is unavailable (404). Please contact support.');
+    } else if (err.message.includes('CORS')) {
+      throw new Error('CORS policy blocked audio access. Please contact support to update server settings.');
+    }
+    setError(`Retrying text-to-speech... (Attempts remaining: ${attempts - 1})`);
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    return retryTextToSpeech(text, lang, attempts - 1);
+  }
+};
 
-  const readAloud = async (text, lang, attempts = 3) => {
-    if (attempts <= 0) {
-      setError('Failed to read aloud after retries. Please try again later.');
+const readAloud = async (text, lang, attempts = 3) => {
+  if (attempts <= 0) {
+    setError('Failed to read aloud after retries. Please try again later.');
+    return;
+  }
+
+  try {
+    if (!text || typeof text !== 'string' || text.trim() === '') {
+      setError('Cannot read aloud: No valid text provided.');
       return;
     }
-
-    try {
-      if (!text || typeof text !== 'string' || text.trim() === '') {
-        setError('Cannot read aloud: No valid text provided.');
-        return;
-      }
-      const audioUrl = await retryTextToSpeech(text, lang);
-      await playAudio(audioUrl);
-    } catch (err) {
-      console.error('Error reading aloud:', err);
-      if (attempts > 1 && err.message.includes('Failed to load audio')) {
-        setError(`Retrying audio playback... (Attempts remaining: ${attempts - 1})`);
-        await new Promise((resolve) => setTimeout(resolve, 2000));
-        return readAloud(text, lang, attempts - 1);
-      }
-      let errorMessage = `Error reading aloud: ${err.message}`;
-      if (err.message.includes('Failed to load audio')) {
-        errorMessage = 'Error reading aloud: Audio file could not be loaded. It may be inaccessible or unsupported.';
-      } else if (err.message.includes('Playback failed')) {
-        errorMessage = 'Error reading aloud: Audio playback failed. Please check your browser or device audio settings.';
-      }
-      setError(errorMessage);
+    const audioUrl = await retryTextToSpeech(text, lang);
+    await playAudio(audioUrl);
+  } catch (err) {
+    console.error('Error reading aloud:', err);
+    if (attempts > 1 && err.message.includes('Failed to load audio')) {
+      setError(`Retrying audio playback... (Attempts remaining: ${attempts - 1})`);
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      return readAloud(text, lang, attempts - 1);
     }
-  };
-
+    let errorMessage = `Error reading aloud: ${err.message}`;
+    if (err.message.includes('Failed to load audio')) {
+      errorMessage = 'Error reading aloud: Audio file could not be loaded. It may be inaccessible or unsupported.';
+    } else if (err.message.includes('CORS')) {
+      errorMessage = 'Error reading aloud: CORS policy blocked access. Please contact support.';
+    } else if (err.message.includes('Playback failed')) {
+      errorMessage = 'Error reading aloud: Audio playback failed. Please check your browser or device audio settings.';
+    }
+    setError(errorMessage);
+  }
+};
   const handleSendText = async () => {
     if (!textInput.trim()) return;
 
