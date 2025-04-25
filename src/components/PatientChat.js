@@ -1,29 +1,4 @@
-Below is the complete and updated `PatientChat.js` based on your current code, incorporating the project flow you described (speech-to-text, text-to-speech, message format adjustments), while retaining the profile, reminder system, and doctor's recommendations. The changes align with your specifications for language preferences (English/Kannada), recording behavior, message formatting for both patient and doctor sides, and the use of Pusher for real-time messaging. Authentication remains Firebase-based, with chats stored in Firestore and audio uploaded to GCS.
 
-### Key Updates
-1. **Language Preference and Recording**:
-   - Language toggle defaults to `languagePreference` (English or Kannada) at the bottom left.
-   - Recording uses `navigator.mediaDevices.getUserMedia` and `MediaRecorder`, with transcription adapting to `transcriptionLanguage`.
-   - Text input remains English-only, while audio recording supports Kannada/English with translation as per your format.
-2. **Message Format**:
-   - **Patient (English Preference)**: `[Translated English text]`, `[Audio playback]`, `[Read aloud: English]`, `[Download audio]`.
-   - **Patient (Kannada Preference)**: `[Translated Kannada text]`, `[Translated English text]`, `[Audio playback]`, `[Read aloud: Kannada] [Read aloud: English]`, `[Download audio]`.
-   - **Doctor (Patient English Preference)**: `[Translated English text]`, `[Audio playback]`, `[Read aloud: English]`, `[Download audio]`.
-   - **Doctor (Patient Kannada Preference)**: `[Translated Kannada text]`, `[Translated English text]`, `[Audio playback]`, `[Read aloud: Kannada] [Read aloud: English]`, `[Download audio]`.
-3. **Doctor Prompt**:
-   - Implemented a Yes/No prompt for the doctor on first contact or after 7 days (client-side logic; server-side integration would be needed for persistence).
-4. **Retained Features**:
-   - Profile view, reminder system (with adherence and missed dose alerts), and doctor's recommendations.
-5. **Technical Adjustments**:
-   - Removed `react-speech-recognition` dependency (replaced with manual transcription via `transcribeAudio` service).
-   - Ensured Pusher integration remains intact.
-   - Added proper error handling and retry logic for audio uploads.
-
----
-
-### Updated `PatientChat.js`
-
-```javascript
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Pusher from 'pusher-js';
