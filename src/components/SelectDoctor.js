@@ -109,7 +109,7 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
       const result = await response.json();
       console.log(`SelectDoctor: Assigned doctor ${doctorId} to patient ${patientId}`, result);
 
-      // Redirect to language preference page
+      // Navigate to language preference page
       navigate(`/patient/language-preference/${patientId}/${doctorId}`);
     } catch (err) {
       console.error('SelectDoctor: Error assigning doctor:', err.message);

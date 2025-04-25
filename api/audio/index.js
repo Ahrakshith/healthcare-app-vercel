@@ -35,14 +35,11 @@ if (!admin.apps.length) {
 let serviceAccountKey;
 console.log('Attempting to initialize Google Cloud service account key...');
 try {
-  if (process.env.GCS_SERVICE_ACCOUNT_KEY) {
-    console.log('Using GCS_SERVICE_ACCOUNT_KEY from environment variable');
-    serviceAccountKey = JSON.parse(Buffer.from(process.env.GCS_SERVICE_ACCOUNT_KEY, 'base64').toString());
-  } else {
-    console.log('Falling back to local service-account.json file');
-    const fs = await import('fs').then((module) => module.promises);
-    serviceAccountKey = JSON.parse(await fs.readFile('./service-account.json', 'utf8'));
+  if (!process.env.GCS_SERVICE_ACCOUNT_KEY) {
+    throw new Error('GCS_SERVICE_ACCOUNT_KEY environment variable is not set');
   }
+  console.log('Using GCS_SERVICE_ACCOUNT_KEY from environment variable');
+  serviceAccountKey = JSON.parse(Buffer.from(process.env.GCS_SERVICE_ACCOUNT_KEY, 'base64').toString());
   console.log('Google Cloud service account key loaded successfully');
 } catch (error) {
   console.error('Failed to load Google Cloud service account key:', error.message, error.stack);

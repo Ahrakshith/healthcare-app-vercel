@@ -266,7 +266,7 @@ function App() {
                 user={user}
                 role={role}
                 patientId={patientId}
-                doctorId={patientId.split('/').pop()} // Temporary fix, adjust as needed
+                doctorId={patientId.split('/').pop()} // Adjust this logic based on actual doctorId from params
                 handleLogout={handleLogout}
               />
             ) : (
@@ -277,7 +277,7 @@ function App() {
 
         {/* Doctor Route */}
         <Route
-          path="/doctor"
+          path="/doctor/chat"
           element={
             user && role === 'doctor' ? (
               <DoctorChat
@@ -316,12 +316,12 @@ function App() {
               role === 'patient' ? (
                 <Navigate to="/patient/select-doctor" replace />
               ) : role === 'doctor' ? (
-                <Navigate to="/doctor" replace />
+                <Navigate to="/doctor/chat" replace />
               ) : role === 'admin' ? (
                 <Navigate to="/admin" replace />
               ) : (
                 <Navigate to="/login" replace />
-              )
+            )
             ) : (
               <Navigate to="/login" replace />
             )

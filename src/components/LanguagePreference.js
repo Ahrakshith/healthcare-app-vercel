@@ -53,6 +53,7 @@ function LanguagePreference({ user, role, firebaseUser }) {
       await setDoc(patientRef, { languagePreference: languageCode }, { merge: true });
       console.log(`Language preference set to ${languageCode} for patient ${patientId}`);
 
+      // Navigate to patient chat
       navigate(`/patient/chat/${patientId}/${doctorId}`);
     } catch (err) {
       console.error('Error setting language preference:', err);

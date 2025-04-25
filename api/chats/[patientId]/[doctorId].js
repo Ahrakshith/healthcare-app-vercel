@@ -1,8 +1,7 @@
-//api/chats/[patientId]/[doctorId].js
-//imort
 import { Storage } from '@google-cloud/storage';
 import admin from 'firebase-admin';
 import Pusher from 'pusher';
+import busboy from 'busboy';
 
 // Initialize Firebase Admin
 if (!admin.apps.length) {
@@ -21,7 +20,7 @@ if (!admin.apps.length) {
     });
     console.log('Firebase Admin initialized successfully in chats/[patientId]/[doctorId].js');
   } catch (error) {
-    console.error('Firebase Admin initialization failed in chats/[patientId]/[doctorId].js:', error.message);
+    console.error('Firebase Admin initialization failed in chats/[patientId]/[doctorId].js:', error.message, error.stack);
     throw new Error(`Firebase Admin initialization failed: ${error.message}`);
   }
 }
@@ -30,26 +29,28 @@ const db = admin.firestore();
 
 // Initialize GCS
 let storage;
+let serviceAccountKey;
 try {
-  const gcsPrivateKey = process.env.GCS_PRIVATE_KEY?.replace(/\\n/g, '\n');
-  if (!process.env.GCS_PROJECT_ID || !process.env.GCS_CLIENT_EMAIL || !gcsPrivateKey) {
-    throw new Error('Missing GCS credentials: GCS_PROJECT_ID, GCS_CLIENT_EMAIL, or GCS_PRIVATE_KEY');
+  if (!process.env.GCS_SERVICE_ACCOUNT_KEY) {
+    throw new Error('GCS_SERVICE_ACCOUNT_KEY environment variable is not set');
   }
+  console.log('Using GCS_SERVICE_ACCOUNT_KEY from environment variable');
+  serviceAccountKey = JSON.parse(Buffer.from(process.env.GCS_SERVICE_ACCOUNT_KEY, 'base64').toString());
+  console.log('Google Cloud service account key loaded successfully in chats/[patientId]/[doctorId].js');
+} catch (error) {
+  console.error('Failed to load Google Cloud service account key in chats/[patientId]/[doctorId].js:', error.message, error.stack);
+  throw new Error('Google Cloud service account key loading failed');
+}
 
-  storage = new Storage({
-    projectId: process.env.GCS_PROJECT_ID,
-    credentials: {
-      client_email: process.env.GCS_CLIENT_EMAIL,
-      private_key: gcsPrivateKey,
-    },
-  });
+try {
+  storage = new Storage({ credentials: serviceAccountKey });
   console.log('Google Cloud Storage initialized successfully in chats/[patientId]/[doctorId].js');
 } catch (error) {
-  console.error('GCS initialization failed in chats/[patientId]/[doctorId].js:', error.message);
+  console.error('GCS initialization failed in chats/[patientId]/[doctorId].js:', error.message, error.stack);
   throw new Error(`GCS initialization failed: ${error.message}`);
 }
 
-const bucketName = 'fir-project-vercel'; // Use the correct bucket name
+const bucketName = 'fir-project-vercel';
 const bucket = storage.bucket(bucketName);
 
 // Initialize Pusher
@@ -68,7 +69,7 @@ try {
   });
   console.log('Pusher initialized successfully in chats/[patientId]/[doctorId].js');
 } catch (error) {
-  console.error('Pusher initialization failed in chats/[patientId]/[doctorId].js:', error.message);
+  console.error('Pusher initialization failed in chats/[patientId]/[doctorId].js:', error.message, error.stack);
   throw new Error(`Pusher initialization failed: ${error.message}`);
 }
 
@@ -80,7 +81,7 @@ const uploadWithRetry = async (file, buffer, metadata, retries = 3, backoff = 10
       console.log(`Successfully uploaded ${file.name} to GCS on attempt ${attempt}`);
       return true;
     } catch (error) {
-      console.error(`Upload attempt ${attempt} failed for ${file.name}:`, error.message);
+      console.error(`Upload attempt ${attempt} failed for ${file.name}:`, error.message, error.stack);
       if (attempt === retries) throw error;
       const delay = backoff * Math.pow(2, attempt - 1);
       await new Promise((resolve) => setTimeout(resolve, delay));
@@ -107,13 +108,13 @@ const generateSignedUrl = async (filePath) => {
     console.log(`Generated signed URL for ${filePath}`);
     return url;
   } catch (error) {
-    console.error(`Error generating signed URL for ${filePath}:`, error.message);
+    console.error(`Error generating signed URL for ${filePath}:`, error.message, error.stack);
     throw error;
   }
 };
 
 export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', process.env.FRONTEND_URL || '*');
+  res.setHeader('Access-Control-Allow-Origin', process.env.FRONTEND_URL || 'https://healthcare-app-vercel.vercel.app');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'x-user-uid, Content-Type');
 
@@ -121,7 +122,6 @@ export default async function handler(req, res) {
     return res.status(200).end();
   }
 
-  // Use req.query for dynamic route parameters in Vercel
   const { patientId, doctorId } = req.query;
   const userId = req.headers['x-user-uid'];
 
@@ -200,7 +200,6 @@ export default async function handler(req, res) {
 
       if (contentType && contentType.includes('multipart/form-data')) {
         // Handle file uploads (audio, image)
-        const busboy = require('busboy');
         const bb = busboy({ headers: req.headers });
 
         let message = {};
@@ -305,7 +304,7 @@ export default async function handler(req, res) {
 
             return res.status(200).json({ message: 'Message saved successfully', newMessage });
           } catch (error) {
-            console.error(`Error processing file upload for chat between patient ${patientId} and doctor ${doctorId}:`, error.message);
+            console.error(`Error processing file upload for chat between patient ${patientId} and doctor ${doctorId}:`, error.message, error.stack);
             return res.status(500).json({ error: { code: 500, message: 'Failed to process file upload', details: error.message } });
           }
         });
@@ -381,10 +380,16 @@ export default async function handler(req, res) {
       return res.status(405).json({ error: { code: 405, message: `Method ${req.method} Not Allowed` } });
     }
   } catch (error) {
-    console.error(`Error in /api/chats/${patientId}/${doctorId} (${req.method}) for user ${userId}:`, error.message);
+    console.error(`Error in /api/chats/${patientId}/${doctorId} (${req.method}) for user ${userId}:`, error.message, error.stack);
     if (error.message === 'Invalid sender type') {
       return res.status(400).json({ error: { code: 400, message: error.message } });
     }
     return res.status(500).json({ error: { code: 500, message: 'Failed to process request', details: error.message } });
   }
 }
+
+export const config = {
+  api: {
+    bodyParser: false, // Required for busboy
+  },
+};
