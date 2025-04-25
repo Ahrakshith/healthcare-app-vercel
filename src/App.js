@@ -142,22 +142,10 @@ function App() {
       console.log('App.js: Initiating logout');
     }
     try {
-      const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
-      const response = await fetch(`${apiUrl}/misc/logout`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-user-uid': firebaseUser?.uid || '' },
-        credentials: 'include',
-      });
-
-      if (!response.ok) {
-        throw new Error(`Logout failed: ${response.statusText}`);
-      }
-
       await firebaseAuth.signOut();
       if (process.env.NODE_ENV !== 'production') {
         console.log('App.js: User logged out successfully from Firebase');
       }
-
       handleAuthFailure();
     } catch (err) {
       console.error('App.js: Logout error:', err.message);
