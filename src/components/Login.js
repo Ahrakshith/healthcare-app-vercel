@@ -23,7 +23,7 @@ function Login({ setUser, setRole, setPatientId, user }) {
   // Check for existing user session on component mount
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (firebaseUser) {
+      if (firebaseUser && !isLoggingOut) { // Prevent redirect during logout
         console.log('User already authenticated:', { uid: firebaseUser.uid, email: firebaseUser.email });
 
         try {
@@ -89,11 +89,18 @@ function Login({ setUser, setRole, setPatientId, user }) {
           localStorage.removeItem('patientId');
           navigate('/login');
         }
+      } else if (!firebaseUser) {
+        // User is not authenticated, stay on login page
+        setUser(null);
+        setRole(null);
+        setPatientId(null);
+        localStorage.removeItem('userId');
+        localStorage.removeItem('patientId');
       }
     });
 
     return () => unsubscribe();
-  }, [navigate, setUser, setRole, setPatientId]);
+  }, [navigate, setUser, setRole, setPatientId, isLoggingOut]);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -273,7 +280,7 @@ function Login({ setUser, setRole, setPatientId, user }) {
     if (role === 'patient') {
       navigate('/patient/select-doctor');
     } else if (role === 'doctor') {
-      navigate('/doctor/chat'); // Updated to match App.js route
+      navigate('/doctor/chat');
     } else if (role === 'admin') {
       navigate('/admin');
     } else {

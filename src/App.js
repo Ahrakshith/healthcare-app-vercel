@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { auth as firebaseAuth, db } from './services/firebase.js';
+import { signOut } from 'firebase/auth'; // Import signOut
 import Login from './components/Login.js';
 import Register from './components/Register.js';
 import PatientChat from './components/PatientChat.js';
@@ -116,7 +117,7 @@ function App() {
             setError(`Failed to fetch user data: ${error.message}`);
             handleAuthFailure();
           }
-       );
+        );
 
         return () => unsubscribeFirestore();
       } else {
@@ -145,10 +146,16 @@ function App() {
       console.log('App.js: Initiating logout for current tab');
     }
     try {
+      // Sign out from Firebase
+      await signOut(firebaseAuth);
+      console.log('App.js: Firebase sign-out completed');
+
+      // Clear app state
       handleAuthFailure();
-      if (process.env.NODE_ENV !== 'production') {
-        console.log('App.js: Local state cleared successfully');
-      }
+      console.log('App.js: Local state cleared successfully');
+
+      // Ensure navigation to login
+      window.location.href = '/login'; // Force navigation to avoid React Router interference
     } catch (err) {
       console.error('App.js: Logout error:', err.message);
       setError(`Failed to log out: ${err.message}`);
