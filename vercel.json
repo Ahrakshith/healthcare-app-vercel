@@ -24,12 +24,12 @@
       "destination": "/api/users/[uid]"
     },
     {
-      "source": "/api/misc/logout",
-      "destination": "/api/misc"
+      "source": "/api/doctors",
+      "destination": "/api/doctors/index.js"
     },
     {
-      "source": "/api/:path*",
-      "destination": "/api/:path*"
+      "source": "/api/misc/logout",
+      "destination": "/api/misc"
     },
     {
       "source": "/patient/chat/:patientId/:doctorId",
@@ -53,7 +53,7 @@
     },
     {
       "source": "/(.*)",
-      "destination": "/"
+      "destination": "/index.html"
     }
   ],
   "cleanUrls": true,

@@ -1,5 +1,6 @@
 import admin from 'firebase-admin';
 import Pusher from 'pusher';
+import { query, where, getDocs } from 'firebase/firestore';
 
 // Initialize Firebase Admin
 if (!admin.apps.length) {
@@ -101,7 +102,7 @@ export default async function handler(req, res) {
           return res.status(404).json({ error: { code: 404, message: 'Doctor not found' } });
         }
 
-        return res.status(200).json({ id: doctorDoc.id, doctorId: doctorDoc.data().doctorId || doctorDoc.id, ...doctorDoc.data() });
+        return res.status(200).json({ id: doctorDoc.id, doctorId: doc.data().doctorId || doc.id, ...doctorDoc.data() });
       } else if (endpoint === 'doctors' && param === 'by-specialty' && specialty) {
         const doctorsSnapshot = await operationWithRetry(() =>
           db.collection('doctors').where('specialty', '==', specialty).get()
