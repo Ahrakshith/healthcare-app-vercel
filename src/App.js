@@ -189,12 +189,12 @@ function App() {
       handleAuthFailure();
       console.log('App: Local state cleared successfully');
 
-      console.log('App: Redirecting to /login');
-      window.location.href = '/login'; // Force full page reload to ensure routing
+      // Remove window.location.href redirect; let components handle navigation
     } catch (err) {
       console.error('App: Logout error:', err.message);
       setError(`Failed to log out: ${err.message}`);
       console.log('App: Logout error set to state:', err.message);
+      throw err; // Let the component handle the error
     }
   };
 

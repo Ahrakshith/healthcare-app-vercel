@@ -1,14 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
+import { signInWithEmailAndPassword, onAuthStateChanged } from 'firebase/auth';
 import { auth } from '../services/firebase.js';
 
-function Login({ setUser, setRole, setPatientId, user }) {
+function Login({ setUser, setRole, setPatientId, user, setError: setParentError }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [isLoggingOut, setIsLoggingOut] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -20,10 +19,27 @@ function Login({ setUser, setRole, setPatientId, user }) {
     if (initialPassword) setPassword(initialPassword);
   }, [initialUsername, initialPassword]);
 
+  // Memoize redirectUser to avoid recreating the function on every render
+  const redirectUser = useCallback(
+    (role) => {
+      if (role === 'patient') {
+        navigate('/patient/select-doctor');
+      } else if (role === 'doctor') {
+        navigate('/doctor/chat');
+      } else if (role === 'admin') {
+        navigate('/admin');
+      } else {
+        navigate('/login');
+      }
+      console.log(`Redirected to ${role} route`);
+    },
+    [navigate]
+  );
+
   // Check for existing user session on component mount
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (firebaseUser && !isLoggingOut) {
+      if (firebaseUser) {
         console.log('User already authenticated:', { uid: firebaseUser.uid, email: firebaseUser.email });
 
         try {
@@ -44,7 +60,6 @@ function Login({ setUser, setRole, setPatientId, user }) {
             const errorText = await response.text();
             console.error('Failed to fetch user data on auth state change:', response.status, errorText);
             setError('Failed to fetch user data. Please log in again.');
-            await signOut(auth);
             setUser(null);
             setRole(null);
             setPatientId(null);
@@ -81,7 +96,6 @@ function Login({ setUser, setRole, setPatientId, user }) {
         } catch (error) {
           console.error('Error during auth state change:', error.message);
           setError(`Authentication error: ${error.message}`);
-          await signOut(auth);
           setUser(null);
           setRole(null);
           setPatientId(null);
@@ -89,7 +103,7 @@ function Login({ setUser, setRole, setPatientId, user }) {
           localStorage.removeItem('patientId');
           navigate('/login');
         }
-      } else if (!firebaseUser) {
+      } else {
         setUser(null);
         setRole(null);
         setPatientId(null);
@@ -99,7 +113,7 @@ function Login({ setUser, setRole, setPatientId, user }) {
     });
 
     return () => unsubscribe();
-  }, [navigate, setUser, setRole, setPatientId, isLoggingOut]);
+  }, [navigate, setUser, setRole, setPatientId, redirectUser]); // Added redirectUser to dependencies
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -206,86 +220,11 @@ function Login({ setUser, setRole, setPatientId, user }) {
       } else {
         setError(`Login failed: ${error.message}`);
       }
+      setParentError(`Login failed: ${error.message}`); // Propagate error to parent
     } finally {
       console.log('Login process completed, isLoading set to false');
       setIsLoading(false);
     }
-  };
-
-  const handleLogout = async () => {
-    setError('');
-    setIsLoggingOut(true);
-
-    try {
-      if (!user) {
-        console.error('Logout attempted with no user authenticated');
-        throw new Error('No user authenticated for logout');
-      }
-
-      const idToken = await user.getIdToken(true);
-      const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
-      const response = await fetch(`${apiUrl}/misc/logout`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${idToken}`,
-          'x-user-uid': user.uid,
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-        credentials: 'include',
-      });
-
-      console.log('Logout API response status:', response.status, 'OK:', response.ok);
-      const responseText = await response.text();
-      console.log('Raw logout API response:', responseText);
-
-      if (!response.ok) {
-        console.error('Logout API Error:', { status: response.status, errorText: responseText });
-        throw new Error(`Logout request failed: ${response.status}, text: ${responseText}`);
-      }
-
-      let logoutData;
-      try {
-        logoutData = JSON.parse(responseText);
-      } catch (parseError) {
-        console.error('Logout JSON parsing failed:', parseError.message, 'Raw response:', responseText);
-        throw new Error('Failed to parse logout API response as JSON');
-      }
-
-      console.log('Server logout response:', logoutData);
-
-      await signOut(auth);
-      console.log('Firebase sign-out completed');
-
-      setUser(null);
-      setRole(null);
-      setPatientId(null);
-      localStorage.removeItem('userId');
-      localStorage.removeItem('patientId');
-      console.log('Cleared user state and localStorage');
-
-      navigate('/login');
-      console.log('Redirected to login page');
-    } catch (error) {
-      console.error('Logout process error:', { message: error.message, stack: error.stack });
-      setError(`Failed to logout: ${error.message}`);
-    } finally {
-      console.log('Logout process completed, isLoggingOut set to false');
-      setIsLoggingOut(false);
-    }
-  };
-
-  const redirectUser = (role) => {
-    if (role === 'patient') {
-      navigate('/patient/select-doctor');
-    } else if (role === 'doctor') {
-      navigate('/doctor/chat');
-    } else if (role === 'admin') {
-      navigate('/admin');
-    } else {
-      navigate('/login');
-    }
-    console.log(`Redirected to ${role} route`);
   };
 
   const goToRegister = () => {
@@ -354,38 +293,6 @@ function Login({ setUser, setRole, setPatientId, user }) {
             Register here
           </span>
         </p>
-        {user && (
-          <button
-            onClick={handleLogout}
-            disabled={isLoggingOut}
-            className="logout-button"
-          >
-            {isLoggingOut ? (
-              <svg
-                className="spinner"
-                xmlns="http://www.w3.org/2000/svg"
-                fill="none"
-                viewBox="0 0 24 24"
-              >
-                <circle
-                  className="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  strokeWidth="4"
-                ></circle>
-                <path
-                  className="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                ></path>
-              </svg>
-            ) : (
-              'Logout'
-            )}
-          </button>
-        )}
       </div>
 
       <style>{`
@@ -481,7 +388,7 @@ function Login({ setUser, setRole, setPatientId, user }) {
           animation: shake 0.5s ease;
         }
 
-        .login-button, .logout-button {
+        .login-button {
           width: 100%;
           padding: 12px;
           border: none;
@@ -492,38 +399,22 @@ function Login({ setUser, setRole, setPatientId, user }) {
           transition: background 0.3s ease, transform 0.3s ease;
           position: relative;
           overflow: hidden;
-        }
-
-        .login-button {
           background: #6E48AA;
           color: #FFFFFF;
         }
 
-        .logout-button {
-          background: #E74C3C;
-          color: #FFFFFF;
-          margin-top: 20px;
-        }
-
-        .login-button:disabled, .logout-button:disabled {
+        .login-button:disabled {
           background: #666;
           color: #A0A0A0;
           cursor: not-allowed;
         }
 
-        .login-button:hover:not(:disabled), .logout-button:hover:not(:disabled) {
-          transform: scale(1.05);
-        }
-
         .login-button:hover:not(:disabled) {
+          transform: scale(1.05);
           background: #5A3E8B;
         }
 
-        .logout-button:hover:not(:disabled) {
-          background: #C0392B;
-        }
-
-        .login-button::before, .logout-button::before {
+        .login-button::before {
           content: '';
           position: absolute;
           top: 0;
@@ -539,7 +430,7 @@ function Login({ setUser, setRole, setPatientId, user }) {
           transition: 0.5s;
         }
 
-        .login-button:hover::before, .logout-button:hover::before {
+        .login-button:hover::before {
           left: 100%;
         }
 
