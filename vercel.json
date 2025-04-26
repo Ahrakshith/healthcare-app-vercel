@@ -32,8 +32,9 @@
     }
   ],
   "rewrites": [
+    { "source": "/api/admin", "destination": "/api/admin/index.js" },
     { "source": "/api/audio/translate", "destination": "/api/audio/index.js" },
-    { "source": "/api/chats/:patientId/:doctorId", "destination": "/api/chats/[patientId]/[doctorId].js" },
+    { "source": "/api/chats/:patientId/:doctorId", "destination": "/api/chats/[patientId]/[doctorId]/index.js" },
     { "source": "/api/users/:uid", "destination": "/api/users/[uid]/index.js" },
     { "source": "/api/misc/logout", "destination": "/api/misc/logout.js" },
     { "source": "/api/misc/notify-missed-dose", "destination": "/api/misc/notify-missed-dose.js" },
