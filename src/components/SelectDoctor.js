@@ -11,7 +11,9 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
   const [error, setError] = useState('');
   const navigate = useNavigate();
 
-  const apiBaseUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
+  const baseApiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app';
+  // Ensure no double /api in the URL
+  const apiBaseUrl = baseApiUrl.endsWith('/api') ? baseApiUrl.replace(/\/api$/, '') : baseApiUrl;
 
   useEffect(() => {
     // Wait for auth state to stabilize
@@ -42,7 +44,7 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
       setLoading(true);
       try {
         const idToken = await firebaseUser.getIdToken(true);
-        const url = specialty === 'All' ? `${apiBaseUrl}/doctors` : `${apiBaseUrl}/doctors/by-specialty/${specialty}`;
+        const url = `${apiBaseUrl}/api/doctors?specialty=${encodeURIComponent(specialty)}`;
         const response = await fetch(url, {
           headers: {
             'x-user-uid': user.uid,
@@ -54,8 +56,15 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
         });
 
         if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(`HTTP error! status: ${response.status}, message: ${errorData.error?.message || response.statusText}`);
+          const errorData = await response.text();
+          let errorMessage;
+          try {
+            const parsedError = JSON.parse(errorData);
+            errorMessage = parsedError.error?.message || response.statusText;
+          } catch (jsonError) {
+            errorMessage = `HTTP error! status: ${response.status}, response: ${errorData}`;
+          }
+          throw new Error(`Failed to fetch doctors: ${errorMessage}`);
         }
 
         const data = await response.json();
@@ -85,8 +94,15 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
       try {
         const response = await fetch(url, options);
         if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(`HTTP error! status: ${response.status}, message: ${errorData.error?.message || response.statusText}`);
+          const errorData = await response.text();
+          let errorMessage;
+          try {
+            const parsedError = JSON.parse(errorData);
+            errorMessage = parsedError.error?.message || response.statusText;
+          } catch (jsonError) {
+            errorMessage = `HTTP error! status: ${response.status}, response: ${errorData}`;
+          }
+          throw new Error(errorMessage);
         }
         return response;
       } catch (error) {
@@ -108,7 +124,7 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
 
     try {
       const idToken = await firebaseUser.getIdToken(true);
-      const response = await fetchWithRetry(`${apiBaseUrl}/doctors/assign`, {
+      const response = await fetchWithRetry(`${apiBaseUrl}/api/doctors/assign`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${idToken}`,
