@@ -113,10 +113,17 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
     });
 
     return () => unsubscribe();
-  }, [navigate, setUser, setRole, setPatientId, redirectUser]); // Added redirectUser to dependencies
+  }, [navigate, setUser, setRole, setPatientId, redirectUser]);
+
+  // Clear error when user starts typing
+  const handleInputChange = (setter) => (e) => {
+    if (error) setError('');
+    setter(e.target.value);
+  };
 
   const handleLogin = async (e) => {
     e.preventDefault();
+    if (isLoading) return; // Prevent multiple clicks
     setError('');
     setIsLoading(true);
 
@@ -220,7 +227,7 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
       } else {
         setError(`Login failed: ${error.message}`);
       }
-      setParentError(`Login failed: ${error.message}`); // Propagate error to parent
+      setParentError(`Login failed: ${error.message}`);
     } finally {
       console.log('Login process completed, isLoading set to false');
       setIsLoading(false);
@@ -243,7 +250,7 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
               type="email"
               id="email"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={handleInputChange(setEmail)}
               required
               placeholder="Enter your Gmail address (e.g., example@gmail.com)"
             />
@@ -254,7 +261,7 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
               type="password"
               id="password"
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={handleInputChange(setPassword)}
               required
               placeholder="Enter your password"
             />

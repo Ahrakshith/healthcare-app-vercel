@@ -40,10 +40,6 @@
       "destination": "/api/:path"
     },
     {
-      "source": "/login",
-      "destination": "/index.html"
-    },
-    {
       "source": "/(.*)",
       "destination": "/index.html"
     }

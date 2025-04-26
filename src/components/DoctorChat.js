@@ -271,6 +271,9 @@ function DoctorChat({ user, role, handleLogout, setError }) {
     return () => {
       pusher.unsubscribe(`chat-${selectedPatientId}-${doctorId}`);
       pusher.disconnect();
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop());
+      }
     };
   }, [selectedPatientId, user?.uid, doctorId, apiBaseUrl, setError]);
 
@@ -286,7 +289,6 @@ function DoctorChat({ user, role, handleLogout, setError }) {
     const assignmentTime = new Date(patientAssignment.timestamp);
     const hoursSinceAssignment = (now - assignmentTime) / (1000 * 60 * 60);
 
-    // Check if patient has been accepted
     if (acceptedPatients[selectedPatientId]) {
       const lastMessageTime = timestamps?.lastMessageTime ? new Date(timestamps.lastMessageTime) : null;
       const hoursSinceLastMessage = lastMessageTime ? (now - lastMessageTime) / (1000 * 60 * 60) : Infinity;
@@ -367,7 +369,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           const response = await fetch(`${apiBaseUrl}/chats/${selectedPatientId}/${doctorId}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
-            body: JSON.stringify({ message }),
+            body: JSON.stringify({ message, append: true }), // Signal to append, not overwrite
             credentials: 'include',
           });
           if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`);
@@ -478,7 +480,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           const response = await fetch(`${apiBaseUrl}/chats/${selectedPatientId}/${doctorId}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
-            body: JSON.stringify({ message }),
+            body: JSON.stringify({ message, append: true }), // Signal to append, not overwrite
             credentials: 'include',
           });
           if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`);
@@ -547,7 +549,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
       const response = await fetch(`${apiBaseUrl}/chats/${selectedPatientId}/${doctorId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
-        body: JSON.stringify({ message }),
+        body: JSON.stringify({ message, append: true }), // Signal to append, not overwrite
         credentials: 'include',
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`);
@@ -619,7 +621,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
         const chatResponse = await fetch(`${apiBaseUrl}/chats/${selectedPatientId}/${doctorId}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
-          body: JSON.stringify({ message }),
+          body: JSON.stringify({ message, append: true }), // Signal to append, not overwrite
           credentials: 'include',
         });
         if (!chatResponse.ok) throw new Error(`HTTP ${chatResponse.status}: ${await chatResponse.text()}`);
