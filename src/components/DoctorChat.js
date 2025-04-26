@@ -1,3 +1,7 @@
+Below is the updated and complete `DoctorChat.js` with detailed logging added to help debug issues, including the HTTP 400 error you encountered. The logging will track key operations such as fetching messages, alerts, patient data, and sending messages, providing more visibility into the request lifecycle. I've also ensured the `fetchMissedDoseAlerts` function correctly sends `patientId` and `doctorId` in the request body and handles potential errors more robustly.
+
+### Updated `DoctorChat.js`
+```javascript
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { collection, query, where, onSnapshot, getDocs, doc, getDoc, setDoc } from 'firebase/firestore';
@@ -46,6 +50,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    console.log('Scrolled to bottom of messages');
   }, []);
 
   useEffect(() => {
@@ -53,18 +58,24 @@ function DoctorChat({ user, role, handleLogout, setError }) {
   }, [messages, scrollToBottom]);
 
   useEffect(() => {
+    console.log('Checking role and user authentication:', { role, userUid: user?.uid });
     if (role !== 'doctor' || !user?.uid) {
-      setError('Please log in as a doctor.');
+      const errorMsg = 'Please log in as a doctor.';
+      setError(errorMsg);
+      console.error(errorMsg);
       navigate('/login', { replace: true });
       return;
     }
 
     const fetchDoctorId = async () => {
+      console.log('Fetching doctor ID for user:', user.uid);
       try {
         const q = query(collection(db, 'doctors'), where('uid', '==', user.uid));
         const querySnapshot = await getDocs(q);
         if (querySnapshot.empty) {
-          setError('Doctor profile not found.');
+          const errorMsg = 'Doctor profile not found.';
+          setError(errorMsg);
+          console.error(errorMsg);
           setLoadingPatients(false);
           return;
         }
@@ -76,8 +87,10 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           doctorId: doctorData.doctorId || 'N/A',
           email: doctorData.email || 'N/A',
         });
+        console.log('Doctor profile fetched successfully:', doctorData);
       } catch (err) {
-        setError(`Failed to fetch doctor profile: ${err.message}`);
+        const errorMsg = `Failed to fetch doctor profile: ${err.message}`;
+        setError(errorMsg);
         console.error('Fetch doctor profile error:', err);
         setLoadingPatients(false);
       }
@@ -87,6 +100,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
   }, [role, user?.uid, navigate, setError]);
 
   useEffect(() => {
+    console.log('Doctor ID updated, fetching patients:', doctorId);
     if (!doctorId) return;
 
     setLoadingPatients(true);
@@ -94,6 +108,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
     const unsubscribe = onSnapshot(
       q,
       (snapshot) => {
+        console.log('Snapshot received for doctor assignments:', snapshot.size);
         const assignedPatients = snapshot.docs.map((doc) => ({
           patientId: doc.data().patientId,
           doctorId: doc.data().doctorId,
@@ -107,19 +122,25 @@ function DoctorChat({ user, role, handleLogout, setError }) {
         if (!selectedPatientId && assignedPatients.length > 0) {
           setSelectedPatientId(assignedPatients[0].patientId);
           setSelectedPatientName(assignedPatients[0].patientName);
+          console.log('Selected default patient:', assignedPatients[0]);
         }
       },
       (err) => {
-        setError(`Failed to fetch patients: ${err.message}`);
+        const errorMsg = `Failed to fetch patients: ${err.message}`;
+        setError(errorMsg);
         console.error('Fetch patients error:', err);
         setLoadingPatients(false);
       }
     );
 
-    return () => unsubscribe();
+    return () => {
+      console.log('Unsubscribing from doctor assignments snapshot');
+      unsubscribe();
+    };
   }, [doctorId, selectedPatientId, setError]);
 
   useEffect(() => {
+    console.log('Fetching accepted patients for doctor:', doctorId);
     if (!doctorId) return;
 
     const fetchAcceptedPatients = async () => {
@@ -128,10 +149,14 @@ function DoctorChat({ user, role, handleLogout, setError }) {
         const acceptedDoc = await getDoc(acceptedRef);
         if (acceptedDoc.exists()) {
           setAcceptedPatients(acceptedDoc.data().accepted || {});
+          console.log('Accepted patients fetched:', acceptedDoc.data().accepted);
+        } else {
+          console.log('No accepted patients document found');
         }
       } catch (err) {
-        console.error('Failed to fetch accepted patients:', err.message);
-        setError(`Failed to fetch accepted patients: ${err.message}`);
+        const errorMsg = `Failed to fetch accepted patients: ${err.message}`;
+        setError(errorMsg);
+        console.error('Fetch accepted patients error:', err);
       }
     };
 
@@ -139,21 +164,25 @@ function DoctorChat({ user, role, handleLogout, setError }) {
   }, [doctorId, setError]);
 
   const getIdToken = async () => {
+    console.log('Attempting to get ID token for user:', user?.uid);
     try {
       const currentUser = auth.currentUser;
       if (!currentUser) {
         throw new Error('No authenticated user found');
       }
       const idToken = await currentUser.getIdToken();
+      console.log('ID token retrieved successfully');
       return idToken;
     } catch (error) {
-      setError(`Failed to get ID token: ${error.message}`);
+      const errorMsg = `Failed to get ID token: ${error.message}`;
+      setError(errorMsg);
       console.error('Get ID token error:', error);
       throw error;
     }
   };
 
   useEffect(() => {
+    console.log('Setting up Pusher and fetching data for patient:', selectedPatientId);
     if (!selectedPatientId || !user?.uid || !doctorId) return;
 
     const pusher = new Pusher(process.env.REACT_APP_PUSHER_APP_ID || '2ed44c3ce3ef227d9924', {
@@ -167,8 +196,10 @@ function DoctorChat({ user, role, handleLogout, setError }) {
     });
 
     const channel = pusher.subscribe(`chat-${selectedPatientId}-${doctorId}`);
+    console.log('Subscribed to Pusher channel:', `chat-${selectedPatientId}-${doctorId}`);
 
     channel.bind('new-message', (message) => {
+      console.log('New message received from Pusher:', message);
       setMessages((prev) => {
         if (!prev.some((msg) => msg.timestamp === message.timestamp && msg.text === message.text)) {
           const updatedMessages = [...prev, message].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
@@ -188,12 +219,14 @@ function DoctorChat({ user, role, handleLogout, setError }) {
     });
 
     channel.bind('missedDoseAlert', (alert) => {
+      console.log('Missed dose alert received from Pusher:', alert);
       if (alert.patientId === selectedPatientId) {
         setMissedDoseAlerts((prev) => [...prev, { ...alert, id: Date.now().toString() }]);
       }
     });
 
     const fetchMessages = async () => {
+      console.log('Fetching messages for patient:', selectedPatientId, 'and doctor:', doctorId);
       setLoadingMessages(true);
       try {
         const idToken = await getIdToken();
@@ -207,11 +240,13 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           credentials: 'include',
         });
 
+        console.log('Fetch messages response status:', response.status);
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}: ${await response.text() || 'Failed to fetch messages'}`);
         }
 
         const data = await response.json();
+        console.log('Fetched messages data:', data);
         const fetchedMessages = data.messages || [];
         setMessages(fetchedMessages.sort((a, b) => a.timestamp.localeCompare(b.timestamp)));
 
@@ -224,27 +259,34 @@ function DoctorChat({ user, role, handleLogout, setError }) {
               lastMessageTime: patientMessages[patientMessages.length - 1].timestamp,
             },
           }));
+          console.log('Updated patient message timestamps:', patientMessages);
         }
       } catch (err) {
-        setError(`Error fetching messages: ${err.message}`);
+        const errorMsg = `Error fetching messages: ${err.message}`;
+        setError(errorMsg);
         console.error('Fetch messages error:', err);
       } finally {
         setLoadingMessages(false);
+        console.log('Finished loading messages');
       }
     };
 
     const fetchLanguagePreference = async () => {
+      console.log('Fetching language preference for patient:', selectedPatientId);
       try {
         const patientRef = doc(db, 'patients', selectedPatientId);
         const patientDoc = await getDoc(patientRef);
         setLanguagePreference(patientDoc.exists() ? patientDoc.data().languagePreference || 'en' : 'en');
+        console.log('Language preference fetched:', patientDoc.data()?.languagePreference || 'en');
       } catch (err) {
-        setError(`Failed to fetch language preference: ${err.message}`);
+        const errorMsg = `Failed to fetch language preference: ${err.message}`;
+        setError(errorMsg);
         console.error('Fetch language preference error:', err);
       }
     };
 
     const fetchMissedDoseAlerts = async () => {
+      console.log('Fetching missed dose alerts for patient:', selectedPatientId, 'and doctor:', doctorId);
       try {
         const idToken = await getIdToken();
         const response = await fetch(`${apiBaseUrl}/admin`, {
@@ -258,11 +300,16 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           credentials: 'include',
         });
 
+        console.log('Fetch alerts response status:', response.status);
+        console.log('Fetch alerts response headers:', response.headers);
         if (!response.ok) {
-          throw new Error(`HTTP ${response.status}: ${await response.text() || 'Failed to fetch alerts'}`);
+          const errorText = await response.text();
+          console.error('Fetch alerts response error:', errorText);
+          throw new Error(`HTTP ${response.status}: ${errorText || 'Failed to fetch alerts'}`);
         }
 
         const data = await response.json();
+        console.log('Fetched alerts data:', data);
         const notifications = data.alerts || [];
         if (!Array.isArray(notifications)) {
           throw new Error('Invalid response format: Expected an array of notifications');
@@ -273,8 +320,10 @@ function DoctorChat({ user, role, handleLogout, setError }) {
             .filter((n) => n.patientId === selectedPatientId)
             .map((n) => ({ ...n, id: n.id || Date.now().toString() }))
         );
+        console.log('Updated missed dose alerts:', notifications);
       } catch (err) {
-        setError(`Failed to fetch alerts: ${err.message}`);
+        const errorMsg = `Failed to fetch alerts: ${err.message}`;
+        setError(errorMsg);
         console.error('Fetch alerts error:', err);
       }
     };
@@ -284,15 +333,18 @@ function DoctorChat({ user, role, handleLogout, setError }) {
     fetchMissedDoseAlerts();
 
     return () => {
+      console.log('Cleaning up Pusher subscription');
       pusher.unsubscribe(`chat-${selectedPatientId}-${doctorId}`);
       pusher.disconnect();
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((track) => track.stop());
+        console.log('Stopped media stream tracks');
       }
     };
   }, [selectedPatientId, user?.uid, doctorId, apiBaseUrl, setError]);
 
   useEffect(() => {
+    console.log('Evaluating diagnosis prompt for patient:', selectedPatientId);
     if (!selectedPatientId || !patients.length) return;
 
     const patientAssignment = patients.find((p) => p.patientId === selectedPatientId);
@@ -308,8 +360,10 @@ function DoctorChat({ user, role, handleLogout, setError }) {
       const hoursSinceLastMessage = lastMessageTime ? (now - lastMessageTime) / (1000 * 60 * 60) : Infinity;
       if (hoursSinceLastMessage >= 168) {
         setDiagnosisPrompt(selectedPatientId);
+        console.log('Diagnosis prompt set due to inactivity > 7 days');
       } else {
         setDiagnosisPrompt(null);
+        console.log('Diagnosis prompt cleared due to recent activity');
       }
       return;
     }
@@ -317,8 +371,10 @@ function DoctorChat({ user, role, handleLogout, setError }) {
     if (!timestamps || !timestamps.firstMessageTime) {
       if (hoursSinceAssignment <= 24) {
         setDiagnosisPrompt(selectedPatientId);
+        console.log('Diagnosis prompt set for new patient within 24 hours');
       } else {
         setDiagnosisPrompt(null);
+        console.log('Diagnosis prompt cleared for old patient');
       }
       return;
     }
@@ -328,15 +384,20 @@ function DoctorChat({ user, role, handleLogout, setError }) {
 
     if (hoursSinceFirstMessage <= 24 || hoursSinceLastMessage >= 168) {
       setDiagnosisPrompt(selectedPatientId);
+      console.log('Diagnosis prompt set due to new message or inactivity > 7 days');
     } else {
       setDiagnosisPrompt(null);
+      console.log('Diagnosis prompt cleared due to active conversation');
     }
   }, [selectedPatientId, patients, patientMessageTimestamps, acceptedPatients]);
 
   const handleDiagnosisDecision = useCallback(
     async (accept) => {
+      console.log('Handling diagnosis decision:', { accept, selectedPatientId });
       if (!selectedPatientId) {
-        setError('No patient selected.');
+        const errorMsg = 'No patient selected.';
+        setError(errorMsg);
+        console.error(errorMsg);
         return;
       }
       if (accept) {
@@ -357,8 +418,10 @@ function DoctorChat({ user, role, handleLogout, setError }) {
             [selectedPatientId]: true,
           }));
           setDiagnosisPrompt(null);
+          console.log('Patient accepted successfully:', selectedPatientId);
         } catch (err) {
-          setError(`Failed to accept patient: ${err.message}`);
+          const errorMsg = `Failed to accept patient: ${err.message}`;
+          setError(errorMsg);
           console.error('Accept patient error:', err);
         }
       } else {
@@ -395,8 +458,10 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           setSelectedPatientId(null);
           setSelectedPatientName('');
           setDiagnosisPrompt(null);
+          console.log('Patient declined and message sent:', message);
         } catch (err) {
-          setError(`Failed to send message: ${err.message}`);
+          const errorMsg = `Failed to send message: ${err.message}`;
+          setError(errorMsg);
           console.error('Diagnosis decision error:', err);
         }
       }
@@ -406,35 +471,46 @@ function DoctorChat({ user, role, handleLogout, setError }) {
 
   const retryUpload = useCallback(
     async (audioBlob, language) => {
+      console.log('Retrying audio upload:', { audioBlob, language });
       try {
         setFailedUpload(null);
         setLoadingAudio(true);
         const idToken = await getIdToken();
         const transcriptionResult = await transcribeAudio(audioBlob, language, user.uid, idToken);
         if (!transcriptionResult.audioUrl) {
-          setError('Transcription succeeded, but no audio URL was returned.');
+          const errorMsg = 'Transcription succeeded, but no audio URL was returned.';
+          setError(errorMsg);
+          console.error(errorMsg);
           return null;
         }
+        console.log('Retry upload successful:', transcriptionResult);
         return transcriptionResult;
       } catch (err) {
-        setError(`Failed to transcribe audio: ${err.message}`);
+        const errorMsg = `Failed to transcribe audio: ${err.message}`;
+        setError(errorMsg);
         setFailedUpload({ audioBlob, language });
         console.error('Retry upload error:', err);
         return null;
       } finally {
         setLoadingAudio(false);
+        console.log('Finished retrying audio upload');
       }
     },
     [user?.uid, setError]
   );
 
   const startRecording = useCallback(async () => {
+    console.log('Starting recording for patient:', selectedPatientId);
     if (!selectedPatientId) {
-      setError('No patient selected.');
+      const errorMsg = 'No patient selected.';
+      setError(errorMsg);
+      console.error(errorMsg);
       return;
     }
     if (!user?.uid) {
-      setError('User not authenticated.');
+      const errorMsg = 'User not authenticated.';
+      setError(errorMsg);
+      console.error(errorMsg);
       return;
     }
     try {
@@ -444,13 +520,18 @@ function DoctorChat({ user, role, handleLogout, setError }) {
       setMediaRecorder(recorder);
       audioChunksRef.current = [];
 
-      recorder.ondataavailable = (e) => e.data.size > 0 && audioChunksRef.current.push(e.data);
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+        console.log('Audio chunk recorded:', e.data.size);
+      };
 
       recorder.onstop = async () => {
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
         if (audioBlob.size === 0) {
-          setError('Recorded audio is empty.');
+          const errorMsg = 'Recorded audio is empty.';
+          setError(errorMsg);
           setLoadingAudio(false);
+          console.error(errorMsg);
           return;
         }
 
@@ -464,22 +545,28 @@ function DoctorChat({ user, role, handleLogout, setError }) {
 
         try {
           const idToken = await getIdToken();
+          console.log('Transcribing audio with language:', 'en-US');
           transcriptionResult = await transcribeAudio(audioBlob, 'en-US', user.uid, idToken);
           audioUrl = transcriptionResult.audioUrl;
           if (!audioUrl) {
-            setError('Transcription succeeded, but no audio URL was returned.');
+            const errorMsg = 'Transcription succeeded, but no audio URL was returned.';
+            setError(errorMsg);
             setLoadingAudio(false);
+            console.error(errorMsg);
             return;
           }
 
           transcribedText = transcriptionResult.transcription || 'Transcription failed';
+          console.log('Transcription result:', transcribedText);
           audioUrlEn = await textToSpeechConvert(transcribedText, 'en-US', user.uid, idToken);
           if (languagePreference === 'kn') {
             translatedText = await translateText(transcribedText, 'en', 'kn', user.uid, idToken);
             audioUrlKn = await textToSpeechConvert(translatedText, 'kn-IN', user.uid, idToken);
+            console.log('Translated text:', translatedText);
           }
         } catch (err) {
-          setError(`Failed to process audio: ${err.message}`);
+          const errorMsg = `Failed to process audio: ${err.message}`;
+          setError(errorMsg);
           setFailedUpload({ audioBlob, language: 'en-US' });
           setLoadingAudio(false);
           console.error('Audio processing error:', err);
@@ -513,6 +600,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
             credentials: 'include',
           });
           if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+          console.log('Message sent successfully:', message);
           setMessages((prev) => {
             if (!prev.some((msg) => msg.timestamp === message.timestamp && msg.text === message.text)) {
               return [...prev, message].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
@@ -520,32 +608,41 @@ function DoctorChat({ user, role, handleLogout, setError }) {
             return prev;
           });
         } catch (err) {
-          setError(`Failed to send message: ${err.message}`);
+          const errorMsg = `Failed to send message: ${err.message}`;
+          setError(errorMsg);
           console.error('Send message error:', err);
         } finally {
           setLoadingAudio(false);
+          console.log('Finished processing audio recording');
         }
       };
 
       recorder.start();
       setRecording(true);
+      console.log('Recording started');
     } catch (err) {
-      setError(`Failed to start recording: ${err.message}`);
+      const errorMsg = `Failed to start recording: ${err.message}`;
+      setError(errorMsg);
       console.error('Recording error:', err);
     }
   }, [selectedPatientId, languagePreference, user?.uid, apiBaseUrl, doctorId, setError]);
 
   const stopRecording = useCallback(() => {
+    console.log('Stopping recording');
     if (mediaRecorder) {
       mediaRecorder.stop();
       setRecording(false);
       streamRef.current?.getTracks().forEach((track) => track.stop());
+      console.log('Recording stopped and stream tracks cleared');
     }
   }, [mediaRecorder]);
 
   const sendMessage = useCallback(async () => {
+    console.log('Sending message:', newMessage, 'to patient:', selectedPatientId);
     if (!newMessage.trim() || !selectedPatientId || !user?.uid || !doctorId) {
-      setError('Please type a message and select a patient.');
+      const errorMsg = 'Please type a message and select a patient.';
+      setError(errorMsg);
+      console.error(errorMsg);
       return;
     }
 
@@ -556,10 +653,12 @@ function DoctorChat({ user, role, handleLogout, setError }) {
 
     try {
       const idToken = await getIdToken();
+      console.log('Converting text to speech in English');
       audioUrlEn = await textToSpeechConvert(newMessage, 'en-US', user.uid, idToken);
       if (languagePreference === 'kn') {
         translatedText = await translateText(newMessage, 'en', 'kn', user.uid, idToken);
         audioUrlKn = await textToSpeechConvert(translatedText, 'kn-IN', user.uid, idToken);
+        console.log('Translated text to Kannada:', translatedText);
       }
 
       const message = {
@@ -587,6 +686,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
         credentials: 'include',
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+      console.log('Message sent successfully:', message);
       setMessages((prev) => {
         if (!prev.some((msg) => msg.timestamp === message.timestamp && msg.text === message.text)) {
           return [...prev, message].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
@@ -595,42 +695,55 @@ function DoctorChat({ user, role, handleLogout, setError }) {
       });
       setNewMessage('');
     } catch (err) {
-      setError(`Failed to send message: ${err.message}`);
+      const errorMsg = `Failed to send message: ${err.message}`;
+      setError(errorMsg);
       console.error('Send message error:', err);
     } finally {
       setLoadingAudio(false);
+      console.log('Finished sending message');
     }
   }, [newMessage, selectedPatientId, user?.uid, doctorId, languagePreference, apiBaseUrl, setError]);
 
   const sendAction = useCallback(
     async () => {
+      console.log('Sending action:', { actionType, diagnosis, prescription, selectedPatientId });
       if (!selectedPatientId || !doctorId) {
-        setError('No patient selected or doctor ID missing.');
+        const errorMsg = 'No patient selected or doctor ID missing.';
+        setError(errorMsg);
+        console.error(errorMsg);
         return;
       }
 
       if (actionType === 'Diagnosis' && !diagnosis.trim()) {
-        setError('Please enter a diagnosis.');
+        const errorMsg = 'Please enter a diagnosis.';
+        setError(errorMsg);
+        console.error(errorMsg);
         return;
       }
 
       if (actionType === 'Prescription') {
         const { medicine, dosage, frequency, duration } = prescription;
         if (!medicine.trim() || !dosage.trim() || !frequency.trim() || !duration.trim()) {
-          setError('Please fill all prescription fields.');
+          const errorMsg = 'Please fill all prescription fields.';
+          setError(errorMsg);
+          console.error(errorMsg);
           return;
         }
         const latestDiagnosisMessage = messages
           .filter((msg) => msg.sender === 'doctor' && msg.diagnosis)
           .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0];
         if (!latestDiagnosisMessage) {
-          setError('Please provide a diagnosis first.');
+          const errorMsg = 'Please provide a diagnosis first.';
+          setError(errorMsg);
+          console.error(errorMsg);
           return;
         }
       }
 
       if (actionType === 'Combined' && (!diagnosis.trim() || !Object.values(prescription).every((v) => v.trim()))) {
-        setError('Please fill all diagnosis and prescription fields.');
+        const errorMsg = 'Please fill all diagnosis and prescription fields.';
+        setError(errorMsg);
+        console.error(errorMsg);
         return;
       }
 
@@ -650,7 +763,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
 
       try {
         const idToken = await getIdToken();
-
+        console.log('Sending chat action to API');
         const chatResponse = await fetch(`${apiBaseUrl}/chats/${selectedPatientId}/${doctorId}`, {
           method: 'POST',
           headers: {
@@ -663,6 +776,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
         });
         if (!chatResponse.ok) throw new Error(`HTTP ${chatResponse.status}: ${await chatResponse.text()}`);
 
+        console.log('Chat action sent successfully, updating messages');
         setMessages((prev) => {
           if (!prev.some((msg) => msg.timestamp === message.timestamp)) {
             return [...prev, message].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
@@ -670,6 +784,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           return prev;
         });
 
+        console.log('Updating patient data with action');
         const patientResponse = await fetch(`${apiBaseUrl}/patients/${selectedPatientId}`, {
           method: 'PATCH',
           headers: {
@@ -691,6 +806,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           .filter((msg) => msg.sender === 'doctor' && msg.diagnosis)
           .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0]?.diagnosis : diagnosis;
 
+        console.log('Sending admin notification');
         const adminResponse = await fetch(`${apiBaseUrl}/admin/notify`, {
           method: 'POST',
           headers: {
@@ -716,8 +832,10 @@ function DoctorChat({ user, role, handleLogout, setError }) {
         setPrescription({ medicine: '', dosage: '', frequency: '', duration: '' });
         setShowActionModal(false);
         setActionType('');
+        console.log('Action completed successfully:', { diagnosis, prescriptionString });
       } catch (err) {
-        setError(`Failed to send action: ${err.message}`);
+        const errorMsg = `Failed to send action: ${err.message}`;
+        setError(errorMsg);
         console.error('Send action error:', err);
       }
     },
@@ -726,21 +844,27 @@ function DoctorChat({ user, role, handleLogout, setError }) {
 
   const readAloud = useCallback(
     async (audioUrl, lang, fallbackText) => {
+      console.log('Reading aloud:', { audioUrl, lang, fallbackText });
       try {
         if (!audioUrl && (!fallbackText || typeof fallbackText !== 'string' || fallbackText.trim() === '')) {
-          setError('Cannot read aloud: No valid audio or text provided.');
+          const errorMsg = 'Cannot read aloud: No valid audio or text provided.';
+          setError(errorMsg);
+          console.error(errorMsg);
           return;
         }
         if (audioUrl) {
           await playAudio(audioUrl);
+          console.log('Played audio from URL:', audioUrl);
         } else {
           const idToken = await getIdToken();
           const normalizedLang = lang === 'kn' ? 'kn-IN' : 'en-US';
           const generatedAudioUrl = await textToSpeechConvert(fallbackText.trim(), normalizedLang, user.uid, idToken);
           await playAudio(generatedAudioUrl);
+          console.log('Generated and played audio for text:', fallbackText);
         }
       } catch (err) {
-        setError(`Failed to read aloud: ${err.message}`);
+        const errorMsg = `Failed to read aloud: ${err.message}`;
+        setError(errorMsg);
         console.error('Read aloud error:', err);
       }
     },
@@ -748,15 +872,18 @@ function DoctorChat({ user, role, handleLogout, setError }) {
   );
 
   const dismissAlert = useCallback((alertId) => {
+    console.log('Dismissing alert:', alertId);
     setMissedDoseAlerts((prev) => prev.filter((alert) => alert.id !== alertId));
   }, []);
 
   const dismissError = useCallback(() => {
+    console.log('Dismissing error');
     setError('');
     setFailedUpload(null);
   }, [setError]);
 
   const isValidPrescription = useCallback((prescription) => {
+    console.log('Validating prescription:', prescription);
     return (
       prescription &&
       prescription.medicine &&
@@ -767,11 +894,14 @@ function DoctorChat({ user, role, handleLogout, setError }) {
   }, []);
 
   const onLogout = useCallback(async () => {
+    console.log('Logging out user:', user?.uid);
     try {
       await handleLogout();
       navigate('/login', { replace: true });
+      console.log('Logout successful');
     } catch (err) {
-      setError(`Failed to log out: ${err.message}`);
+      const errorMsg = `Failed to log out: ${err.message}`;
+      setError(errorMsg);
       console.error('Logout error:', err);
     }
   }, [handleLogout, navigate, setError]);
@@ -787,6 +917,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
             setSelectedPatientName(patient.patientName);
             setMissedDoseAlerts([]);
             setMenuOpen(false);
+            console.log('Selected patient:', patient);
           }}
           tabIndex={0}
           role="button"
@@ -1195,6 +1326,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
                   setActionType('');
                   setDiagnosis('');
                   setPrescription({ medicine: '', dosage: '', frequency: '', duration: '' });
+                  console.log('Modal closed and fields reset');
                 }}
                 className="close-modal"
                 aria-label="Close modal"
@@ -2045,6 +2177,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
         }
       `}</style>
     </div>
+
   );
 }
 
