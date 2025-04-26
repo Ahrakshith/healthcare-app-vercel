@@ -1,19 +1,28 @@
 import admin from 'firebase-admin';
 import Pusher from 'pusher';
-import { query, where, getDocs } from 'firebase/firestore';
 
 // Initialize Firebase Admin
 if (!admin.apps.length) {
   try {
     const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n');
-    if (!process.env.FIREBASE_PROJECT_ID || !privateKey || !process.env.FIREBASE_CLIENT_EMAIL) {
+    if (
+      !process.env.FIREBASE_PROJECT_ID ||
+      !privateKey ||
+      !process.env.FIREBASE_CLIENT_EMAIL ||
+      !process.env.FIREBASE_PRIVATE_KEY_ID ||
+      !process.env.FIREBASE_CLIENT_ID ||
+      !process.env.FIREBASE_CLIENT_CERT_URL
+    ) {
       throw new Error('Missing Firebase credentials');
     }
     admin.initializeApp({
       credential: admin.credential.cert({
         projectId: process.env.FIREBASE_PROJECT_ID,
-        privateKey,
+        privateKey: privateKey,
         clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+        privateKeyId: process.env.FIREBASE_PRIVATE_KEY_ID,
+        clientId: process.env.FIREBASE_CLIENT_ID,
+        clientCertUrl: process.env.FIREBASE_CLIENT_CERT_URL,
       }),
     });
     console.log('Firebase Admin initialized successfully');
@@ -67,8 +76,9 @@ async function generateUniqueId(collectionName, fieldName) {
     for (let i = 0; i < 6; i++) {
       generatedId += characters[Math.floor(Math.random() * characters.length)];
     }
-    const q = query(collectionRef, where(fieldName, '==', generatedId));
-    const snapshot = await operationWithRetry(() => getDocs(q));
+    const snapshot = await operationWithRetry(() =>
+      collectionRef.where(fieldName, '==', generatedId).get()
+    );
     if (snapshot.empty) break;
     console.log(`Generated ${fieldName} ${generatedId} already exists, regenerating...`);
   }
@@ -168,9 +178,8 @@ export default async function handler(req, res) {
       collectionName = 'patients';
       idField = 'patientId';
     } else if (role === 'admin') {
-      // Minimal fields for admin
       userData = { ...userData };
-      collectionName = null; // Admins only stored in 'users' collection
+      collectionName = null;
       idField = null;
     }
 
@@ -192,7 +201,7 @@ export default async function handler(req, res) {
       pusher.trigger('admin-channel', 'doctor-added', { [idField]: uniqueId, name: name || email });
     }
 
-    return res.status(201).json({ message: `${role.charAt(0).toUpperCase() + role.slice(1)} added successfully`, uid, [idField]: uniqueId });
+    return res.status(201).json({ message: `${role.charAt(0).toUpperCase() + role.slice(1)} added successfully`, uid, ...(idField ? { [idField]: uniqueId } : {}) });
   } catch (error) {
     console.error(`Error in /api/users: ${error.message}`);
     if (error.code === 'auth/email-already-in-use') {

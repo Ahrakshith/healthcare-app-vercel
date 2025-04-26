@@ -4,6 +4,7 @@
       "source": "/api/(.*)",
       "headers": [
         { "key": "Access-Control-Allow-Origin", "value": "https://healthcare-app-vercel.vercel.app" },
+        { "key": "Access-Control-Allow-Origin", "value": "http://localhost:3000" },
         { "key": "Access-Control-Allow-Methods", "value": "GET, POST, OPTIONS" },
         { "key": "Access-Control-Allow-Headers", "value": "Authorization, x-user-uid, Content-Type, Accept" },
         { "key": "Access-Control-Max-Age", "value": "86400" }
@@ -20,12 +21,12 @@
       "destination": "/api/chats/[patientId]/[doctorId]"
     },
     {
-      "source": "/api/users/:uid",
-      "destination": "/api/users/[uid]"
+      "source": "/api/users",
+      "destination": "/api/users/index"
     },
     {
-      "source": "/api/users",
-      "destination": "/api/users/index.js"
+      "source": "/api/users/:uid",
+      "destination": "/api/users/[uid]"
     },
     {
       "source": "/api/misc/logout",
@@ -33,7 +34,7 @@
     },
     {
       "source": "/api/path/:path*",
-      "destination": "/api/path/path"
+      "destination": "/api/path/[path]"
     },
     {
       "source": "/patient/chat/:patientId/:doctorId",
