@@ -6,22 +6,17 @@ import busboy from 'busboy';
 // Initialize Firebase Admin
 if (!admin.apps.length) {
   try {
-    const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n');
-    if (!process.env.FIREBASE_PROJECT_ID || !privateKey || !process.env.FIREBASE_CLIENT_EMAIL) {
-      throw new Error('Missing Firebase credentials: FIREBASE_PROJECT_ID, FIREBASE_PRIVATE_KEY, or FIREBASE_CLIENT_EMAIL');
-    }
-
     admin.initializeApp({
       credential: admin.credential.cert({
         projectId: process.env.FIREBASE_PROJECT_ID,
-        privateKey,
+        privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
         clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
       }),
     });
-    console.log('Firebase Admin initialized successfully in api/admin/index.js');
+    console.log('Firebase Admin initialized successfully in api/chats/[patientId]/[doctorId].js');
   } catch (error) {
-    console.error('Firebase Admin initialization failed in api/admin/index.js:', error.message);
-    throw new Error(`Firebase Admin initialization failed: ${error.message}`);
+    console.error('Firebase Admin initialization failed in api/chats/[patientId]/[doctorId].js:', error.message);
+    throw new Error('Firebase Admin initialization failed');
   }
 }
 
@@ -31,10 +26,6 @@ const db = admin.firestore();
 let storage;
 try {
   const gcsPrivateKey = process.env.GCS_PRIVATE_KEY?.replace(/\\n/g, '\n');
-  if (!process.env.GCS_PROJECT_ID || !process.env.GCS_CLIENT_EMAIL || !gcsPrivateKey) {
-    throw new Error('Missing GCS credentials: GCS_PROJECT_ID, GCS_CLIENT_EMAIL, or GCS_PRIVATE_KEY');
-  }
-
   storage = new Storage({
     projectId: process.env.GCS_PROJECT_ID,
     credentials: {
@@ -42,9 +33,9 @@ try {
       private_key: gcsPrivateKey,
     },
   });
-  console.log('Google Cloud Storage initialized successfully in api/admin/index.js');
+  console.log('Google Cloud Storage initialized successfully in api/chats/[patientId]/[doctorId].js');
 } catch (error) {
-  console.error('GCS initialization failed in api/admin/index.js:', error.message);
+  console.error('GCS initialization failed in api/chats/[patientId]/[doctorId].js:', error.message);
   throw new Error(`GCS initialization failed: ${error.message}`);
 }
 
@@ -54,10 +45,6 @@ const bucket = storage.bucket(bucketName);
 // Initialize Pusher
 let pusher;
 try {
-  if (!process.env.PUSHER_APP_ID || !process.env.PUSHER_KEY || !process.env.PUSHER_SECRET || !process.env.PUSHER_CLUSTER) {
-    throw new Error('Missing Pusher credentials: PUSHER_APP_ID, PUSHER_KEY, PUSHER_SECRET, or PUSHER_CLUSTER');
-  }
-
   pusher = new Pusher({
     appId: process.env.PUSHER_APP_ID,
     key: process.env.PUSHER_KEY,
@@ -65,9 +52,9 @@ try {
     cluster: process.env.PUSHER_CLUSTER,
     useTLS: true,
   });
-  console.log('Pusher initialized successfully in api/admin/index.js');
+  console.log('Pusher initialized successfully in api/chats/[patientId]/[doctorId].js');
 } catch (error) {
-  console.error('Pusher initialization failed in api/admin/index.js:', error.message);
+  console.error('Pusher initialization failed in api/chats/[patientId]/[doctorId].js:', error.message);
   throw new Error(`Pusher initialization failed: ${error.message}`);
 }
 
@@ -108,169 +95,6 @@ const generateSignedUrl = async (filePath) => {
   } catch (error) {
     console.error(`Error generating signed URL for ${filePath}:`, error.message);
     throw error;
-  }
-};
-
-// Admin endpoint to fetch missed dose alerts
-const handleAdminRequest = async (req, res, patientId, doctorId, userId) => {
-  if (req.method !== 'POST') {
-    res.setHeader('Allow', ['POST']);
-    return res.status(405).json({ error: { code: 405, message: `Method ${req.method} Not Allowed for /admin` } });
-  }
-
-  try {
-    const userDoc = await db.collection('users').doc(userId).get();
-    if (!userDoc.exists) {
-      return res.status(404).json({ error: { code: 404, message: 'User not found' } });
-    }
-
-    const userData = userDoc.data();
-    if (userData.role !== 'doctor' && userData.role !== 'admin') {
-      return res.status(403).json({ error: { code: 403, message: 'You are not authorized to access this endpoint' } });
-    }
-
-    if (userData.role === 'doctor') {
-      const doctorQuery = await db.collection('doctors')
-        .where('uid', '==', userId)
-        .where('doctorId', '==', doctorId)
-        .get();
-      if (doctorQuery.empty) {
-        return res.status(403).json({ error: { code: 403, message: 'Forbidden: Invalid doctorId for this user' } });
-      }
-
-      const assignmentQuery = await db.collection('doctor_assignments')
-        .where('patientId', '==', patientId)
-        .where('doctorId', '==', doctorId)
-        .get();
-      if (assignmentQuery.empty) {
-        return res.status(403).json({ error: { code: 403, message: 'Forbidden: Patient not assigned to this doctor' } });
-      }
-    }
-
-    const alertsRef = db.collection('missed_dose_alerts')
-      .where('patientId', '==', patientId)
-      .where('doctorId', '==', doctorId);
-    const snapshot = await alertsRef.get();
-
-    const alerts = snapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data(),
-      timestamp: doc.data().timestamp?.toDate?.().toISOString() || doc.data().timestamp || new Date().toISOString(),
-    }));
-
-    console.log(`Fetched ${alerts.length} missed dose alerts for patient ${patientId} and doctor ${doctorId}`);
-    return res.status(200).json({ alerts });
-  } catch (error) {
-    console.error(`Error in /api/admin for user ${userId}:`, error.message);
-    return res.status(500).json({ error: { code: 500, message: 'Failed to fetch alerts', details: error.message } });
-  }
-};
-
-// Admin notification endpoint
-const handleAdminNotify = async (req, res, userId) => {
-  if (req.method !== 'POST') {
-    res.setHeader('Allow', ['POST']);
-    return res.status(405).json({ error: { code: 405, message: `Method ${req.method} Not Allowed for /admin/notify` } });
-  }
-
-  try {
-    const {
-      patientId,
-      patientName,
-      age,
-      sex,
-      description,
-      disease,
-      medicine,
-      doctorId,
-    } = req.body;
-
-    if (!patientId || !doctorId || !patientName || !disease) {
-      return res.status(400).json({ error: { code: 400, message: 'patientId, doctorId, patientName, and disease are required' } });
-    }
-
-    const userDoc = await db.collection('users').doc(userId).get();
-    if (!userDoc.exists || userDoc.data().role !== 'doctor') {
-      return res.status(403).json({ error: { code: 403, message: 'Only doctors can send admin notifications' } });
-    }
-
-    const notification = {
-      patientId,
-      patientName,
-      age: age || 'N/A',
-      sex: sex || 'N/A',
-      description: description || 'N/A',
-      disease,
-      medicine: medicine || 'N/A',
-      doctorId,
-      timestamp: new Date().toISOString(),
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-    };
-
-    await db.collection('admin_notifications').add(notification);
-    console.log(`Admin notification created for patient ${patientId}`);
-
-    await pusher.trigger('admin-notifications', 'new-notification', notification);
-    console.log('Pusher event "new-notification" triggered on channel admin-notifications');
-
-    return res.status(200).json({ message: 'Notification sent successfully', notification });
-  } catch (error) {
-    console.error(`Error in /api/admin/notify for user ${userId}:`, error.message);
-    return res.status(500).json({ error: { code: 500, message: 'Failed to send notification', details: error.message } });
-  }
-};
-
-// Patient update endpoint
-const handlePatientUpdate = async (req, res, patientId, userId) => {
-  if (req.method !== 'PATCH') {
-    res.setHeader('Allow', ['PATCH']);
-    return res.status(405).json({ error: { code: 405, message: `Method ${req.method} Not Allowed for /patients/${patientId}` } });
-  }
-
-  try {
-    const { diagnosis, prescription, doctorId } = req.body;
-
-    if (!diagnosis && !prescription) {
-      return res.status(400).json({ error: { code: 400, message: 'At least one of diagnosis or prescription is required' } });
-    }
-
-    const userDoc = await db.collection('users').doc(userId).get();
-    if (!userDoc.exists || userDoc.data().role !== 'doctor') {
-      return res.status(403).json({ error: { code: 403, message: 'Only doctors can update patient records' } });
-    }
-
-    const doctorQuery = await db.collection('doctors')
-      .where('uid', '==', userId)
-      .where('doctorId', '==', doctorId)
-      .get();
-    if (doctorQuery.empty) {
-      return res.status(403).json({ error: { code: 403, message: 'Forbidden: Invalid doctorId for this user' } });
-    }
-
-    const assignmentQuery = await db.collection('doctor_assignments')
-      .where('patientId', '==', patientId)
-      .where('doctorId', '==', doctorId)
-      .get();
-    if (assignmentQuery.empty) {
-      return res.status(403).json({ error: { code: 403, message: 'Forbidden: Patient not assigned to this doctor' } });
-    }
-
-    const patientRef = db.collection('patients').doc(patientId);
-    const updateData = {
-      ...(diagnosis ? { diagnosis } : {}),
-      ...(prescription ? { prescription } : {}),
-      doctorId,
-      updatedAt: new Date().toISOString(),
-      lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
-    };
-
-    await patientRef.set(updateData, { merge: true });
-    console.log(`Updated patient record for patient ${patientId}`);
-
-    return res.status(200).json({ message: 'Patient record updated successfully', patientId });
-  } catch (error) {
-    console.error(`Error in /api/patients/${patientId} for user ${userId}:`, error.message);
-    return res.status(500).json({ error: { code: 500, message: 'Failed to update patient record', details: error.message } });
   }
 };
 
@@ -506,9 +330,10 @@ const handleChatRequest = async (req, res, patientId, doctorId, userId) => {
   }
 };
 
+// Main handler
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', process.env.FRONTEND_URL || '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Authorization, x-user-uid, Content-Type, Accept');
 
   if (req.method === 'OPTIONS') {
@@ -531,48 +356,15 @@ export default async function handler(req, res) {
       return res.status(403).json({ error: { code: 403, message: 'Unauthorized: Token does not match user' } });
     }
 
-    const urlPath = req.url.split('?')[0]; // Remove query parameters from URL
-    const pathSegments = urlPath.split('/').filter(segment => segment);
+    const { patientId, doctorId } = req.query;
 
-    let patientId, doctorId;
-
-    if (pathSegments[0] === 'patients' && pathSegments[1]) {
-      patientId = pathSegments[1];
-      if (req.method !== 'PATCH') {
-        res.setHeader('Allow', ['PATCH']);
-        return res.status(405).json({ error: { code: 405, message: `Method ${req.method} Not Allowed for /patients/${patientId}` } });
-      }
-      return handlePatientUpdate(req, res, patientId, userId);
-    } else if (pathSegments[0] === 'admin' && pathSegments[1] === 'notify') {
-      if (req.method !== 'POST') {
-        res.setHeader('Allow', ['POST']);
-        return res.status(405).json({ error: { code: 405, message: `Method ${req.method} Not Allowed for /admin/notify` } });
-      }
-      return handleAdminNotify(req, res, userId);
-    } else if (pathSegments[0] === 'admin' || pathSegments[0] === '') {
-      if (req.method !== 'POST') {
-        res.setHeader('Allow', ['POST']);
-        return res.status(405).json({ error: { code: 405, message: `Method ${req.method} Not Allowed for /admin` } });
-      }
-      patientId = req.body.patientId;
-      doctorId = req.body.doctorId;
-      if (!patientId || !doctorId) {
-        return res.status(400).json({ error: { code: 400, message: 'patientId and doctorId are required' } });
-      }
-      return handleAdminRequest(req, res, patientId, doctorId, userId);
-    } else if (pathSegments[0] === 'chats' && pathSegments[1] && pathSegments[2]) {
-      patientId = pathSegments[1];
-      doctorId = pathSegments[2];
-      if (!patientId || !doctorId) {
-        return res.status(400).json({ error: { code: 400, message: 'patientId and doctorId are required' } });
-      }
-      return handleChatRequest(req, res, patientId, doctorId, userId);
-    } else {
-      res.setHeader('Allow', ['GET', 'POST', 'PATCH']);
-      return res.status(405).json({ error: { code: 405, message: `Method ${req.method} Not Allowed for ${req.url}` } });
+    if (!patientId || !doctorId) {
+      return res.status(400).json({ error: { code: 400, message: 'patientId and doctorId are required' } });
     }
+
+    return handleChatRequest(req, res, patientId, doctorId, userId);
   } catch (error) {
-    console.error(`Error in api/admin/index.js (${req.method}) for user ${userId}:`, error.message);
+    console.error(`Error in api/chats/[patientId]/[doctorId].js (${req.method}) for user ${userId}:`, error.message);
     if (error.message === 'Invalid sender type') {
       return res.status(400).json({ error: { code: 400, message: error.message } });
     }

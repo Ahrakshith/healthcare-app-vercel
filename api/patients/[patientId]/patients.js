@@ -19,12 +19,10 @@ if (!admin.apps.length) {
 const db = admin.firestore();
 
 export default async function handler(req, res) {
-  // Set CORS headers
   res.setHeader('Access-Control-Allow-Origin', 'https://healthcare-app-vercel.vercel.app');
   res.setHeader('Access-Control-Allow-Methods', 'POST, PATCH, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'x-user-uid, Content-Type, Authorization');
 
-  // Handle preflight CORS requests
   if (req.method === 'OPTIONS') {
     res.status(200).end();
     return;
@@ -33,20 +31,17 @@ export default async function handler(req, res) {
   const { patientId } = req.query;
   const { 'x-user-uid': uid } = req.headers;
 
-  // Validate UID
   if (!uid) {
     console.error('Missing UID in request headers');
     return res.status(401).json({ error: { code: 401, message: 'Unauthorized: Missing UID in headers' } });
   }
 
-  // Validate patientId
   if (!patientId || typeof patientId !== 'string' || patientId.trim() === '') {
     console.error('Invalid or missing patientId in query:', patientId);
     return res.status(400).json({ error: { code: 400, message: 'Invalid or missing patientId in query' } });
   }
 
   try {
-    // Verify the user's identity and role
     const userRecord = await admin.auth().getUser(uid);
     const userRef = db.collection('users').doc(uid);
     const userDoc = await userRef.get();
@@ -62,29 +57,24 @@ export default async function handler(req, res) {
       return res.status(403).json({ error: { code: 403, message: 'Unauthorized: Only doctors can update patient data' } });
     }
 
-    // Handle POST (create/update) and PATCH (partial update)
     if (req.method === 'POST' || req.method === 'PATCH') {
       const { diagnosis, prescription, doctorId } = req.body;
 
-      // Validate doctorId matches UID
       if (!doctorId || doctorId !== uid) {
         console.error('Invalid or mismatched doctorId. Expected:', uid, 'Received:', doctorId);
         return res.status(403).json({ error: { code: 403, message: 'Invalid or mismatched doctorId' } });
       }
 
-      // Validate that at least one field is provided to update
       if (!diagnosis && !prescription) {
         console.error('No fields provided to update for patient:', patientId);
         return res.status(400).json({ error: { code: 400, message: 'At least one field (diagnosis or prescription) is required' } });
       }
 
-      // Validate diagnosis
       if (diagnosis && (typeof diagnosis !== 'string' || diagnosis.trim() === '')) {
         console.error('Invalid diagnosis format:', diagnosis);
         return res.status(400).json({ error: { code: 400, message: 'Diagnosis must be a non-empty string' } });
       }
 
-      // Validate prescription
       if (prescription) {
         if (typeof prescription === 'string') {
           const regex = /(.+?),\s*(\d+mg),\s*(\d{1,2}[:.]\d{2}\s*(?:AM|PM))\s*and\s*(\d{1,2}[:.]\d{2}\s*(?:AM|PM)),\s*(\d+)\s*days?/i;
@@ -103,7 +93,6 @@ export default async function handler(req, res) {
         }
       }
 
-      // Verify patient exists
       const patientRef = db.collection('patients').doc(patientId);
       const patientDoc = await patientRef.get();
       if (!patientDoc.exists) {
@@ -111,12 +100,10 @@ export default async function handler(req, res) {
         return res.status(404).json({ error: { code: 404, message: 'Patient not found' } });
       }
 
-      // Prepare update data
       const updateData = {};
       if (diagnosis) updateData.diagnosis = diagnosis.trim();
       if (prescription) updateData.prescription = prescription;
 
-      // Update patient data (merge for PATCH, overwrite for POST if needed)
       await patientRef.set(updateData, { merge: true });
       console.log(`Successfully updated patient ${patientId} with data:`, updateData);
 
