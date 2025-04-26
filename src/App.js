@@ -65,18 +65,21 @@ function App() {
 
   useEffect(() => {
     console.log('App: Starting auth state listener setup');
+    let unsubscribeFirestore = () => {};
+
     const unsubscribeAuth = firebaseAuth.onAuthStateChanged(async (authUser) => {
       console.log('App: Auth state changed, authUser:', authUser ? authUser.uid : null);
+      setFirebaseUser(authUser);
+
       if (authUser) {
         if (process.env.NODE_ENV !== 'production') {
           console.log('App: Authenticated user detected, UID:', authUser.uid);
         }
-        setFirebaseUser(authUser);
 
         const userId = authUser.uid;
         console.log('App: Fetching user data for UID:', userId);
         const userRef = doc(db, 'users', userId);
-        const unsubscribeFirestore = onSnapshot(
+        unsubscribeFirestore = onSnapshot(
           userRef,
           (docSnapshot) => {
             console.log('App: Firestore snapshot received for user:', userId);
@@ -119,11 +122,6 @@ function App() {
             handleAuthFailure();
           }
         );
-
-        return () => {
-          console.log('App: Unsubscribing Firestore listener for user:', userId);
-          unsubscribeFirestore();
-        };
       } else {
         console.log('App: No authenticated user detected');
         handleAuthFailure();
@@ -131,8 +129,9 @@ function App() {
     });
 
     return () => {
-      console.log('App: Unsubscribing auth state listener');
       unsubscribeAuth();
+      unsubscribeFirestore();
+      console.log('App: Cleaned up auth and Firestore listeners');
     };
   }, []);
 

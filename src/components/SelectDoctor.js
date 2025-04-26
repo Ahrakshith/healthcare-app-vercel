@@ -15,7 +15,16 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
   const apiBaseUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
 
   useEffect(() => {
-    if (!user || !firebaseUser || role !== 'patient' || !patientId) {
+    // Early validation for authenticated user
+    if (!firebaseUser) {
+      console.log('SelectDoctor: No authenticated user, redirecting to /login');
+      setError('No authenticated user. Please log in.');
+      navigate('/login');
+      return;
+    }
+
+    // Validate user state
+    if (!user || role !== 'patient' || !patientId) {
       console.error('SelectDoctor: Invalid user state:', { user, role, patientId, firebaseUser });
       setError('Invalid session. Please log in again.');
       navigate('/login');

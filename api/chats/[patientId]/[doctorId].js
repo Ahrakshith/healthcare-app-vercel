@@ -26,7 +26,7 @@ try {
 }
 
 const auth = getAuth();
-const db = getFirestore(); // Kept for doctor_assignments; remove if not needed
+const db = getFirestore(); // Kept for doctor_assignments and user data lookup
 
 // Initialize GCS
 let storage;
@@ -161,10 +161,16 @@ export default async function handler(req, res) {
       return res.status(403).json({ error: 'Unauthorized user' });
     }
 
-    // Authorize user for this chat using Firebase Auth custom claims
-    const user = await auth.getUser(userId);
-    const isPatient = user.customClaims?.patientId === patientId;
-    const isDoctor = user.customClaims?.doctorId === doctorId;
+    // Authorize user based on Firestore data instead of custom claims
+    const userDoc = await db.collection('users').doc(userId).get();
+    if (!userDoc.exists) {
+      console.error(`User ${userId} not found in Firestore`);
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const userData = userDoc.data();
+    const isPatient = userData.role === 'patient' && userData.patientId === patientId;
+    const isDoctor = userData.role === 'doctor' && userData.doctorId === doctorId;
     let isAuthorized = false;
     let userRole = null;
 
