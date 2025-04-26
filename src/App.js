@@ -156,6 +156,8 @@ function App() {
     sessionStorage.removeItem('userId');
     sessionStorage.removeItem('patientId');
     sessionStorage.removeItem('lastPath');
+    localStorage.removeItem('patientId');
+    localStorage.removeItem('userId');
     setLoading(false);
     console.log('App: Auth failure handled, loading set to false');
   };
@@ -163,16 +165,23 @@ function App() {
   const handleLogout = async () => {
     console.log('App: Initiating logout process');
     try {
-      const idToken = await firebaseAuth.currentUser?.getIdToken(true);
-      console.log('App: Obtained ID token for logout:', idToken ? 'Success' : 'Failed');
+      let idToken = null;
+      if (firebaseAuth.currentUser) {
+        idToken = await firebaseAuth.currentUser.getIdToken(true);
+        console.log('App: Obtained ID token for logout:', idToken ? 'Success' : 'Failed');
+      } else {
+        console.warn('App: No current user, skipping ID token fetch');
+      }
+
       const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
+      const userId = firebaseAuth.currentUser?.uid || sessionStorage.getItem('userId') || '';
 
       console.log('App: Sending logout request to:', `${apiUrl}/misc/logout`);
       const response = await fetch(`${apiUrl}/misc/logout`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${idToken}`,
-          'x-user-uid': firebaseAuth.currentUser?.uid || '',
+          ...(idToken && { Authorization: `Bearer ${idToken}` }),
+          'x-user-uid': userId,
           'Content-Type': 'application/json',
           'Accept': 'application/json',
         },
@@ -195,8 +204,12 @@ function App() {
       console.log('App: Local state cleared successfully');
     } catch (err) {
       console.error('App: Logout error:', err.message);
-      setError(`Failed to log out: ${err.message}`);
-      throw err;
+      setError(`Failed to log out: ${err.message}. Redirecting to login.`);
+      // Proceed with state cleanup and redirect even if API call fails
+      await signOut(firebaseAuth).catch((signOutErr) => {
+        console.error('App: Firebase sign-out failed:', signOutErr.message);
+      });
+      handleAuthFailure();
     }
   };
 
@@ -222,6 +235,22 @@ function App() {
   }
 
   console.log('App: Rendering main app with user:', user?.uid, 'role:', role, 'patientId:', patientId);
+
+  // Determine redirect path based on role
+  const getRedirectPath = () => {
+    if (!user) return '/login';
+    switch (role) {
+      case 'patient':
+        return '/patient/select-doctor';
+      case 'doctor':
+        return '/doctor/chat';
+      case 'admin':
+        return '/admin';
+      default:
+        return '/login';
+    }
+  };
+
   return (
     <div className="app-container">
       {error && (
@@ -242,19 +271,8 @@ function App() {
         <Route
           path="/login"
           element={
-            user ? (
-              <Navigate
-                to={
-                  role === 'patient'
-                    ? '/patient/select-doctor'
-                    : role === 'doctor'
-                    ? '/doctor/chat'
-                    : role === 'admin'
-                    ? '/admin'
-                    : '/login'
-                }
-                replace
-              />
+            user && role ? (
+              <Navigate to={getRedirectPath()} replace />
             ) : (
               <Login
                 setUser={setUser}
@@ -269,19 +287,8 @@ function App() {
         <Route
           path="/register"
           element={
-            user ? (
-              <Navigate
-                to={
-                  role === 'patient'
-                    ? '/patient/select-doctor'
-                    : role === 'doctor'
-                    ? '/doctor/chat'
-                    : role === 'admin'
-                    ? '/admin'
-                    : '/login'
-                }
-                replace
-              />
+            user && role ? (
+              <Navigate to={getRedirectPath()} replace />
             ) : (
               <Register
                 setUser={setUser}
@@ -362,36 +369,7 @@ function App() {
         />
         <Route
           path="/"
-          element={
-            user ? (
-              role === 'patient' ? (
-                <>
-                  {console.log('App: Redirecting to /patient/select-doctor for patient role')}
-                  <Navigate to="/patient/select-doctor" replace />
-                </>
-              ) : role === 'doctor' ? (
-                <>
-                  {console.log('App: Redirecting to /doctor/chat for doctor role')}
-                  <Navigate to="/doctor/chat" replace />
-                </>
-              ) : role === 'admin' ? (
-                <>
-                  {console.log('App: Redirecting to /admin for admin role')}
-                  <Navigate to="/admin" replace />
-                </>
-              ) : (
-                <>
-                  {console.log('App: Redirecting to /login for unknown role')}
-                  <Navigate to="/login" replace />
-                </>
-              )
-            ) : (
-              <>
-                {console.log('App: Redirecting to /login, no user authenticated')}
-                <Navigate to="/login" replace />
-              </>
-            )
-          }
+          element={<Navigate to={getRedirectPath()} replace />}
         />
         <Route path="*" element={<NotFound />} />
       </Routes>
