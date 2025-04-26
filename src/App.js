@@ -15,6 +15,7 @@ import './components/patient.css';
 // Custom 404 Component
 const NotFound = () => {
   const location = useLocation();
+  console.log(`NotFound: Rendering for path "${location.pathname}"`);
   return (
     <div className="not-found-container">
       <h2>404 - Page Not Found</h2>
@@ -64,23 +65,25 @@ function App() {
   const [error, setError] = useState('');
 
   useEffect(() => {
+    console.log('App: Starting auth state listener setup');
     const unsubscribeAuth = firebaseAuth.onAuthStateChanged(async (authUser) => {
+      console.log('App: Auth state changed, authUser:', authUser);
       if (authUser) {
         if (process.env.NODE_ENV !== 'production') {
-          console.log('App.js: Authenticated user detected, UID:', authUser.uid);
+          console.log('App: Authenticated user detected, UID:', authUser.uid);
         }
         setFirebaseUser(authUser);
 
         const userId = authUser.uid;
+        console.log('App: Fetching user data for UID:', userId);
         const userRef = doc(db, 'users', userId);
         const unsubscribeFirestore = onSnapshot(
           userRef,
           (docSnapshot) => {
+            console.log('App: Firestore snapshot received for user:', userId);
             if (docSnapshot.exists()) {
               const userData = docSnapshot.data();
-              if (process.env.NODE_ENV !== 'production') {
-                console.log('App.js: Fetched Firestore user data:', userData);
-              }
+              console.log('App: Fetched Firestore user data:', userData);
 
               const updatedUser = {
                 uid: userId,
@@ -90,48 +93,52 @@ function App() {
 
               setUser(updatedUser);
               setRole(userData.role);
+              console.log('App: Updated user state:', updatedUser, 'Role:', userData.role);
 
               if (userData.role === 'patient') {
                 const pid = userData.patientId || userId;
                 setPatientId(pid);
                 sessionStorage.setItem('patientId', pid);
-                if (process.env.NODE_ENV !== 'production') {
-                  console.log(`App.js: Set patientId=${pid} for patient role`);
-                }
+                console.log(`App: Set patientId=${pid} for patient role`);
               } else {
                 setPatientId(null);
                 sessionStorage.removeItem('patientId');
+                console.log('App: Cleared patientId for non-patient role');
               }
 
               sessionStorage.setItem('userId', userId);
               setLoading(false);
+              console.log('App: Loading complete, user data set');
             } else {
-              if (process.env.NODE_ENV !== 'production') {
-                console.log('App.js: User document not found in Firestore');
-              }
+              console.log('App: User document not found in Firestore for UID:', userId);
               handleAuthFailure();
             }
           },
           (error) => {
-            console.error('App.js: Firestore fetch error:', error.message);
+            console.error('App: Firestore fetch error:', error.message);
             setError(`Failed to fetch user data: ${error.message}`);
             handleAuthFailure();
           }
         );
 
-        return () => unsubscribeFirestore();
+        return () => {
+          console.log('App: Unsubscribing Firestore listener for user:', userId);
+          unsubscribeFirestore();
+        };
       } else {
-        if (process.env.NODE_ENV !== 'production') {
-          console.log('App.js: No authenticated user');
-        }
+        console.log('App: No authenticated user detected');
         handleAuthFailure();
       }
     });
 
-    return () => unsubscribeAuth();
+    return () => {
+      console.log('App: Unsubscribing auth state listener');
+      unsubscribeAuth();
+    };
   }, []);
 
   const handleAuthFailure = () => {
+    console.log('App: Handling auth failure, clearing all states');
     setFirebaseUser(null);
     setUser(null);
     setRole(null);
@@ -139,17 +146,20 @@ function App() {
     sessionStorage.removeItem('userId');
     sessionStorage.removeItem('patientId');
     setLoading(false);
+    console.log('App: Auth failure handled, loading set to false');
   };
 
   const handleLogout = async () => {
+    console.log('App: Initiating logout process');
     if (process.env.NODE_ENV !== 'production') {
-      console.log('App.js: Initiating logout for current tab');
+      console.log('App: Initiating logout for current tab');
     }
     try {
       const idToken = await firebaseAuth.currentUser?.getIdToken(true);
+      console.log('App: Obtained ID token for logout:', idToken ? 'Success' : 'Failed');
       const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
 
-      // Call the logout endpoint
+      console.log('App: Sending logout request to:', `${apiUrl}/misc/logout`);
       const response = await fetch(`${apiUrl}/misc/logout`, {
         method: 'POST',
         headers: {
@@ -161,34 +171,35 @@ function App() {
         credentials: 'include',
       });
 
+      console.log('App: Logout request response status:', response.status);
       if (!response.ok) {
         const errorText = await response.text();
+        console.error('App: Logout request failed, details:', errorText);
         throw new Error(`Logout request failed: ${response.status}, ${errorText}`);
       }
 
       const logoutData = await response.json();
-      console.log('Logout response:', logoutData);
+      console.log('App: Logout response data:', logoutData);
 
-      // Sign out from Firebase client
+      console.log('App: Initiating Firebase sign-out');
       await signOut(firebaseAuth);
-      console.log('App.js: Firebase sign-out completed');
+      console.log('App: Firebase sign-out completed');
 
-      // Clear app state
+      console.log('App: Clearing app state');
       handleAuthFailure();
-      console.log('App.js: Local state cleared successfully');
+      console.log('App: Local state cleared successfully');
 
-      // Force navigation to login
-      window.location.href = '/login';
+      console.log('App: Redirecting to /login');
+      window.location.href = '/login'; // Force full page reload to ensure routing
     } catch (err) {
-      console.error('App.js: Logout error:', err.message);
+      console.error('App: Logout error:', err.message);
       setError(`Failed to log out: ${err.message}`);
+      console.log('App: Logout error set to state:', err.message);
     }
   };
 
   if (loading) {
-    if (process.env.NODE_ENV !== 'production') {
-      console.log('App.js: Rendering loading state');
-    }
+    console.log('App: Rendering loading state');
     return (
       <div className="loading-container">
         <p>Loading...</p>
@@ -208,12 +219,13 @@ function App() {
     );
   }
 
+  console.log('App: Rendering main app with user:', user, 'role:', role, 'patientId:', patientId);
   return (
     <div className="app-container">
       {error && (
         <div className="error-message">
           <span>{error}</span>
-          <button onClick={() => setError('')} className="dismiss-error">
+          <button onClick={() => { setError(''); console.log('App: Error dismissed'); }} className="dismiss-error">
             Dismiss
           </button>
         </div>
@@ -331,7 +343,7 @@ function App() {
                 <Navigate to="/admin" replace />
               ) : (
                 <Navigate to="/login" replace />
-            )
+              )
             ) : (
               <Navigate to="/login" replace />
             )
@@ -403,6 +415,7 @@ function App() {
 }
 
 export default function AppWrapper() {
+  console.log('AppWrapper: Rendering Router');
   return (
     <Router>
       <App />

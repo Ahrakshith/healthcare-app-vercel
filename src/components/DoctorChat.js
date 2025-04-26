@@ -721,13 +721,14 @@ function DoctorChat({ user, role, handleLogout }) {
 
   const onLogout = useCallback(async () => {
     try {
-      await handleLogout();
-      navigate('/login');
+    await handleLogout();
+    navigate('/login');
     } catch (err) {
-      setError(`Failed to log out: ${err.message}`);
-      console.error('Logout error:', err);
+    setError(`Failed to log out: ${err.message}`);
+    console.error('Logout error:', err);
     }
   }, [handleLogout, navigate]);
+
 
   // Memoize patient list rendering to prevent unnecessary re-renders
   const patientList = useMemo(() => (
