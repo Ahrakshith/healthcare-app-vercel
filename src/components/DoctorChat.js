@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom';
 import { collection, query, where, onSnapshot, getDocs, doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../services/firebase.js';
+import { getAuth } from 'firebase/auth'; // Import Firebase Auth to get the ID token
 import Pusher from 'pusher-js';
 import { transcribeAudio, translateText, textToSpeechConvert } from '../services/speech.js';
 
@@ -40,6 +41,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
   const streamRef = useRef(null);
   const navigate = useNavigate();
 
+  const auth = getAuth(); // Initialize Firebase Auth to get the ID token
   const apiBaseUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
 
   const scrollToBottom = useCallback(() => {
@@ -137,6 +139,21 @@ function DoctorChat({ user, role, handleLogout, setError }) {
     fetchAcceptedPatients();
   }, [doctorId, setError]);
 
+  // Function to get Firebase ID token
+  const getIdToken = async () => {
+    try {
+      const currentUser = auth.currentUser;
+      if (!currentUser) {
+        throw new Error('No authenticated user found');
+      }
+      const idToken = await currentUser.getIdToken();
+      return idToken;
+    } catch (error) {
+      setError(`Failed to get ID token: ${error.message}`);
+      throw error;
+    }
+  };
+
   // Pusher and Data Fetching
   useEffect(() => {
     if (!selectedPatientId || !user?.uid || !doctorId) return;
@@ -186,8 +203,14 @@ function DoctorChat({ user, role, handleLogout, setError }) {
     const fetchMessages = async () => {
       setLoadingMessages(true);
       try {
+        const idToken = await getIdToken();
         const response = await fetch(`${apiBaseUrl}/chats/${selectedPatientId}/${doctorId}`, {
-          headers: { 'x-user-uid': user.uid },
+          method: 'GET',
+          headers: {
+            'x-user-uid': user.uid,
+            'Authorization': `Bearer ${idToken}`,
+            'Content-Type': 'application/json',
+          },
           credentials: 'include',
         });
 
@@ -232,9 +255,14 @@ function DoctorChat({ user, role, handleLogout, setError }) {
     // Fetch missed dose alerts
     const fetchMissedDoseAlerts = async () => {
       try {
+        const idToken = await getIdToken();
         const response = await fetch(`${apiBaseUrl}/admin`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
+          headers: {
+            'Content-Type': 'application/json',
+            'x-user-uid': user.uid,
+            'Authorization': `Bearer ${idToken}`,
+          },
           body: JSON.stringify({
             patientId: selectedPatientId,
             doctorId: doctorId,
@@ -366,10 +394,15 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           patientId: selectedPatientId,
         };
         try {
+          const idToken = await getIdToken();
           const response = await fetch(`${apiBaseUrl}/chats/${selectedPatientId}/${doctorId}`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
-            body: JSON.stringify({ message, append: true }), // Signal to append, not overwrite
+            headers: {
+              'Content-Type': 'application/json',
+              'x-user-uid': user.uid,
+              'Authorization': `Bearer ${idToken}`,
+            },
+            body: JSON.stringify({ message, append: true }),
             credentials: 'include',
           });
           if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`);
@@ -391,7 +424,8 @@ function DoctorChat({ user, role, handleLogout, setError }) {
       try {
         setFailedUpload(null);
         setLoadingAudio(true);
-        const transcriptionResult = await transcribeAudio(audioBlob, language, user.uid);
+        const idToken = await getIdToken();
+        const transcriptionResult = await transcribeAudio(audioBlob, language, user.uid, idToken);
         if (!transcriptionResult.audioUrl) {
           setError('Transcription succeeded, but no audio URL was returned.');
           return null;
@@ -440,7 +474,8 @@ function DoctorChat({ user, role, handleLogout, setError }) {
         let audioUrlKn = null;
 
         try {
-          transcriptionResult = await transcribeAudio(audioBlob, 'en-US', user.uid);
+          const idToken = await getIdToken();
+          transcriptionResult = await transcribeAudio(audioBlob, 'en-US', user.uid, idToken);
           audioUrl = transcriptionResult.audioUrl;
           if (!audioUrl) {
             setError('Transcription succeeded, but no audio URL was returned.');
@@ -477,10 +512,15 @@ function DoctorChat({ user, role, handleLogout, setError }) {
         };
 
         try {
+          const idToken = await getIdToken();
           const response = await fetch(`${apiBaseUrl}/chats/${selectedPatientId}/${doctorId}`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
-            body: JSON.stringify({ message, append: true }), // Signal to append, not overwrite
+            headers: {
+              'Content-Type': 'application/json',
+              'x-user-uid': user.uid,
+              'Authorization': `Bearer ${idToken}`,
+            },
+            body: JSON.stringify({ message, append: true }),
             credentials: 'include',
           });
           if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`);
@@ -546,10 +586,15 @@ function DoctorChat({ user, role, handleLogout, setError }) {
         patientId: selectedPatientId,
       };
 
+      const idToken = await getIdToken();
       const response = await fetch(`${apiBaseUrl}/chats/${selectedPatientId}/${doctorId}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
-        body: JSON.stringify({ message, append: true }), // Signal to append, not overwrite
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-uid': user.uid,
+          'Authorization': `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ message, append: true }),
         credentials: 'include',
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`);
@@ -617,11 +662,17 @@ function DoctorChat({ user, role, handleLogout, setError }) {
       };
 
       try {
+        const idToken = await getIdToken();
+
         // Send message to chat
         const chatResponse = await fetch(`${apiBaseUrl}/chats/${selectedPatientId}/${doctorId}`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
-          body: JSON.stringify({ message, append: true }), // Signal to append, not overwrite
+          headers: {
+            'Content-Type': 'application/json',
+            'x-user-uid': user.uid,
+            'Authorization': `Bearer ${idToken}`,
+          },
+          body: JSON.stringify({ message, append: true }),
           credentials: 'include',
         });
         if (!chatResponse.ok) throw new Error(`HTTP ${chatResponse.status}: ${await chatResponse.text()}`);
@@ -636,7 +687,11 @@ function DoctorChat({ user, role, handleLogout, setError }) {
         // Update patient record
         await fetch(`${apiBaseUrl}/patients/${selectedPatientId}`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
+          headers: {
+            'Content-Type': 'application/json',
+            'x-user-uid': user.uid,
+            'Authorization': `Bearer ${idToken}`,
+          },
           body: JSON.stringify({
             ...(actionType === 'Diagnosis' || actionType === 'Combined' ? { diagnosis } : {}),
             ...(actionType === 'Prescription' || actionType === 'Combined' ? { prescription: prescriptionString } : {}),
@@ -653,7 +708,11 @@ function DoctorChat({ user, role, handleLogout, setError }) {
 
         const adminResponse = await fetch(`${apiBaseUrl}/admin`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
+          headers: {
+            'Content-Type': 'application/json',
+            'x-user-uid': user.uid,
+            'Authorization': `Bearer ${idToken}`,
+          },
           body: JSON.stringify({
             patientId: selectedPatientId,
             patientName: selectedPatientName,
