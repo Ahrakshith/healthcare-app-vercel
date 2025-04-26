@@ -19,6 +19,15 @@
         { "key": "Access-Control-Allow-Headers", "value": "Authorization, x-user-uid, Content-Type, Accept" },
         { "key": "Access-Control-Max-Age", "value": "86400" }
       ]
+    },
+    {
+      "source": "/(.*)\\.(html|js|css)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-store"
+        }
+      ]
     }
   ],
   "routes": [
@@ -49,6 +58,10 @@
     {
       "src": "/api/:path*",
       "dest": "/api/index.js"
+    },
+    {
+      "src": "/(.*)\\.html",
+      "dest": "/index.html"
     },
     {
       "src": "/(.*)",
