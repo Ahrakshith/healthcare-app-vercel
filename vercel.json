@@ -1,36 +1,22 @@
 {
-  "version": 2,
-  "builds": [
-    {
-      "src": "api/**/*.js",
-      "use": "@vercel/node"
-    },
-    {
-      "src": "public/**",
-      "use": "@vercel/static"
-    },
-    {
-      "src": "index.html",
-      "use": "@vercel/static"
-    }
-  ],
-  "headers": [
-    {
-      "source": "/api/(.*)",
-      "headers": [
-        { "key": "Access-Control-Allow-Origin", "value": "*" },
-        { "key": "Access-Control-Allow-Methods", "value": "GET, POST, OPTIONS" },
-        { "key": "Access-Control-Allow-Headers", "value": "Authorization, x-user-uid, Content-Type, Accept" },
-        { "key": "Access-Control-Max-Age", "value": "86400" }
-      ]
-    },
-    {
-      "source": "/(.*).(html|js|css)",
-      "headers": [
-        { "key": "Cache-Control", "value": "no-store" }
-      ]
-    }
-  ],
+   "version": 2,
+   "headers": [
+     {
+       "source": "/api/(.*)",
+       "headers": [
+         { "key": "Access-Control-Allow-Origin", "value": "https://healthcare-app-vercel.vercel.app" },
+         { "key": "Access-Control-Allow-Methods", "value": "GET, POST, OPTIONS" },
+         { "key": "Access-Control-Allow-Headers", "value": "Authorization, x-user-uid, Content-Type, Accept" },
+         { "key": "Access-Control-Max-Age", "value": "86400" }
+       ]
+     },
+     {
+       "source": "/(.*).(html|js|css)",
+       "headers": [
+         { "key": "Cache-Control", "value": "no-store" }
+       ]
+     }
+   ],
   "rewrites": [
     { "source": "/api/admin", "destination": "/api/admin/index.js" },
     { "source": "/api/audio/translate", "destination": "/api/audio/index.js" },
