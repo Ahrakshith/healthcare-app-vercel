@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { collection, query, where, onSnapshot, getDocs, doc, getDoc, setDoc } from 'firebase/firestore';
@@ -780,23 +779,6 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           }
           return prev;
         });
-
-        console.log('Updating patient data with action');
-        const patientResponse = await fetch(`${apiBaseUrl}/patients/${selectedPatientId}`, {
-          method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-user-uid': user.uid,
-            'Authorization': `Bearer ${idToken}`,
-          },
-          body: JSON.stringify({
-            ...(actionType === 'Diagnosis' || actionType === 'Combined' ? { diagnosis } : {}),
-            ...(actionType === 'Prescription' || actionType === 'Combined' ? { prescription: prescriptionString } : {}),
-            doctorId,
-          }),
-          credentials: 'include',
-        });
-        if (!patientResponse.ok) throw new Error(`HTTP ${patientResponse.status}: ${await patientResponse.text()}`);
 
         const selectedPatient = patients.find((p) => p.patientId === selectedPatientId);
         const disease = actionType === 'Prescription' ? messages
@@ -2174,7 +2156,6 @@ function DoctorChat({ user, role, handleLogout, setError }) {
         }
       `}</style>
     </div>
-
   );
 }
 
