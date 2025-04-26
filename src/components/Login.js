@@ -1,13 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { signInWithEmailAndPassword, onAuthStateChanged } from 'firebase/auth';
+import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
 import { auth } from '../services/firebase.js';
 
-function Login({ setUser, setRole, setPatientId, user, setError: setParentError }) {
+function Login({ setUser, setRole, setPatientId, user }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -42,18 +43,18 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
           if (!response.ok) {
             const errorText = await response.text();
             console.error('Failed to fetch user data on auth state change:', response.status, errorText);
-            throw new Error(`Failed to fetch user data: ${response.status} ${errorText}`);
+            setError('Failed to fetch user data. Please log in again.');
+            await signOut(auth);
+            setUser(null);
+            setRole(null);
+            setPatientId(null);
+            localStorage.removeItem('userId');
+            localStorage.removeItem('patientId');
+            navigate('/login');
+            return;
           }
 
-          const responseText = await response.text();
-          let userData;
-          try {
-            userData = JSON.parse(responseText);
-          } catch (parseError) {
-            console.error('JSON parsing failed during auth state change:', parseError.message, 'Raw response:', responseText);
-            throw new Error('Server returned invalid JSON response');
-          }
-
+          const userData = await response.json();
           if (!userData || !userData.role) {
             throw new Error('Invalid user data received from server, missing role');
           }
@@ -75,11 +76,12 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
             localStorage.setItem('patientId', userData.patientId);
           }
           localStorage.setItem('userId', firebaseUser.uid);
-          // Let App.js handle the redirect
+
+          redirectUser(userData.role);
         } catch (error) {
           console.error('Error during auth state change:', error.message);
           setError(`Authentication error: ${error.message}`);
-          setParentError(`Authentication error: ${error.message}`);
+          await signOut(auth);
           setUser(null);
           setRole(null);
           setPatientId(null);
@@ -87,32 +89,15 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
           localStorage.removeItem('patientId');
           navigate('/login');
         }
-      } else {
-        setUser(null);
-        setRole(null);
-        setPatientId(null);
-        localStorage.removeItem('userId');
-        localStorage.removeItem('patientId');
       }
     });
 
     return () => unsubscribe();
   }, [navigate, setUser, setRole, setPatientId]);
 
-  // Clear error when user starts typing
-  const handleInputChange = (setter) => (e) => {
-    if (error) {
-      setError('');
-      setParentError(''); // Clear parent error as well
-    }
-    setter(e.target.value);
-  };
-
   const handleLogin = async (e) => {
     e.preventDefault();
-    if (isLoading) return; // Prevent multiple clicks
     setError('');
-    setParentError('');
     setIsLoading(true);
 
     if (!email.trim()) {
@@ -167,7 +152,7 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
         userData = JSON.parse(responseText);
       } catch (parseError) {
         console.error('JSON parsing failed:', parseError.message, 'Raw response:', responseText);
-        throw new Error('Server returned invalid JSON response');
+        throw new Error('Failed to parse API response as JSON');
       }
 
       console.log('User data received from API:', userData);
@@ -197,33 +182,104 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
       localStorage.setItem('userId', firebaseUser.uid);
       console.log('Set userId in localStorage:', firebaseUser.uid);
 
-      // Let App.js handle the redirect based on updated state
+      redirectUser(userData.role);
     } catch (error) {
       console.error('Login process error:', { message: error.message, code: error.code, stack: error.stack });
-      let errorMessage = 'Login failed. Please try again.';
       if (error.code === 'auth/invalid-credential') {
-        errorMessage = 'Invalid email or password. Please try again.';
+        setError('Invalid email or password. Please try again.');
       } else if (error.code === 'auth/user-not-found') {
-        errorMessage = 'User not found. Please register first.';
+        setError('User not found. Please register first.');
       } else if (error.code === 'auth/wrong-password') {
-        errorMessage = 'Incorrect password. Please try again.';
+        setError('Incorrect password. Please try again.');
       } else if (error.message.includes('HTTP error')) {
         if (error.message.includes('404')) {
-          errorMessage = 'User data not found on server. Please register or contact support.';
+          setError('User data not found on server. Please register or contact support.');
         } else {
-          errorMessage = 'Failed to fetch user data. Please check the server or try again later.';
+          setError('Failed to fetch user data. Please check the server or try again later.');
         }
-      } else if (error.message.includes('invalid JSON')) {
-        errorMessage = 'Server error: Invalid response format. Please try again later.';
       } else {
-        errorMessage = `Login failed: ${error.message}`;
+        setError(`Login failed: ${error.message}`);
       }
-      setError(errorMessage);
-      setParentError(errorMessage);
     } finally {
       console.log('Login process completed, isLoading set to false');
       setIsLoading(false);
     }
+  };
+
+  const handleLogout = async () => {
+    setError('');
+    setIsLoggingOut(true);
+
+    try {
+      if (!user) {
+        console.error('Logout attempted with no user authenticated');
+        throw new Error('No user authenticated for logout');
+      }
+
+      const idToken = await user.getIdToken(true);
+      const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
+      const response = await fetch(`${apiUrl}/logout`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${idToken}`,
+          'x-user-uid': user.uid,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        credentials: 'include',
+      });
+
+      console.log('Logout API response status:', response.status, 'OK:', response.ok);
+      const responseText = await response.text();
+      console.log('Raw logout API response:', responseText);
+
+      if (!response.ok) {
+        console.error('Logout API Error:', { status: response.status, errorText: responseText });
+        throw new Error(`Logout request failed: ${response.status}, text: ${responseText}`);
+      }
+
+      let logoutData;
+      try {
+        logoutData = JSON.parse(responseText);
+      } catch (parseError) {
+        console.error('Logout JSON parsing failed:', parseError.message, 'Raw response:', responseText);
+        throw new Error('Failed to parse logout API response as JSON');
+      }
+
+      console.log('Server logout response:', logoutData);
+
+      await signOut(auth);
+      console.log('Firebase sign-out completed');
+
+      setUser(null);
+      setRole(null);
+      setPatientId(null);
+      localStorage.removeItem('userId');
+      localStorage.removeItem('patientId');
+      console.log('Cleared user state and localStorage');
+
+      navigate('/login');
+      console.log('Redirected to login page');
+    } catch (error) {
+      console.error('Logout process error:', { message: error.message, stack: error.stack });
+      setError(`Failed to logout: ${error.message}`);
+    } finally {
+      console.log('Logout process completed, isLoggingOut set to false');
+      setIsLoggingOut(false);
+    }
+  };
+
+  const redirectUser = (role) => {
+    if (role === 'patient') {
+      navigate('/patient/select-doctor');
+    } else if (role === 'doctor') {
+      navigate('/doctor/chat'); // Updated to match App.js route
+    } else if (role === 'admin') {
+      navigate('/admin');
+    } else {
+      navigate('/login');
+    }
+    console.log(`Redirected to ${role} route`);
   };
 
   const goToRegister = () => {
@@ -242,7 +298,7 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
               type="email"
               id="email"
               value={email}
-              onChange={handleInputChange(setEmail)}
+              onChange={(e) => setEmail(e.target.value)}
               required
               placeholder="Enter your Gmail address (e.g., example@gmail.com)"
             />
@@ -253,7 +309,7 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
               type="password"
               id="password"
               value={password}
-              onChange={handleInputChange(setPassword)}
+              onChange={(e) => setPassword(e.target.value)}
               required
               placeholder="Enter your password"
             />
@@ -292,6 +348,38 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
             Register here
           </span>
         </p>
+        {user && (
+          <button
+            onClick={handleLogout}
+            disabled={isLoggingOut}
+            className="logout-button"
+          >
+            {isLoggingOut ? (
+              <svg
+                className="spinner"
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+              >
+                <circle
+                  className="opacity-25"
+                  cx="12"
+                  cy="12"
+                  r="10"
+                  stroke="currentColor"
+                  strokeWidth="4"
+                ></circle>
+                <path
+                  className="opacity-75"
+                  fill="currentColor"
+                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                ></path>
+              </svg>
+            ) : (
+              'Logout'
+            )}
+          </button>
+        )}
       </div>
 
       <style>{`
@@ -387,7 +475,7 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
           animation: shake 0.5s ease;
         }
 
-        .login-button {
+        .login-button, .logout-button {
           width: 100%;
           padding: 12px;
           border: none;
@@ -398,22 +486,38 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
           transition: background 0.3s ease, transform 0.3s ease;
           position: relative;
           overflow: hidden;
+        }
+
+        .login-button {
           background: #6E48AA;
           color: #FFFFFF;
         }
 
-        .login-button:disabled {
+        .logout-button {
+          background: #E74C3C;
+          color: #FFFFFF;
+          margin-top: 20px;
+        }
+
+        .login-button:disabled, .logout-button:disabled {
           background: #666;
           color: #A0A0A0;
           cursor: not-allowed;
         }
 
-        .login-button:hover:not(:disabled) {
+        .login-button:hover:not(:disabled), .logout-button:hover:not(:disabled) {
           transform: scale(1.05);
+        }
+
+        .login-button:hover:not(:disabled) {
           background: #5A3E8B;
         }
 
-        .login-button::before {
+        .logout-button:hover:not(:disabled) {
+          background: #C0392B;
+        }
+
+        .login-button::before, .logout-button::before {
           content: '';
           position: absolute;
           top: 0;
@@ -429,7 +533,7 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
           transition: 0.5s;
         }
 
-        .login-button:hover::before {
+        .login-button:hover::before, .logout-button:hover::before {
           left: 100%;
         }
 
