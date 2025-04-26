@@ -1,7 +1,4 @@
-Below is the updated and complete `DoctorChat.js` with detailed logging added to help debug issues, including the HTTP 400 error you encountered. The logging will track key operations such as fetching messages, alerts, patient data, and sending messages, providing more visibility into the request lifecycle. I've also ensured the `fetchMissedDoseAlerts` function correctly sends `patientId` and `doctorId` in the request body and handles potential errors more robustly.
 
-### Updated `DoctorChat.js`
-```javascript
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { collection, query, where, onSnapshot, getDocs, doc, getDoc, setDoc } from 'firebase/firestore';
