@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Pusher from 'pusher-js';
@@ -18,6 +19,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   const [recording, setRecording] = useState(false);
   const [mediaRecorder, setMediaRecorder] = useState(null);
   const [error, setError] = useState('');
+  const [isLoadingMessages, setIsLoadingMessages] = useState(true);
   const [transcriptionLanguage, setTranscriptionLanguage] = useState(null);
   const [languagePreference, setLanguagePreference] = useState(null);
   const [textInput, setTextInput] = useState('');
@@ -37,34 +39,23 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   const messagesEndRef = useRef(null);
   const reminderTimeoutsRef = useRef(new Map());
   const errorTimeoutRef = useRef(null);
-  const retryTimeoutRef = useRef(null);
   const navigate = useNavigate();
 
   const effectiveUserId = user?.uid || '';
   const effectivePatientId = urlPatientId || patientId || '';
   const apiBaseUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
-  const pusherKey = process.env.PUSHER_KEY || '2ed44c3ce3ef227d9924';
-  const pusherCluster = process.env.PUSHER_CLUSTER || 'ap2';
+  const pusherKey = process.env.REACT_APP_PUSHER_KEY;
+  const pusherCluster = process.env.REACT_APP_PUSHER_CLUSTER;
 
-  // Add fetch interceptor to debug the /j7akqc 404 error
+  // Validate environment variables
   useEffect(() => {
-    const originalFetch = window.fetch;
-    window.fetch = async (...args) => {
-      console.log('Fetch request:', args[0], { method: args[1]?.method, mode: args[1]?.mode });
-      try {
-        const response = await originalFetch(...args);
-        if (!response.ok) {
-          console.warn(`Fetch failed: ${args[0]} - Status ${response.status}`);
-        }
-        return response;
-      } catch (err) {
-        console.error(`Fetch error for ${args[0]}:`, err);
-        throw err;
-      }
-    };
-    return () => {
-      window.fetch = originalFetch;
-    };
+    if (!pusherKey || !pusherCluster) {
+      console.error('Pusher environment variables are missing:', {
+        pusherKey: pusherKey ? 'set' : 'missing',
+        pusherCluster: pusherCluster ? 'set' : 'missing',
+      });
+      setError('Real-time messaging is unavailable due to configuration issues. Please contact support.');
+    }
   }, []);
 
   const scrollToBottom = useCallback(() => {
@@ -132,6 +123,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           navigate('/login');
         }
       } catch (err) {
+        console.error('Failed to fetch patient data:', err);
         setError(`Failed to fetch patient data: ${err.message}`);
         navigate('/login');
       }
@@ -153,6 +145,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         calculateAdherenceRate(fetchedReminders);
         checkMissedDoses(fetchedReminders);
       } catch (err) {
+        console.error('Failed to fetch reminders:', err);
         setError(`Failed to fetch reminders: ${err.message}`);
       }
     };
@@ -176,7 +169,6 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       }
       reminderTimeoutsRef.current.forEach((timeoutId) => clearTimeout(timeoutId));
       reminderTimeoutsRef.current.clear();
-      clearTimeout(retryTimeoutRef.current);
     };
   }, [effectiveUserId, effectivePatientId, doctorId, role, navigate]);
 
@@ -192,7 +184,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   }, [messages]);
 
   useEffect(() => {
-    if (!languagePreference) return;
+    if (!languagePreference || !pusherKey || !pusherCluster) return;
 
     try {
       pusherRef.current = new Pusher(pusherKey, {
@@ -203,15 +195,11 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
 
       pusherRef.current.connection.bind('error', (err) => {
         console.error('Pusher connection error:', err);
-        setError('Failed to connect to real-time messaging. Attempting to reconnect...');
-        setTimeout(() => {
-          if (pusherRef.current) pusherRef.current.connect();
-        }, 2000);
+        setError('Failed to connect to real-time messaging. Please refresh the page.');
       });
 
       pusherRef.current.connection.bind('connected', () => {
         console.log('Pusher connected successfully');
-        setError('');
       });
 
       const channel = pusherRef.current.subscribe(`chat-${effectivePatientId}-${doctorId}`);
@@ -245,6 +233,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       });
 
       const fetchMessages = async () => {
+        setIsLoadingMessages(true);
         try {
           const fetchUrl = `${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`;
           console.log('Fetching messages:', {
@@ -285,8 +274,10 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           console.error('Error fetching messages:', err);
           setError(`Error fetching messages: ${err.message}`);
           if (err.message.includes('404')) {
-            setTimeout(fetchMessages, 2000);
+            setMessages([]); // Initialize empty chat on 404
           }
+        } finally {
+          setIsLoadingMessages(false);
         }
       };
 
@@ -515,6 +506,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         { id: Date.now().toString(), message: 'Alert: You have missed 3 consecutive doses. Notified your doctor.' },
       ]);
     } catch (err) {
+      console.error('Failed to send missed dose alert:', err);
       setError(`Failed to send missed dose alert: ${err.message}`);
     }
   };
@@ -534,6 +526,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       clearTimeout(reminderTimeoutsRef.current.get(id));
       reminderTimeoutsRef.current.delete(id);
     } catch (err) {
+      console.error('Failed to confirm reminder:', err);
       setError(`Failed to confirm reminder: ${err.message}`);
     }
   };
@@ -564,6 +557,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       clearTimeout(reminderTimeoutsRef.current.get(id));
       reminderTimeoutsRef.current.delete(id);
     } catch (err) {
+      console.error('Failed to snooze reminder:', err);
       setError(`Failed to snooze reminder: ${err.message}`);
     }
   };
@@ -582,6 +576,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       clearTimeout(reminderTimeoutsRef.current.get(id));
       reminderTimeoutsRef.current.delete(id);
     } catch (err) {
+      console.error('Failed to mark reminder as missed:', err);
       setError(`Failed to mark reminder as missed: ${err.message}`);
     }
   };
@@ -612,103 +607,13 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         await notifyAdmin(`Patient_${effectivePatientId}`, 'Doctor', diagnosis, medicine);
       }
     } catch (error) {
+      console.error('Error validating prescription:', error);
       setValidationResult((prev) => ({
         ...prev,
         [timestamp]: `Error validating prescription: ${error.message}`,
       }));
       await notifyAdmin(`Patient_${effectivePatientId}`, 'Doctor', diagnosis, medicine);
     }
-  };
-
-  const retryUpload = async (audioBlob, language) => {
-    if (!audioBlob || !language) {
-      setError('Invalid retry data. Please start a new recording.');
-      return;
-    }
-
-    setError('Retrying upload... (Attempts remaining: 3)');
-    let attempts = 3;
-
-    const attemptRetry = async () => {
-      try {
-        console.log('Retrying upload with:', { language, audioBlobSize: audioBlob.size });
-        const transcriptionResult = await transcribeAudio(audioBlob, language, effectiveUserId);
-        if (!transcriptionResult.audioUrl) {
-          throw new Error('Transcription succeeded, but no audio URL was returned.');
-        }
-        const response = await fetch(transcriptionResult.audioUrl, { method: 'HEAD', mode: 'cors' });
-        if (!response.ok) {
-          throw new Error(`Audio URL inaccessible: ${transcriptionResult.audioUrl} (Status: ${response.status})`);
-        }
-        setError('');
-        setFailedUpload(null);
-        clearTimeout(retryTimeoutRef.current);
-
-        const message = {
-          sender: 'patient',
-          text: transcriptionResult.transcription || 'Transcription failed',
-          translatedText: transcriptionResult.translatedText || '',
-          timestamp: new Date().toISOString(),
-          language,
-          recordingLanguage: language,
-          doctorId,
-          userId: effectivePatientId,
-          audioUrl: transcriptionResult.audioUrl,
-        };
-
-        const formData = new FormData();
-        formData.append('audio', audioBlob, `audio_${new Date().toISOString()}.webm`);
-        formData.append('message', JSON.stringify(message));
-        formData.append('sender', 'patient');
-
-        const postUrl = `${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`;
-        console.log('Sending retry upload:', {
-          url: postUrl,
-          message,
-        });
-
-        const idToken = await firebaseUser.getIdToken(true);
-        const saveResponse = await fetch(postUrl, {
-          method: 'POST',
-          headers: { 'x-user-uid': effectiveUserId, Authorization: `Bearer ${idToken}` },
-          body: formData,
-          credentials: 'include',
-        });
-
-        if (!saveResponse.ok) {
-          const errorData = await saveResponse.json();
-          throw new Error(`Failed to save message: ${saveResponse.statusText} - ${errorData.error?.message || 'Unknown error'}`);
-        }
-        const data = await saveResponse.json();
-        setMessages((prev) => {
-          const isDuplicate = prev.some(
-            (msg) =>
-              msg.timestamp === data.newMessage.timestamp &&
-              msg.sender === data.newMessage.sender &&
-              msg.text === data.newMessage.text &&
-              msg.audioUrl === data.newMessage.audioUrl
-          );
-          if (isDuplicate) {
-            console.log('PatientChat.js: Skipped duplicate retry message:', data.newMessage.timestamp, data.newMessage.text);
-            return prev;
-          }
-          return [...prev, data.newMessage].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-        });
-      } catch (err) {
-        console.error('Retry upload failed:', err);
-        attempts--;
-        if (attempts > 0) {
-          setError(`Retrying upload... (Attempts remaining: ${attempts})`);
-          retryTimeoutRef.current = setTimeout(attemptRetry, 2000 * (4 - attempts));
-        } else {
-          setError(`Failed to transcribe audio after retries: ${err.message}`);
-          setFailedUpload({ audioBlob, language });
-          clearTimeout(retryTimeoutRef.current);
-        }
-      }
-    };
-
-    attemptRetry();
   };
 
   const startRecording = async () => {
@@ -739,6 +644,9 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
 
         try {
           const transcriptionResult = await transcribeAudio(audioBlob, normalizedTranscriptionLanguage, effectiveUserId);
+          if (!transcriptionResult.audioUrl) {
+            throw new Error('Transcription succeeded, but no audio URL was returned.');
+          }
           text = transcriptionResult.transcription || 'Transcription failed';
 
           if (normalizedTranscriptionLanguage === 'kn-IN') {
@@ -800,7 +708,13 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           });
         } catch (err) {
           console.error('Audio processing failed:', err);
-          setError(`Failed to process audio: ${err.message}`);
+          let errorMessage = 'Failed to process audio. Please try again.';
+          if (err.message.includes('500')) {
+            errorMessage = 'Server error while processing audio. Please try again later or contact support.';
+          } else if (err.message.includes('no audio URL')) {
+            errorMessage = 'Audio transcription failed: No audio URL returned. Please try again.';
+          }
+          setError(errorMessage);
           setFailedUpload({ audioBlob, language: normalizedTranscriptionLanguage });
         }
 
@@ -904,7 +818,11 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       setMessages((prev) => [...prev, data.newMessage].sort((a, b) => a.timestamp.localeCompare(b.timestamp)));
     } catch (err) {
       console.error('Image upload failed:', err);
-      setError(err.message);
+      let errorMessage = 'Failed to upload image. Please try again.';
+      if (err.message.includes('500')) {
+        errorMessage = 'Server error while uploading image. Please try again later or contact support.';
+      }
+      setError(errorMessage);
       setFailedUpload({ file, type: 'image' });
     }
   };
@@ -917,7 +835,6 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     try {
       const normalizedLang = normalizeLanguageCode(lang);
       const audioUrl = await textToSpeechConvert(text.trim(), normalizedLang, effectiveUserId);
-      // Pre-flight check with detailed logging
       const response = await fetch(audioUrl, { method: 'HEAD', mode: 'cors' });
       if (!response.ok) {
         throw new Error(`Audio URL inaccessible: ${audioUrl} (Status: ${response.status}) - ${response.statusText}`);
@@ -956,13 +873,15 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         await new Promise((resolve) => setTimeout(resolve, 2000));
         return readAloud(text, lang, attempts - 1);
       }
-      let errorMessage = `Error reading aloud: ${err.message}`;
+      let errorMessage = 'Error reading aloud. Please try again.';
       if (err.message.includes('Failed to load audio')) {
         errorMessage = 'Error reading aloud: Audio file could not be loaded. It may be inaccessible or unsupported.';
       } else if (err.message.includes('CORS')) {
         errorMessage = 'Error reading aloud: CORS policy blocked access. Please contact support.';
       } else if (err.message.includes('Playback failed')) {
         errorMessage = 'Error reading aloud: Audio playback failed. Please check your browser or device audio settings.';
+      } else if (err.message.includes('404')) {
+        errorMessage = 'Error reading aloud: Text-to-speech service unavailable (404). Please contact support.';
       }
       setError(errorMessage);
     }
@@ -1020,10 +939,11 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       );
     } catch (err) {
       console.error('Failed to save text message:', err);
-      setError(`Failed to save text message: ${err.message}`);
-      if (err.message.includes('404')) {
-        setTimeout(() => handleSendText(), 2000);
+      let errorMessage = 'Failed to send text message. Please try again.';
+      if (err.message.includes('500')) {
+        errorMessage = 'Server error while sending text message. Please try again later or contact support.';
       }
+      setError(errorMessage);
     }
   };
 
@@ -1076,7 +996,11 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       );
     } catch (err) {
       console.error('Failed to save quick reply:', err);
-      setError(`Failed to save quick reply message: ${err.message}`);
+      let errorMessage = 'Failed to send quick reply. Please try again.';
+      if (err.message.includes('500')) {
+        errorMessage = 'Server error while sending quick reply. Please try again later or contact support.';
+      }
+      setError(errorMessage);
     }
   };
 
@@ -1359,93 +1283,46 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                   ))}
                 </div>
               )}
-              {messages.length === 0 && <p className="no-messages">No messages yet.</p>}
-              {messages.map((msg, index) => (
-                <div
-                  key={`${msg.timestamp}-${index}`}
-                  className={`message ${msg.sender === 'patient' ? 'patient-message' : 'doctor-message'}`}
-                >
-                  <div className="message-content">
-                    {msg.sender === 'patient' && msg.audioUrl && (
-                      <>
-                        {msg.recordingLanguage === 'en-US' ? (
-                          <div className="message-block">
-                            <p className="primary-text">{msg.text || 'No transcription'}</p>
-                            <div className="audio-container">
-                              <audio controls src={msg.audioUrl} onError={() => setError('Failed to load audio. It may be inaccessible or unsupported.')} />
-                              <div className="read-aloud-container">
-                                <button
-                                  onClick={() => readAloud(msg.text, 'en')}
-                                  className="read-aloud-button english"
-                                >
-                                  🔊 English
-                                </button>
+              {isLoadingMessages ? (
+                <p className="loading-messages">Loading messages...</p>
+              ) : messages.length === 0 ? (
+                <p className="no-messages">No messages yet. Start the conversation!</p>
+              ) : (
+                messages.map((msg, index) => (
+                  <div
+                    key={`${msg.timestamp}-${index}`}
+                    className={`message ${msg.sender === 'patient' ? 'patient-message' : 'doctor-message'}`}
+                  >
+                    <div className="message-content">
+                      {msg.sender === 'patient' && msg.audioUrl && (
+                        <>
+                          {msg.recordingLanguage === 'en-US' ? (
+                            <div className="message-block">
+                              <p className="primary-text">{msg.text || 'No transcription'}</p>
+                              <div className="audio-container">
+                                <audio controls src={msg.audioUrl} onError={() => setError('Failed to load audio. It may be inaccessible or unsupported.')} />
+                                <div className="read-aloud-container">
+                                  <button
+                                    onClick={() => readAloud(msg.text, 'en')}
+                                    className="read-aloud-button english"
+                                  >
+                                    🔊 English
+                                  </button>
+                                </div>
+                                <a href={msg.audioUrl} download className="download-link">
+                                  Download Audio
+                                </a>
                               </div>
-                              <a href={msg.audioUrl} download className="download-link">
-                                Download Audio
-                              </a>
                             </div>
-                          </div>
-                        ) : (
-                          <div className="message-block">
-                            <p className="primary-text">{msg.text || 'No transcription'}</p>
-                            {msg.translatedText && (
-                              <p className="translated-text">English: {msg.translatedText}</p>
-                            )}
-                            <div className="audio-container">
-                              <audio controls src={msg.audioUrl} onError={() => setError('Failed to load audio. It may be inaccessible or unsupported.')} />
-                              <div className="read-aloud-container">
-                                <button
-                                  onClick={() => readAloud(msg.text, 'kn')}
-                                  className="read-aloud-button kannada"
-                                >
-                                  🔊 Kannada
-                                </button>
-                                <button
-                                  onClick={() => readAloud(msg.translatedText || msg.text, 'en')}
-                                  className="read-aloud-button english"
-                                >
-                                  🔊 English
-                                </button>
-                              </div>
-                              <a href={msg.audioUrl} download className="download-link">
-                                Download Audio
-                              </a>
-                            </div>
-                          </div>
-                        )}
-                      </>
-                    )}
-                    {msg.sender === 'patient' && !msg.audioUrl && (
-                      <div className="message-block">
-                        <p className="primary-text">{msg.text || 'No transcription'}</p>
-                      </div>
-                    )}
-                    {msg.sender === 'doctor' && (
-                      <div className="message-block">
-                        {languagePreference === 'en' ? (
-                          <p className="primary-text">{msg.text || 'No transcription'}</p>
-                        ) : (
-                          <>
-                            <p className="primary-text">{msg.text || 'No transcription'}</p>
-                            {msg.translatedText && (
-                              <p className="translated-text">English: {msg.translatedText}</p>
-                            )}
-                          </>
-                        )}
-                        {msg.audioUrl && (
-                          <div className="audio-container">
-                            <audio controls src={msg.audioUrl} onError={() => setError('Failed to load audio. It may be inaccessible or unsupported.')} />
-                            <div className="read-aloud-container">
-                              {languagePreference === 'en' ? (
-                                <button
-                                  onClick={() => readAloud(msg.text, 'en')}
-                                  className="read-aloud-button english"
-                                >
-                                  🔊 English
-                                </button>
-                              ) : (
-                                <>
+                          ) : (
+                            <div className="message-block">
+                              <p className="primary-text">{msg.text || 'No transcription'}</p>
+                              {msg.translatedText && (
+                                <p className="translated-text">English: {msg.translatedText}</p>
+                              )}
+                              <div className="audio-container">
+                                <audio controls src={msg.audioUrl} onError={() => setError('Failed to load audio. It may be inaccessible or unsupported.')} />
+                                <div className="read-aloud-container">
                                   <button
                                     onClick={() => readAloud(msg.text, 'kn')}
                                     className="read-aloud-button kannada"
@@ -1458,22 +1335,74 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                                   >
                                     🔊 English
                                   </button>
-                                </>
-                              )}
+                                </div>
+                                <a href={msg.audioUrl} download className="download-link">
+                                  Download Audio
+                                </a>
+                              </div>
                             </div>
-                            <a href={msg.audioUrl} download className="download-link">
-                              Download Audio
-                            </a>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                    {msg.imageUrl && <img src={msg.imageUrl} alt="Patient upload" className="chat-image" />}
-                    {msg.audioError && <p className="audio-error">{msg.audioError}</p>}
-                    <span className="timestamp">{new Date(msg.timestamp).toLocaleTimeString()}</span>
+                          )}
+                        </>
+                      )}
+                      {msg.sender === 'patient' && !msg.audioUrl && (
+                        <div className="message-block">
+                          <p className="primary-text">{msg.text || 'No transcription'}</p>
+                        </div>
+                      )}
+                      {msg.sender === 'doctor' && (
+                        <div className="message-block">
+                          {languagePreference === 'en' ? (
+                            <p className="primary-text">{msg.text || 'No transcription'}</p>
+                          ) : (
+                            <>
+                              <p className="primary-text">{msg.text || 'No transcription'}</p>
+                              {msg.translatedText && (
+                                <p className="translated-text">English: {msg.translatedText}</p>
+                              )}
+                            </>
+                          )}
+                          {msg.audioUrl && (
+                            <div className="audio-container">
+                              <audio controls src={msg.audioUrl} onError={() => setError('Failed to load audio. It may be inaccessible or unsupported.')} />
+                              <div className="read-aloud-container">
+                                {languagePreference === 'en' ? (
+                                  <button
+                                    onClick={() => readAloud(msg.text, 'en')}
+                                    className="read-aloud-button english"
+                                  >
+                                    🔊 English
+                                  </button>
+                                ) : (
+                                  <>
+                                    <button
+                                      onClick={() => readAloud(msg.text, 'kn')}
+                                      className="read-aloud-button kannada"
+                                    >
+                                      🔊 Kannada
+                                    </button>
+                                    <button
+                                      onClick={() => readAloud(msg.translatedText || msg.text, 'en')}
+                                      className="read-aloud-button english"
+                                    >
+                                      🔊 English
+                                    </button>
+                                  </>
+                                )}
+                              </div>
+                              <a href={msg.audioUrl} download className="download-link">
+                                Download Audio
+                              </a>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      {msg.imageUrl && <img src={msg.imageUrl} alt="Patient upload" className="chat-image" />}
+                      {msg.audioError && <p className="audio-error">{msg.audioError}</p>}
+                      <span className="timestamp">{new Date(msg.timestamp).toLocaleTimeString()}</span>
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))
+              )}
               <div ref={messagesEndRef} />
             </div>
           )}
@@ -1481,8 +1410,8 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
             <div className="error-message">
               {error}
               {failedUpload && failedUpload.audioBlob && (
-                <button onClick={() => retryUpload(failedUpload.audioBlob, failedUpload.language)} className="retry-button">
-                  Retry Upload
+                <button onClick={() => startRecording()} className="retry-button">
+                  Retry Recording
                 </button>
               )}
               {failedUpload && failedUpload.type === 'image' && failedUpload.file && (
@@ -1914,7 +1843,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           border: 1px solid rgba(255, 255, 255, 0.1);
         }
 
-        .no-messages {
+        .no-messages, .loading-messages {
           color: #A0A0A0;
           font-size: 1rem;
           text-align: center;
@@ -2066,7 +1995,6 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           color: #E74C3C;
           margin-top: 5px;
         }
-
         .error-message {
           color: #E74C3C;
           font-size: 0.9rem;

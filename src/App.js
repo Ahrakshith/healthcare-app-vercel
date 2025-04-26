@@ -11,7 +11,6 @@ import AdminDashboard from './components/AdminDashboard.js';
 import SelectDoctor from './components/SelectDoctor.js';
 import LanguagePreference from './components/LanguagePreference.js';
 import './components/patient.css';
-//commit end end end
 
 // Custom 404 Component
 const NotFound = () => {
@@ -71,10 +70,9 @@ function App() {
     console.log('App: Starting auth state listener setup');
     const unsubscribeAuth = firebaseAuth.onAuthStateChanged(async (authUser) => {
       console.log('App: Auth state changed, authUser:', authUser ? authUser.uid : null);
+      setLoading(true); // Reset loading state on auth change
       if (authUser) {
-        if (process.env.NODE_ENV !== 'production') {
-          console.log('App: Authenticated user detected, UID:', authUser.uid);
-        }
+        console.log('App: Authenticated user detected, UID:', authUser.uid);
         setFirebaseUser(authUser);
 
         const userId = authUser.uid;
@@ -112,11 +110,6 @@ function App() {
               sessionStorage.setItem('userId', userId);
               setLoading(false);
               console.log('App: Loading complete, user data set');
-
-              // Restore route after auth state is fully loaded
-              const lastPath = sessionStorage.getItem('lastPath') || location.pathname;
-              console.log('App: Restoring path after auth load:', lastPath);
-              redirectToLastPath(lastPath);
             } else {
               console.log('App: User document not found in Firestore for UID:', userId);
               handleAuthFailure();
@@ -145,16 +138,46 @@ function App() {
     };
   }, []);
 
-  // Function to handle route restoration
-  const redirectToLastPath = (lastPath) => {
-    if (!firebaseUser || !role) {
-      console.log('App: Cannot redirect yet, firebaseUser or role not set');
+  // Handle redirects after auth and role are fully set
+  useEffect(() => {
+    if (loading || !firebaseUser || role === null) {
+      console.log('App: Cannot redirect yet, loading or firebaseUser or role not set');
       return;
     }
 
+    const lastPath = sessionStorage.getItem('lastPath') || location.pathname;
+    console.log('App: Restoring path after auth load:', lastPath);
+    redirectToLastPath(lastPath);
+  }, [loading, firebaseUser, role]);
+
+  // Save the current path on route change (excluding login/register)
+  useEffect(() => {
+    if (location.pathname !== '/login' && location.pathname !== '/register') {
+      console.log('App: Saving current path to sessionStorage:', location.pathname);
+      sessionStorage.setItem('lastPath', location.pathname);
+    }
+  }, [location.pathname]);
+
+  // Clear error on route change
+  useEffect(() => {
+    const handleRouteChange = () => {
+      if (error) {
+        console.log('App: Clearing error on route change');
+        setError('');
+      }
+    };
+    window.addEventListener('popstate', handleRouteChange);
+    return () => window.removeEventListener('popstate', handleRouteChange);
+  }, [error]);
+
+  const redirectToLastPath = (lastPath) => {
     console.log('App: Redirecting to last path:', lastPath);
     if (role === 'patient' && lastPath.startsWith('/patient')) {
-      if (lastPath === '/patient/select-doctor' || lastPath.startsWith('/patient/language-preference') || lastPath.startsWith('/patient/chat')) {
+      if (
+        lastPath === '/patient/select-doctor' ||
+        lastPath.startsWith('/patient/language-preference') ||
+        lastPath.startsWith('/patient/chat')
+      ) {
         console.log('App: Redirecting to patient route:', lastPath);
         navigate(lastPath, { replace: true });
       } else {
@@ -182,38 +205,6 @@ function App() {
     }
   };
 
-  // Save the current path on route change (excluding login/register)
-  useEffect(() => {
-    if (location.pathname !== '/login' && location.pathname !== '/register') {
-      console.log('App: Saving current path to sessionStorage:', location.pathname);
-      sessionStorage.setItem('lastPath', location.pathname);
-    }
-  }, [location.pathname]);
-
-  // Handle initial load and refresh
-  useEffect(() => {
-    if (!loading && firebaseUser && role) {
-      const lastPath = sessionStorage.getItem('lastPath') || location.pathname;
-      console.log('App: Initial load/refresh detected, restoring path:', lastPath);
-      redirectToLastPath(lastPath);
-    } else if (!loading && !firebaseUser) {
-      console.log('App: No firebaseUser on initial load, redirecting to login');
-      navigate('/login', { replace: true });
-    }
-  }, [loading, firebaseUser, role]);
-
-  // Clear error on route change
-  useEffect(() => {
-    const handleRouteChange = () => {
-      if (error) {
-        console.log('App: Clearing error on route change');
-        setError('');
-      }
-    };
-    window.addEventListener('popstate', handleRouteChange);
-    return () => window.removeEventListener('popstate', handleRouteChange);
-  }, [error]);
-
   const handleAuthFailure = () => {
     console.log('App: Handling auth failure, clearing all states');
     setFirebaseUser(null);
@@ -231,7 +222,14 @@ function App() {
   const handleLogout = async () => {
     console.log('App: Initiating logout process');
     try {
-      const idToken = await firebaseAuth.currentUser?.getIdToken(true);
+      const currentUser = firebaseAuth.currentUser;
+      if (!currentUser) {
+        console.log('App: No current user, skipping logout request');
+        handleAuthFailure();
+        return;
+      }
+
+      const idToken = await currentUser.getIdToken(true);
       console.log('App: Obtained ID token for logout:', idToken ? 'Success' : 'Failed');
       const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
 
@@ -240,7 +238,7 @@ function App() {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${idToken}`,
-          'x-user-uid': firebaseAuth.currentUser?.uid || '',
+          'x-user-uid': currentUser.uid,
           'Content-Type': 'application/json',
           'Accept': 'application/json',
         },
@@ -310,20 +308,7 @@ function App() {
         <Route
           path="/login"
           element={
-            user ? (
-              <Navigate
-                to={
-                  role === 'patient'
-                    ? '/patient/select-doctor'
-                    : role === 'doctor'
-                    ? '/doctor/chat'
-                    : role === 'admin'
-                    ? '/admin'
-                    : '/login'
-                }
-                replace
-              />
-            ) : (
+            !user ? (
               <Login
                 setUser={setUser}
                 setRole={setRole}
@@ -331,13 +316,7 @@ function App() {
                 user={user}
                 setError={setError}
               />
-            )
-          }
-        />
-        <Route
-          path="/register"
-          element={
-            user ? (
+            ) : (
               <Navigate
                 to={
                   role === 'patient'
@@ -350,13 +329,32 @@ function App() {
                 }
                 replace
               />
-            ) : (
+            )
+          }
+        />
+        <Route
+          path="/register"
+          element={
+            !user ? (
               <Register
                 setUser={setUser}
                 setRole={setRole}
                 setPatientId={setPatientId}
                 user={user}
                 setError={setError}
+              />
+            ) : (
+              <Navigate
+                to={
+                  role === 'patient'
+                    ? '/patient/select-doctor'
+                    : role === 'doctor'
+                    ? '/doctor/chat'
+                    : role === 'admin'
+                    ? '/admin'
+                    : '/login'
+                }
+                replace
               />
             )
           }
@@ -432,15 +430,18 @@ function App() {
           path="/"
           element={
             user ? (
-              role === 'patient' ? (
-                <Navigate to="/patient/select-doctor" replace />
-              ) : role === 'doctor' ? (
-                <Navigate to="/doctor/chat" replace />
-              ) : role === 'admin' ? (
-                <Navigate to="/admin" replace />
-              ) : (
-                <Navigate to="/login" replace />
-              )
+              <Navigate
+                to={
+                  role === 'patient'
+                    ? '/patient/select-doctor'
+                    : role === 'doctor'
+                    ? '/doctor/chat'
+                    : role === 'admin'
+                    ? '/admin'
+                    : '/login'
+                }
+                replace
+              />
             ) : (
               <Navigate to="/login" replace />
             )

@@ -1,8 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { signInWithEmailAndPassword, onAuthStateChanged } from 'firebase/auth';
 import { auth } from '../services/firebase.js';
-//import end
 
 function Login({ setUser, setRole, setPatientId, user, setError: setParentError }) {
   const [email, setEmail] = useState('');
@@ -19,23 +18,6 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
     if (initialUsername) setEmail(initialUsername);
     if (initialPassword) setPassword(initialPassword);
   }, [initialUsername, initialPassword]);
-
-  // Memoize redirectUser to avoid recreating the function on every render
-  const redirectUser = useCallback(
-    (role) => {
-      if (role === 'patient') {
-        navigate('/patient/select-doctor');
-      } else if (role === 'doctor') {
-        navigate('/doctor/chat');
-      } else if (role === 'admin') {
-        navigate('/admin');
-      } else {
-        navigate('/login');
-      }
-      console.log(`Redirected to ${role} route`);
-    },
-    [navigate]
-  );
 
   // Check for existing user session on component mount
   useEffect(() => {
@@ -60,17 +42,18 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
           if (!response.ok) {
             const errorText = await response.text();
             console.error('Failed to fetch user data on auth state change:', response.status, errorText);
-            setError('Failed to fetch user data. Please log in again.');
-            setUser(null);
-            setRole(null);
-            setPatientId(null);
-            localStorage.removeItem('userId');
-            localStorage.removeItem('patientId');
-            navigate('/login');
-            return;
+            throw new Error(`Failed to fetch user data: ${response.status} ${errorText}`);
           }
 
-          const userData = await response.json();
+          const responseText = await response.text();
+          let userData;
+          try {
+            userData = JSON.parse(responseText);
+          } catch (parseError) {
+            console.error('JSON parsing failed during auth state change:', parseError.message, 'Raw response:', responseText);
+            throw new Error('Server returned invalid JSON response');
+          }
+
           if (!userData || !userData.role) {
             throw new Error('Invalid user data received from server, missing role');
           }
@@ -92,11 +75,11 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
             localStorage.setItem('patientId', userData.patientId);
           }
           localStorage.setItem('userId', firebaseUser.uid);
-
-          redirectUser(userData.role);
+          // Let App.js handle the redirect
         } catch (error) {
           console.error('Error during auth state change:', error.message);
           setError(`Authentication error: ${error.message}`);
+          setParentError(`Authentication error: ${error.message}`);
           setUser(null);
           setRole(null);
           setPatientId(null);
@@ -114,11 +97,14 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
     });
 
     return () => unsubscribe();
-  }, [navigate, setUser, setRole, setPatientId, redirectUser]);
+  }, [navigate, setUser, setRole, setPatientId]);
 
   // Clear error when user starts typing
   const handleInputChange = (setter) => (e) => {
-    if (error) setError('');
+    if (error) {
+      setError('');
+      setParentError(''); // Clear parent error as well
+    }
     setter(e.target.value);
   };
 
@@ -126,6 +112,7 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
     e.preventDefault();
     if (isLoading) return; // Prevent multiple clicks
     setError('');
+    setParentError('');
     setIsLoading(true);
 
     if (!email.trim()) {
@@ -180,7 +167,7 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
         userData = JSON.parse(responseText);
       } catch (parseError) {
         console.error('JSON parsing failed:', parseError.message, 'Raw response:', responseText);
-        throw new Error('Failed to parse API response as JSON');
+        throw new Error('Server returned invalid JSON response');
       }
 
       console.log('User data received from API:', userData);
@@ -210,25 +197,29 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
       localStorage.setItem('userId', firebaseUser.uid);
       console.log('Set userId in localStorage:', firebaseUser.uid);
 
-      redirectUser(userData.role);
+      // Let App.js handle the redirect based on updated state
     } catch (error) {
       console.error('Login process error:', { message: error.message, code: error.code, stack: error.stack });
+      let errorMessage = 'Login failed. Please try again.';
       if (error.code === 'auth/invalid-credential') {
-        setError('Invalid email or password. Please try again.');
+        errorMessage = 'Invalid email or password. Please try again.';
       } else if (error.code === 'auth/user-not-found') {
-        setError('User not found. Please register first.');
+        errorMessage = 'User not found. Please register first.';
       } else if (error.code === 'auth/wrong-password') {
-        setError('Incorrect password. Please try again.');
+        errorMessage = 'Incorrect password. Please try again.';
       } else if (error.message.includes('HTTP error')) {
         if (error.message.includes('404')) {
-          setError('User data not found on server. Please register or contact support.');
+          errorMessage = 'User data not found on server. Please register or contact support.';
         } else {
-          setError('Failed to fetch user data. Please check the server or try again later.');
+          errorMessage = 'Failed to fetch user data. Please check the server or try again later.';
         }
+      } else if (error.message.includes('invalid JSON')) {
+        errorMessage = 'Server error: Invalid response format. Please try again later.';
       } else {
-        setError(`Login failed: ${error.message}`);
+        errorMessage = `Login failed: ${error.message}`;
       }
-      setParentError(`Login failed: ${error.message}`);
+      setError(errorMessage);
+      setParentError(errorMessage);
     } finally {
       console.log('Login process completed, isLoading set to false');
       setIsLoading(false);
