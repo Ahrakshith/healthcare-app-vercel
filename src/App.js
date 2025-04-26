@@ -137,6 +137,79 @@ function App() {
     };
   }, []);
 
+  // Handle page refresh/visibility change
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      console.log('App: Visibility state changed, current state:', document.visibilityState);
+      if (document.visibilityState === 'visible') {
+        console.log('App: Page became visible - possible refresh detected');
+        console.log('App: Current firebaseUser:', firebaseUser ? firebaseUser.uid : null);
+        console.log('App: Current user state:', user);
+        console.log('App: Current role:', role);
+        console.log('App: Current patientId:', patientId);
+        console.log('App: SessionStorage userId:', sessionStorage.getItem('userId'));
+        console.log('App: SessionStorage patientId:', sessionStorage.getItem('patientId'));
+
+        // Re-check authentication state on visibility
+        if (!firebaseUser) {
+          console.log('App: No firebaseUser detected on refresh, initiating auth check');
+          firebaseAuth.onAuthStateChanged((authUser) => {
+            console.log('App: Auth state re-checked, authUser:', authUser ? authUser.uid : null);
+            if (authUser) {
+              setFirebaseUser(authUser);
+              console.log('App: Re-authenticated user detected, UID:', authUser.uid);
+              const userId = authUser.uid;
+              const userRef = doc(db, 'users', userId);
+              onSnapshot(userRef, (docSnapshot) => {
+                console.log('App: Re-fetched Firestore snapshot for user:', userId);
+                if (docSnapshot.exists()) {
+                  const userData = docSnapshot.data();
+                  console.log('App: Re-fetched Firestore user data:', userData);
+                  setUser({ uid: userId, email: authUser.email, ...userData });
+                  setRole(userData.role);
+                  if (userData.role === 'patient') {
+                    const pid = userData.patientId || userId;
+                    setPatientId(pid);
+                    sessionStorage.setItem('patientId', pid);
+                    console.log(`App: Re-set patientId=${pid} on refresh`);
+                  } else {
+                    setPatientId(null);
+                    sessionStorage.removeItem('patientId');
+                    console.log('App: Re-cleared patientId on refresh');
+                  }
+                  sessionStorage.setItem('userId', userId);
+                  console.log('App: User state updated after refresh');
+                } else {
+                  console.log('App: User document not found on refresh for UID:', userId);
+                  handleAuthFailure();
+                }
+              }, (error) => {
+                console.error('App: Firestore re-fetch error on refresh:', error.message);
+                setError(`Failed to re-fetch user data: ${error.message}`);
+                handleAuthFailure();
+              });
+            } else {
+              console.log('App: No user authenticated after refresh, redirecting to login');
+              handleAuthFailure();
+            }
+          });
+        } else {
+          console.log('App: FirebaseUser still valid, no re-authentication needed');
+        }
+      } else {
+        console.log('App: Page is hidden, visibilityState:', document.visibilityState);
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    console.log('App: Visibility change listener added');
+
+    return () => {
+      console.log('App: Removing visibility change listener');
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [firebaseUser, user, role, patientId]);
+
   // Clear error on route change
   useEffect(() => {
     const handleRouteChange = () => {
