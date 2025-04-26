@@ -174,7 +174,7 @@ function AdminDashboard({ user, role, handleLogout, setUser }) {
       };
 
       console.log('AdminDashboard: Sending request to /api/doctors with payload:', doctorData);
-      const createResponse = await fetch(`${process.env.REACT_APP_API_URL || 'https://your-vercel-app.vercel.app'}/api/doctors`, {
+      const createResponse = await fetch(`${process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app'}/api/doctors`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -185,22 +185,34 @@ function AdminDashboard({ user, role, handleLogout, setUser }) {
         credentials: 'include',
       });
 
-      const createData = await createResponse.json();
-      if (!createResponse.ok) {
-        throw new Error(createData.error?.message || 'Failed to create doctor');
+      // Log raw response for debugging
+      console.log('AdminDashboard: Raw response status:', createResponse.status);
+      const responseText = await createResponse.text();
+      console.log('AdminDashboard: Raw response body:', responseText);
+
+      // Parse JSON with error handling
+      let createData;
+      try {
+        createData = JSON.parse(responseText);
+      } catch (jsonError) {
+        throw new Error(`Failed to parse response as JSON: ${jsonError.message}. Raw response: ${responseText}`);
       }
 
-      const { doctorId } = createData;
-      console.log('AdminDashboard: Doctor added with doctorId:', doctorId);
+      if (!createResponse.ok) {
+        throw new Error(createData.error?.message || `Failed to create doctor: ${createResponse.statusText}`);
+      }
+
+      const { doctorId, uid } = createData;
+      console.log('AdminDashboard: Doctor added with doctorId:', doctorId, 'and UID:', uid);
 
       // Store doctor data in Firestore (users collection)
-      const userDocRef = doc(db, 'users', createData.uid);
-      await setDoc(userDocRef, { ...doctorData, uid: createData.uid, doctorId, createdAt: new Date().toISOString(), role: 'doctor' });
-      console.log('AdminDashboard: Doctor data stored in Firestore (users) for UID:', createData.uid);
+      const userDocRef = doc(db, 'users', uid);
+      await setDoc(userDocRef, { ...doctorData, uid, doctorId, createdAt: new Date().toISOString(), role: 'doctor' });
+      console.log('AdminDashboard: Doctor data stored in Firestore (users) for UID:', uid);
 
       // Store doctor data in Firestore (doctors collection)
       const doctorDocRef = doc(db, 'doctors', doctorId);
-      await setDoc(doctorDocRef, { ...doctorData, uid: createData.uid, createdAt: new Date().toISOString(), role: 'doctor' });
+      await setDoc(doctorDocRef, { ...doctorData, uid, createdAt: new Date().toISOString(), role: 'doctor' });
       console.log('AdminDashboard: Doctor data stored in Firestore (doctors) with doctorId:', doctorId);
 
       setAddDoctorSuccess('Doctor added successfully!');
