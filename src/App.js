@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { auth as firebaseAuth, db } from './services/firebase.js';
-import { signOut } from 'firebase/auth'; // Import signOut
+import { signOut } from 'firebase/auth';
 import Login from './components/Login.js';
 import Register from './components/Register.js';
 import PatientChat from './components/PatientChat.js';
@@ -67,7 +67,7 @@ function App() {
   useEffect(() => {
     console.log('App: Starting auth state listener setup');
     const unsubscribeAuth = firebaseAuth.onAuthStateChanged(async (authUser) => {
-      console.log('App: Auth state changed, authUser:', authUser);
+      console.log('App: Auth state changed, authUser:', authUser ? authUser.uid : null);
       if (authUser) {
         if (process.env.NODE_ENV !== 'production') {
           console.log('App: Authenticated user detected, UID:', authUser.uid);
@@ -137,6 +137,18 @@ function App() {
     };
   }, []);
 
+  // Clear error on route change
+  useEffect(() => {
+    const handleRouteChange = () => {
+      if (error) {
+        console.log('App: Clearing error on route change');
+        setError('');
+      }
+    };
+    window.addEventListener('popstate', handleRouteChange);
+    return () => window.removeEventListener('popstate', handleRouteChange);
+  }, [error]);
+
   const handleAuthFailure = () => {
     console.log('App: Handling auth failure, clearing all states');
     setFirebaseUser(null);
@@ -151,9 +163,6 @@ function App() {
 
   const handleLogout = async () => {
     console.log('App: Initiating logout process');
-    if (process.env.NODE_ENV !== 'production') {
-      console.log('App: Initiating logout for current tab');
-    }
     try {
       const idToken = await firebaseAuth.currentUser?.getIdToken(true);
       console.log('App: Obtained ID token for logout:', idToken ? 'Success' : 'Failed');
@@ -178,9 +187,6 @@ function App() {
         throw new Error(`Logout request failed: ${response.status}, ${errorText}`);
       }
 
-      const logoutData = await response.json();
-      console.log('App: Logout response data:', logoutData);
-
       console.log('App: Initiating Firebase sign-out');
       await signOut(firebaseAuth);
       console.log('App: Firebase sign-out completed');
@@ -188,13 +194,10 @@ function App() {
       console.log('App: Clearing app state');
       handleAuthFailure();
       console.log('App: Local state cleared successfully');
-
-      // Remove window.location.href redirect; let components handle navigation
     } catch (err) {
       console.error('App: Logout error:', err.message);
       setError(`Failed to log out: ${err.message}`);
-      console.log('App: Logout error set to state:', err.message);
-      throw err; // Let the component handle the error
+      throw err; // Let components like DoctorChat handle navigation
     }
   };
 
@@ -219,13 +222,19 @@ function App() {
     );
   }
 
-  console.log('App: Rendering main app with user:', user, 'role:', role, 'patientId:', patientId);
+  console.log('App: Rendering main app with user:', user?.uid, 'role:', role, 'patientId:', patientId);
   return (
     <div className="app-container">
       {error && (
         <div className="error-message">
           <span>{error}</span>
-          <button onClick={() => { setError(''); console.log('App: Error dismissed'); }} className="dismiss-error">
+          <button
+            onClick={() => {
+              setError('');
+              console.log('App: Error dismissed');
+            }}
+            className="dismiss-error"
+          >
             Dismiss
           </button>
         </div>
@@ -234,25 +243,55 @@ function App() {
         <Route
           path="/login"
           element={
-            <Login
-              setUser={setUser}
-              setRole={setRole}
-              setPatientId={setPatientId}
-              user={user}
-              setError={setError}
-            />
+            user ? (
+              <Navigate
+                to={
+                  role === 'patient'
+                    ? '/patient/select-doctor'
+                    : role === 'doctor'
+                    ? '/doctor/chat'
+                    : role === 'admin'
+                    ? '/admin'
+                    : '/login'
+                }
+                replace
+              />
+            ) : (
+              <Login
+                setUser={setUser}
+                setRole={setRole}
+                setPatientId={setPatientId}
+                user={user}
+                setError={setError}
+              />
+            )
           }
         />
         <Route
           path="/register"
           element={
-            <Register
-              setUser={setUser}
-              setRole={setRole}
-              setPatientId={setPatientId}
-              user={user}
-              setError={setError}
-            />
+            user ? (
+              <Navigate
+                to={
+                  role === 'patient'
+                    ? '/patient/select-doctor'
+                    : role === 'doctor'
+                    ? '/doctor/chat'
+                    : role === 'admin'
+                    ? '/admin'
+                    : '/login'
+                }
+                replace
+              />
+            ) : (
+              <Register
+                setUser={setUser}
+                setRole={setRole}
+                setPatientId={setPatientId}
+                user={user}
+                setError={setError}
+              />
+            )
           }
         />
         <Route
@@ -306,11 +345,7 @@ function App() {
           path="/doctor/chat"
           element={
             user && role === 'doctor' ? (
-              <DoctorChat
-                user={user}
-                role={role}
-                handleLogout={handleLogout}
-              />
+              <DoctorChat user={user} role={role} handleLogout={handleLogout} setError={setError} />
             ) : (
               <Navigate to="/login" replace />
             )
@@ -320,12 +355,7 @@ function App() {
           path="/admin"
           element={
             user && role === 'admin' ? (
-              <AdminDashboard
-                user={user}
-                role={role}
-                handleLogout={handleLogout}
-                setUser={setUser}
-              />
+              <AdminDashboard user={user} role={role} handleLogout={handleLogout} setUser={setUser} />
             ) : (
               <Navigate to="/login" replace />
             )

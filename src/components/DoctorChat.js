@@ -5,7 +5,7 @@ import { db } from '../services/firebase.js';
 import Pusher from 'pusher-js';
 import { transcribeAudio, translateText, textToSpeechConvert } from '../services/speech.js';
 
-function DoctorChat({ user, role, handleLogout }) {
+function DoctorChat({ user, role, handleLogout, setError }) {
   const [selectedPatientId, setSelectedPatientId] = useState(null);
   const [selectedPatientName, setSelectedPatientName] = useState('');
   const [patients, setPatients] = useState([]);
@@ -19,7 +19,6 @@ function DoctorChat({ user, role, handleLogout }) {
     frequency: '',
     duration: '',
   });
-  const [error, setError] = useState('');
   const [failedUpload, setFailedUpload] = useState(null);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [loadingPatients, setLoadingPatients] = useState(true);
@@ -55,7 +54,7 @@ function DoctorChat({ user, role, handleLogout }) {
   useEffect(() => {
     if (role !== 'doctor' || !user?.uid) {
       setError('Please log in as a doctor.');
-      navigate('/login');
+      navigate('/login', { replace: true });
       return;
     }
 
@@ -83,7 +82,7 @@ function DoctorChat({ user, role, handleLogout }) {
     };
 
     fetchDoctorId();
-  }, [role, user?.uid, navigate]);
+  }, [role, user?.uid, navigate, setError]);
 
   // Fetch Assigned Patients
   useEffect(() => {
@@ -116,7 +115,7 @@ function DoctorChat({ user, role, handleLogout }) {
     );
 
     return () => unsubscribe();
-  }, [doctorId, selectedPatientId]);
+  }, [doctorId, selectedPatientId, setError]);
 
   // Fetch Accepted Patients Status
   useEffect(() => {
@@ -131,11 +130,12 @@ function DoctorChat({ user, role, handleLogout }) {
         }
       } catch (err) {
         console.error('Failed to fetch accepted patients:', err.message);
+        setError(`Failed to fetch accepted patients: ${err.message}`);
       }
     };
 
     fetchAcceptedPatients();
-  }, [doctorId]);
+  }, [doctorId, setError]);
 
   // Pusher and Data Fetching
   useEffect(() => {
@@ -229,7 +229,7 @@ function DoctorChat({ user, role, handleLogout }) {
       }
     };
 
-    // Fetch missed dose alerts (Updated to POST)
+    // Fetch missed dose alerts
     const fetchMissedDoseAlerts = async () => {
       try {
         const response = await fetch(`${apiBaseUrl}/admin`, {
@@ -272,7 +272,7 @@ function DoctorChat({ user, role, handleLogout }) {
       pusher.unsubscribe(`chat-${selectedPatientId}-${doctorId}`);
       pusher.disconnect();
     };
-  }, [selectedPatientId, user?.uid, doctorId, apiBaseUrl]);
+  }, [selectedPatientId, user?.uid, doctorId, apiBaseUrl, setError]);
 
   // Diagnosis Prompt Logic
   useEffect(() => {
@@ -291,7 +291,6 @@ function DoctorChat({ user, role, handleLogout }) {
       const lastMessageTime = timestamps?.lastMessageTime ? new Date(timestamps.lastMessageTime) : null;
       const hoursSinceLastMessage = lastMessageTime ? (now - lastMessageTime) / (1000 * 60 * 60) : Infinity;
       if (hoursSinceLastMessage >= 168) {
-        // 7 days have passed since last message, prompt again
         setDiagnosisPrompt(selectedPatientId);
       } else {
         setDiagnosisPrompt(null);
@@ -325,7 +324,6 @@ function DoctorChat({ user, role, handleLogout }) {
         return;
       }
       if (accept) {
-        // Store acceptance status in Firestore
         try {
           const acceptedRef = doc(db, 'doctor_accepted_patients', doctorId);
           await setDoc(
@@ -369,7 +367,7 @@ function DoctorChat({ user, role, handleLogout }) {
           const response = await fetch(`${apiBaseUrl}/chats/${selectedPatientId}/${doctorId}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
-            body: JSON.stringify({ message }), // Wrap in "message" object as expected by backend
+            body: JSON.stringify({ message }),
             credentials: 'include',
           });
           if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`);
@@ -383,13 +381,12 @@ function DoctorChat({ user, role, handleLogout }) {
         }
       }
     },
-    [selectedPatientId, languagePreference, doctorId, user.uid, apiBaseUrl, acceptedPatients]
+    [selectedPatientId, languagePreference, doctorId, user.uid, apiBaseUrl, acceptedPatients, setError]
   );
 
   const retryUpload = useCallback(
     async (audioBlob, language) => {
       try {
-        setError('');
         setFailedUpload(null);
         setLoadingAudio(true);
         const transcriptionResult = await transcribeAudio(audioBlob, language, user.uid);
@@ -407,7 +404,7 @@ function DoctorChat({ user, role, handleLogout }) {
         setLoadingAudio(false);
       }
     },
-    [user.uid]
+    [user.uid, setError]
   );
 
   const startRecording = useCallback(async () => {
@@ -481,7 +478,7 @@ function DoctorChat({ user, role, handleLogout }) {
           const response = await fetch(`${apiBaseUrl}/chats/${selectedPatientId}/${doctorId}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
-            body: JSON.stringify({ message }), // Wrap in "message" object
+            body: JSON.stringify({ message }),
             credentials: 'include',
           });
           if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`);
@@ -505,7 +502,7 @@ function DoctorChat({ user, role, handleLogout }) {
       setError(`Failed to start recording: ${err.message}`);
       console.error('Recording error:', err);
     }
-  }, [selectedPatientId, languagePreference, user.uid, apiBaseUrl, doctorId]);
+  }, [selectedPatientId, languagePreference, user.uid, apiBaseUrl, doctorId, setError]);
 
   const stopRecording = useCallback(() => {
     if (mediaRecorder) {
@@ -550,7 +547,7 @@ function DoctorChat({ user, role, handleLogout }) {
       const response = await fetch(`${apiBaseUrl}/chats/${selectedPatientId}/${doctorId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
-        body: JSON.stringify({ message }), // Wrap in "message" object
+        body: JSON.stringify({ message }),
         credentials: 'include',
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`);
@@ -567,7 +564,7 @@ function DoctorChat({ user, role, handleLogout }) {
     } finally {
       setLoadingAudio(false);
     }
-  }, [newMessage, selectedPatientId, user?.uid, doctorId, languagePreference, apiBaseUrl]);
+  }, [newMessage, selectedPatientId, user?.uid, doctorId, languagePreference, apiBaseUrl, setError]);
 
   const sendAction = useCallback(
     async () => {
@@ -622,7 +619,7 @@ function DoctorChat({ user, role, handleLogout }) {
         const chatResponse = await fetch(`${apiBaseUrl}/chats/${selectedPatientId}/${doctorId}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
-          body: JSON.stringify({ message }), // Wrap in "message" object
+          body: JSON.stringify({ message }),
           credentials: 'include',
         });
         if (!chatResponse.ok) throw new Error(`HTTP ${chatResponse.status}: ${await chatResponse.text()}`);
@@ -678,7 +675,7 @@ function DoctorChat({ user, role, handleLogout }) {
         console.error('Send action error:', err);
       }
     },
-    [actionType, diagnosis, prescription, selectedPatientId, doctorId, user.uid, selectedPatientName, patients, messages, apiBaseUrl]
+    [actionType, diagnosis, prescription, selectedPatientId, doctorId, user.uid, selectedPatientName, patients, messages, apiBaseUrl, setError]
   );
 
   const readAloud = useCallback(
@@ -697,7 +694,7 @@ function DoctorChat({ user, role, handleLogout }) {
         console.error('Read aloud error:', err);
       }
     },
-    []
+    [setError]
   );
 
   const dismissAlert = useCallback((alertId) => {
@@ -707,7 +704,7 @@ function DoctorChat({ user, role, handleLogout }) {
   const dismissError = useCallback(() => {
     setError('');
     setFailedUpload(null);
-  }, []);
+  }, [setError]);
 
   const isValidPrescription = useCallback((prescription) => {
     return (
@@ -721,14 +718,13 @@ function DoctorChat({ user, role, handleLogout }) {
 
   const onLogout = useCallback(async () => {
     try {
-    await handleLogout();
-    navigate('/login');
+      await handleLogout();
+      navigate('/login', { replace: true });
     } catch (err) {
-    setError(`Failed to log out: ${err.message}`);
-    console.error('Logout error:', err);
+      setError(`Failed to log out: ${err.message}`);
+      console.error('Logout error:', err);
     }
-  }, [handleLogout, navigate]);
-
+  }, [handleLogout, navigate, setError]);
 
   // Memoize patient list rendering to prevent unnecessary re-renders
   const patientList = useMemo(() => (
@@ -1011,29 +1007,7 @@ function DoctorChat({ user, role, handleLogout }) {
                   )}
                   <div ref={messagesEndRef} />
                 </div>
-                {error && (
-                  <div className="error-message">
-                    <span>{error}</span>
-                    {failedUpload && (
-                      <button
-                        onClick={() => retryUpload(failedUpload.audioBlob, failedUpload.language)}
-                        className="retry-button"
-                        aria-label="Retry audio upload"
-                      >
-                        Retry Upload
-                      </button>
-                    )}
-                    <button onClick={dismissError} className="dismiss-error-button" aria-label="Dismiss error">
-                      Dismiss
-                    </button>
-                  </div>
-                )}
-                {loadingAudio && (
-                  <div className="loading-audio">
-                    <p>Processing audio...</p>
-                  </div>
-                )}
-                <div classClassName="controls">
+                <div className="controls">
                   <div className="recording-buttons">
                     <button
                       onClick={startRecording}
@@ -1683,24 +1657,6 @@ function DoctorChat({ user, role, handleLogout }) {
           color: #A0A0A0;
           margin-top: 8px;
           display: block;
-        }
-
-        .error-message {
-          color: #E74C3C;
-          font-size: 0.9rem;
-          text-align: center;
-          margin-bottom: 20px;
-          animation: shake 0.5s ease;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          gap: 10px;
-          flex-wrap: wrap;
-        }
-
-        .error-message span {
-          flex: 1;
-          text-align: center;
         }
 
         .retry-button {
