@@ -166,33 +166,38 @@ function App() {
     console.log('App: Initiating logout process');
     try {
       let idToken = null;
+      let userId = sessionStorage.getItem('userId') || '';
       if (firebaseAuth.currentUser) {
         idToken = await firebaseAuth.currentUser.getIdToken(true);
+        userId = firebaseAuth.currentUser.uid;
         console.log('App: Obtained ID token for logout:', idToken ? 'Success' : 'Failed');
       } else {
         console.warn('App: No current user, skipping ID token fetch');
       }
 
       const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
-      const userId = firebaseAuth.currentUser?.uid || sessionStorage.getItem('userId') || '';
 
-      console.log('App: Sending logout request to:', `${apiUrl}/misc/logout`);
-      const response = await fetch(`${apiUrl}/misc/logout`, {
-        method: 'POST',
-        headers: {
-          ...(idToken && { Authorization: `Bearer ${idToken}` }),
-          'x-user-uid': userId,
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-        credentials: 'include',
-      });
+      if (userId) {
+        console.log('App: Sending logout request to:', `${apiUrl}/misc/logout`);
+        const response = await fetch(`${apiUrl}/misc/logout`, {
+          method: 'POST',
+          headers: {
+            ...(idToken && { Authorization: `Bearer ${idToken}` }),
+            'x-user-uid': userId,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+          },
+          credentials: 'include',
+        });
 
-      console.log('App: Logout request response status:', response.status);
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('App: Logout request failed, details:', errorText);
-        throw new Error(`Logout request failed: ${response.status}, ${errorText}`);
+        console.log('App: Logout request response status:', response.status);
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.error('App: Logout request failed, details:', errorText);
+          // Continue with sign-out even if API call fails
+        }
+      } else {
+        console.warn('App: No userId available, skipping API logout request');
       }
 
       console.log('App: Initiating Firebase sign-out');
@@ -205,7 +210,6 @@ function App() {
     } catch (err) {
       console.error('App: Logout error:', err.message);
       setError(`Failed to log out: ${err.message}. Redirecting to login.`);
-      // Proceed with state cleanup and redirect even if API call fails
       await signOut(firebaseAuth).catch((signOutErr) => {
         console.error('App: Firebase sign-out failed:', signOutErr.message);
       });
@@ -238,7 +242,7 @@ function App() {
 
   // Determine redirect path based on role
   const getRedirectPath = () => {
-    if (!user) return '/login';
+    if (!user || !role) return '/login';
     switch (role) {
       case 'patient':
         return '/patient/select-doctor';

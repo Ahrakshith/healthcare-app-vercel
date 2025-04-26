@@ -39,30 +39,38 @@ export default async function handler(req, res) {
   const userId = req.headers['x-user-uid'];
   const authHeader = req.headers.authorization;
 
-  if (!userId || !authHeader) {
-    console.error('Missing authentication headers:', { userId, authHeader });
-    return res.status(401).json({ error: 'Authentication headers missing' });
+  if (!userId) {
+    console.error('Missing x-user-uid header');
+    return res.status(401).json({ error: 'Missing user ID header' });
   }
 
+  if (req.method !== 'POST') {
+    console.error('Method not allowed:', req.method);
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  console.log(`Processing logout for user: ${userId}`);
+
   try {
-    // Verify Firebase ID token
-    const token = authHeader.replace('Bearer ', '');
-    const decodedToken = await auth.verifyIdToken(token);
-    if (decodedToken.uid !== userId) {
-      console.error('User ID mismatch:', { tokenUid: decodedToken.uid, headerUid: userId });
-      return res.status(403).json({ error: 'Unauthorized user' });
+    // Verify Firebase ID token if provided
+    if (authHeader) {
+      const token = authHeader.replace('Bearer ', '');
+      try {
+        const decodedToken = await auth.verifyIdToken(token);
+        if (decodedToken.uid !== userId) {
+          console.error('User ID mismatch:', { tokenUid: decodedToken.uid, headerUid: userId });
+          return res.status(403).json({ error: 'Unauthorized user' });
+        }
+        // Revoke refresh tokens if token is valid
+        await auth.revokeRefreshTokens(userId);
+        console.log(`Revoked refresh tokens for user ${userId}`);
+      } catch (error) {
+        console.warn(`Invalid or expired token for user ${userId}:`, error.message);
+        // Continue with logout even if token verification fails
+      }
+    } else {
+      console.warn('No Authorization header provided, skipping token verification');
     }
-
-    if (req.method !== 'POST') {
-      console.error('Method not allowed:', req.method);
-      return res.status(405).json({ error: 'Method not allowed' });
-    }
-
-    console.log(`Processing logout for user: ${userId}`);
-
-    // Revoke all refresh tokens for the user
-    await auth.revokeRefreshTokens(userId);
-    console.log(`Revoked refresh tokens for user ${userId}`);
 
     // Update Firestore with last logout timestamp
     await db.collection('users').doc(userId).set(
@@ -74,9 +82,6 @@ export default async function handler(req, res) {
     return res.status(200).json({ message: 'Logged out successfully', userId });
   } catch (error) {
     console.error(`Error in /api/misc/logout for user ${userId}:`, error.message);
-    if (error.code === 'auth/invalid-credential') {
-      return res.status(401).json({ error: 'Invalid or expired token', details: error.message });
-    }
     return res.status(500).json({ error: 'Failed to process logout request', details: error.message });
   }
 }
