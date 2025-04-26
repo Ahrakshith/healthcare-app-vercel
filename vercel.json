@@ -48,6 +48,16 @@
       "destination": "/index.html"
     }
   ],
+  "routes": [
+    {
+      "src": "/",
+      "dest": "/"
+    },
+    {
+      "src": "/test",
+      "dest": "/"
+    }
+  ],
   "cleanUrls": true,
   "trailingSlash": false,
   "functions": {
