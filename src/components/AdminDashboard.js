@@ -148,7 +148,9 @@ function AdminDashboard({ user, role, handleLogout, setUser }) {
       };
 
       console.log('AdminDashboard: Sending request to /api/users with payload:', doctorData);
-      const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app';
+      const baseApiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app';
+      // Ensure no double /api in the URL
+      const apiUrl = baseApiUrl.endsWith('/api') ? baseApiUrl.replace(/\/api$/, '') : baseApiUrl;
       const createResponse = await fetch(`${apiUrl}/api/users`, {
         method: 'POST',
         headers: {
@@ -237,7 +239,9 @@ function AdminDashboard({ user, role, handleLogout, setUser }) {
         password: newAdmin.password,
       };
 
-      const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app';
+      const baseApiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app';
+      // Ensure no double /api in the URL
+      const apiUrl = baseApiUrl.endsWith('/api') ? baseApiUrl.replace(/\/api$/, '') : baseApiUrl;
       const response = await fetch(`${apiUrl}/api/users`, {
         method: 'POST',
         headers: {
