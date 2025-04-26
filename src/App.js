@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { auth as firebaseAuth, db } from './services/firebase.js';
+import { signOut } from 'firebase/auth';
 import Login from './components/Login.js';
 import Register from './components/Register.js';
 import PatientChat from './components/PatientChat.js';
@@ -13,11 +14,15 @@ import './components/patient.css';
 
 // Custom 404 Component
 const NotFound = () => {
+  const location = useLocation();
+  console.log(`NotFound: Rendering for path "${location.pathname}"`);
   return (
     <div className="not-found-container">
       <h2>404 - Page Not Found</h2>
-      <p>The requested path does not exist.</p>
-      <p>Go to <a href="/login">Login</a></p>
+      <p>The requested path "{location.pathname}" does not exist.</p>
+      <p>
+        Go to <a href="/login">Login</a>
+      </p>
       <style>{`
         .not-found-container {
           min-height: 100vh;
@@ -52,31 +57,35 @@ const NotFound = () => {
 };
 
 function App() {
-  const [firebaseUser, setFirebaseUser] = useState(null); // Firebase Auth user
-  const [user, setUser] = useState(null); // Combined user data
+  const [firebaseUser, setFirebaseUser] = useState(null);
+  const [user, setUser] = useState(null);
   const [role, setRole] = useState(null);
   const [patientId, setPatientId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const navigate = useNavigate();
+  const location = useLocation();
 
   useEffect(() => {
+    console.log('App: Starting auth state listener setup');
     const unsubscribeAuth = firebaseAuth.onAuthStateChanged(async (authUser) => {
+      console.log('App: Auth state changed, authUser:', authUser ? authUser.uid : null);
       if (authUser) {
-        setFirebaseUser(authUser); // Store Firebase Auth user
-        const userId = authUser.uid;
         if (process.env.NODE_ENV !== 'production') {
-          console.log('App.js: Authenticated user detected, UID:', userId);
+          console.log('App: Authenticated user detected, UID:', authUser.uid);
         }
+        setFirebaseUser(authUser);
 
+        const userId = authUser.uid;
+        console.log('App: Fetching user data for UID:', userId);
         const userRef = doc(db, 'users', userId);
         const unsubscribeFirestore = onSnapshot(
           userRef,
           (docSnapshot) => {
+            console.log('App: Firestore snapshot received for user:', userId);
             if (docSnapshot.exists()) {
               const userData = docSnapshot.data();
-              if (process.env.NODE_ENV !== 'production') {
-                console.log('App.js: Fetched Firestore user data:', userData);
-              }
+              console.log('App: Fetched Firestore user data:', userData);
 
               const updatedUser = {
                 uid: userId,
@@ -86,89 +95,193 @@ function App() {
 
               setUser(updatedUser);
               setRole(userData.role);
+              console.log('App: Updated user state:', updatedUser, 'Role:', userData.role);
 
               if (userData.role === 'patient') {
                 const pid = userData.patientId || userId;
                 setPatientId(pid);
-                localStorage.setItem('patientId', pid);
-                if (process.env.NODE_ENV !== 'production') {
-                  console.log(`App.js: Set patientId=${pid} for patient role`);
-                }
+                sessionStorage.setItem('patientId', pid);
+                console.log(`App: Set patientId=${pid} for patient role`);
               } else {
                 setPatientId(null);
-                localStorage.removeItem('patientId');
+                sessionStorage.removeItem('patientId');
+                console.log('App: Cleared patientId for non-patient role');
               }
 
-              localStorage.setItem('userId', userId);
+              sessionStorage.setItem('userId', userId);
               setLoading(false);
+              console.log('App: Loading complete, user data set');
             } else {
-              if (process.env.NODE_ENV !== 'production') {
-                console.log('App.js: User document not found in Firestore');
-              }
+              console.log('App: User document not found in Firestore for UID:', userId);
               handleAuthFailure();
             }
           },
           (error) => {
-            console.error('App.js: Firestore fetch error:', error.message);
+            console.error('App: Firestore fetch error:', error.message);
             setError(`Failed to fetch user data: ${error.message}`);
             handleAuthFailure();
           }
         );
 
-        return () => unsubscribeFirestore();
+        return () => {
+          console.log('App: Unsubscribing Firestore listener for user:', userId);
+          unsubscribeFirestore();
+        };
       } else {
-        if (process.env.NODE_ENV !== 'production') {
-          console.log('App.js: No authenticated user');
-        }
+        console.log('App: No authenticated user detected');
         handleAuthFailure();
       }
     });
 
-    return () => unsubscribeAuth();
+    return () => {
+      console.log('App: Unsubscribing auth state listener');
+      unsubscribeAuth();
+    };
   }, []);
 
+  // Handle page refresh/visibility change
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      console.log('App: Visibility state changed, current state:', document.visibilityState);
+      if (document.visibilityState === 'visible') {
+        console.log('App: Page became visible - possible refresh detected');
+        console.log('App: Current firebaseUser:', firebaseUser ? firebaseUser.uid : null);
+        console.log('App: Current user state:', user);
+        console.log('App: Current role:', role);
+        console.log('App: Current patientId:', patientId);
+        console.log('App: SessionStorage userId:', sessionStorage.getItem('userId'));
+        console.log('App: SessionStorage patientId:', sessionStorage.getItem('patientId'));
+        console.log('App: Current location:', location.pathname);
+
+        // Restore the previous route on refresh if authenticated
+        if (firebaseUser) {
+          const lastPath = sessionStorage.getItem('lastPath') || location.pathname;
+          console.log('App: Attempting to restore last path:', lastPath);
+
+          if (role === 'patient' && lastPath.startsWith('/patient')) {
+            if (lastPath === '/patient/select-doctor' || lastPath.startsWith('/patient/language-preference') || lastPath.startsWith('/patient/chat')) {
+              console.log('App: Redirecting to patient route:', lastPath);
+              navigate(lastPath);
+            } else {
+              console.log('App: Invalid patient route, redirecting to /patient/select-doctor');
+              navigate('/patient/select-doctor');
+            }
+          } else if (role === 'doctor' && lastPath === '/doctor/chat') {
+            console.log('App: Redirecting to doctor route:', lastPath);
+            navigate(lastPath);
+          } else if (role === 'admin' && lastPath === '/admin') {
+            console.log('App: Redirecting to admin route:', lastPath);
+            navigate(lastPath);
+          } else {
+            console.log('App: Role or path mismatch, redirecting to default route for role:', role);
+            navigate(
+              role === 'patient'
+                ? '/patient/select-doctor'
+                : role === 'doctor'
+                ? '/doctor/chat'
+                : role === 'admin'
+                ? '/admin'
+                : '/login'
+            );
+          }
+        } else {
+          console.log('App: No firebaseUser, redirecting to login');
+          navigate('/login');
+        }
+
+        // Save the current path for the next refresh
+        if (location.pathname !== '/login' && location.pathname !== '/register') {
+          console.log('App: Saving current path to sessionStorage:', location.pathname);
+          sessionStorage.setItem('lastPath', location.pathname);
+        }
+      } else {
+        console.log('App: Page is hidden, visibilityState:', document.visibilityState);
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    console.log('App: Visibility change listener added');
+
+    // Initialize lastPath on mount
+    const initialPath = location.pathname;
+    if (initialPath !== '/login' && initialPath !== '/register') {
+      console.log('App: Initializing lastPath in sessionStorage:', initialPath);
+      sessionStorage.setItem('lastPath', initialPath);
+    }
+
+    return () => {
+      console.log('App: Removing visibility change listener');
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [firebaseUser, user, role, patientId, navigate, location.pathname]);
+
+  // Clear error on route change
+  useEffect(() => {
+    const handleRouteChange = () => {
+      if (error) {
+        console.log('App: Clearing error on route change');
+        setError('');
+      }
+    };
+    window.addEventListener('popstate', handleRouteChange);
+    return () => window.removeEventListener('popstate', handleRouteChange);
+  }, [error]);
+
   const handleAuthFailure = () => {
+    console.log('App: Handling auth failure, clearing all states');
     setFirebaseUser(null);
     setUser(null);
     setRole(null);
     setPatientId(null);
-    localStorage.removeItem('userId');
-    localStorage.removeItem('patientId');
+    sessionStorage.removeItem('userId');
+    sessionStorage.removeItem('patientId');
+    sessionStorage.removeItem('lastPath'); // Clear last path on logout
     setLoading(false);
+    console.log('App: Auth failure handled, loading set to false');
   };
 
   const handleLogout = async () => {
-    if (process.env.NODE_ENV !== 'production') {
-      console.log('App.js: Initiating logout');
-    }
+    console.log('App: Initiating logout process');
     try {
+      const idToken = await firebaseAuth.currentUser?.getIdToken(true);
+      console.log('App: Obtained ID token for logout:', idToken ? 'Success' : 'Failed');
       const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
+
+      console.log('App: Sending logout request to:', `${apiUrl}/misc/logout`);
       const response = await fetch(`${apiUrl}/misc/logout`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-user-uid': firebaseUser?.uid || '' },
+        headers: {
+          'Authorization': `Bearer ${idToken}`,
+          'x-user-uid': firebaseAuth.currentUser?.uid || '',
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
         credentials: 'include',
       });
 
+      console.log('App: Logout request response status:', response.status);
       if (!response.ok) {
-        throw new Error(`Logout failed: ${response.statusText}`);
+        const errorText = await response.text();
+        console.error('App: Logout request failed, details:', errorText);
+        throw new Error(`Logout request failed: ${response.status}, ${errorText}`);
       }
 
-      await firebaseAuth.signOut();
-      if (process.env.NODE_ENV !== 'production') {
-        console.log('App.js: User logged out successfully from Firebase');
-      }
+      console.log('App: Initiating Firebase sign-out');
+      await signOut(firebaseAuth);
+      console.log('App: Firebase sign-out completed');
 
+      console.log('App: Clearing app state');
       handleAuthFailure();
+      console.log('App: Local state cleared successfully');
     } catch (err) {
-      console.error('App.js: Logout error:', err.message);
+      console.error('App: Logout error:', err.message);
       setError(`Failed to log out: ${err.message}`);
+      throw err; // Let components like DoctorChat handle navigation
     }
   };
 
   if (loading) {
-    if (process.env.NODE_ENV !== 'production') {
-      console.log('App.js: Rendering loading state');
-    }
+    console.log('App: Rendering loading state');
     return (
       <div className="loading-container">
         <p>Loading...</p>
@@ -188,44 +301,78 @@ function App() {
     );
   }
 
+  console.log('App: Rendering main app with user:', user?.uid, 'role:', role, 'patientId:', patientId);
   return (
     <div className="app-container">
       {error && (
         <div className="error-message">
           <span>{error}</span>
-          <button onClick={() => setError('')} className="dismiss-error">
+          <button
+            onClick={() => {
+              setError('');
+              console.log('App: Error dismissed');
+            }}
+            className="dismiss-error"
+          >
             Dismiss
           </button>
         </div>
       )}
       <Routes>
-        {/* Public Routes */}
         <Route
           path="/login"
           element={
-            <Login
-              setUser={setUser}
-              setRole={setRole}
-              setPatientId={setPatientId}
-              user={user}
-              setError={setError}
-            />
+            user ? (
+              <Navigate
+                to={
+                  role === 'patient'
+                    ? '/patient/select-doctor'
+                    : role === 'doctor'
+                    ? '/doctor/chat'
+                    : role === 'admin'
+                    ? '/admin'
+                    : '/login'
+                }
+                replace
+              />
+            ) : (
+              <Login
+                setUser={setUser}
+                setRole={setRole}
+                setPatientId={setPatientId}
+                user={user}
+                setError={setError}
+              />
+            )
           }
         />
         <Route
           path="/register"
           element={
-            <Register
-              setUser={setUser}
-              setRole={setRole}
-              setPatientId={setPatientId}
-              user={user}
-              setError={setError}
-            />
+            user ? (
+              <Navigate
+                to={
+                  role === 'patient'
+                    ? '/patient/select-doctor'
+                    : role === 'doctor'
+                    ? '/doctor/chat'
+                    : role === 'admin'
+                    ? '/admin'
+                    : '/login'
+                }
+                replace
+              />
+            ) : (
+              <Register
+                setUser={setUser}
+                setRole={setRole}
+                setPatientId={setPatientId}
+                user={user}
+                setError={setError}
+              />
+            )
           }
         />
-
-        {/* Patient Routes */}
         <Route
           path="/patient/select-doctor"
           element={
@@ -273,41 +420,26 @@ function App() {
             )
           }
         />
-
-        {/* Doctor Route */}
         <Route
           path="/doctor/chat"
           element={
             user && role === 'doctor' ? (
-              <DoctorChat
-                user={user}
-                role={role}
-                handleLogout={handleLogout}
-              />
+              <DoctorChat user={user} role={role} handleLogout={handleLogout} setError={setError} />
             ) : (
               <Navigate to="/login" replace />
             )
           }
         />
-
-        {/* Admin Route */}
         <Route
           path="/admin"
           element={
             user && role === 'admin' ? (
-              <AdminDashboard
-                user={user}
-                role={role}
-                handleLogout={handleLogout}
-                setUser={setUser}
-              />
+              <AdminDashboard user={user} role={role} handleLogout={handleLogout} setUser={setUser} />
             ) : (
               <Navigate to="/login" replace />
             )
           }
         />
-
-        {/* Root Route with Role-Based Redirect */}
         <Route
           path="/"
           element={
@@ -326,8 +458,6 @@ function App() {
             )
           }
         />
-
-        {/* Fallback Route for 404 */}
         <Route path="*" element={<NotFound />} />
       </Routes>
 
@@ -394,6 +524,7 @@ function App() {
 }
 
 export default function AppWrapper() {
+  console.log('AppWrapper: Rendering Router');
   return (
     <Router>
       <App />
