@@ -13,31 +13,31 @@
   "rewrites": [
     {
       "source": "/api/audio/translate",
-      "destination": "/api/audio"
+      "destination": "/api/index.js"
     },
     {
       "source": "/api/chats/:patientId/:doctorId",
-      "destination": "/api/chats/[patientId]/[doctorId]"
+      "destination": "/api/index.js"
     },
     {
       "source": "/api/users/:uid",
-      "destination": "/api/users/[uid]"
+      "destination": "/api/index.js"
     },
     {
       "source": "/api/misc/logout",
-      "destination": "/api/misc/logout"
+      "destination": "/api/index.js"
     },
     {
       "source": "/api/misc/notify-missed-dose",
-      "destination": "/api/misc/notify-missed-dose"
+      "destination": "/api/index.js"
     },
     {
       "source": "/api/misc/uploadImage/:patientId",
-      "destination": "/api/misc/uploadImage/[patientId]"
+      "destination": "/api/index.js"
     },
     {
       "source": "/api/:path*",
-      "destination": "/api/:path"
+      "destination": "/api/index.js"
     },
     {
       "source": "/(.*)",

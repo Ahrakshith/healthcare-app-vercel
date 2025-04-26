@@ -111,6 +111,11 @@ function App() {
               sessionStorage.setItem('userId', userId);
               setLoading(false);
               console.log('App: Loading complete, user data set');
+
+              // Restore route after auth state is fully loaded
+              const lastPath = sessionStorage.getItem('lastPath') || location.pathname;
+              console.log('App: Restoring path after auth load:', lastPath);
+              redirectToLastPath(lastPath);
             } else {
               console.log('App: User document not found in Firestore for UID:', userId);
               handleAuthFailure();
@@ -139,81 +144,62 @@ function App() {
     };
   }, []);
 
-  // Handle page refresh/visibility change
-  useEffect(() => {
-    const handleVisibilityChange = () => {
-      console.log('App: Visibility state changed, current state:', document.visibilityState);
-      if (document.visibilityState === 'visible') {
-        console.log('App: Page became visible - possible refresh detected');
-        console.log('App: Current firebaseUser:', firebaseUser ? firebaseUser.uid : null);
-        console.log('App: Current user state:', user);
-        console.log('App: Current role:', role);
-        console.log('App: Current patientId:', patientId);
-        console.log('App: SessionStorage userId:', sessionStorage.getItem('userId'));
-        console.log('App: SessionStorage patientId:', sessionStorage.getItem('patientId'));
-        console.log('App: Current location:', location.pathname);
-
-        // Restore the previous route on refresh if authenticated
-        if (firebaseUser) {
-          const lastPath = sessionStorage.getItem('lastPath') || location.pathname;
-          console.log('App: Attempting to restore last path:', lastPath);
-
-          if (role === 'patient' && lastPath.startsWith('/patient')) {
-            if (lastPath === '/patient/select-doctor' || lastPath.startsWith('/patient/language-preference') || lastPath.startsWith('/patient/chat')) {
-              console.log('App: Redirecting to patient route:', lastPath);
-              navigate(lastPath);
-            } else {
-              console.log('App: Invalid patient route, redirecting to /patient/select-doctor');
-              navigate('/patient/select-doctor');
-            }
-          } else if (role === 'doctor' && lastPath === '/doctor/chat') {
-            console.log('App: Redirecting to doctor route:', lastPath);
-            navigate(lastPath);
-          } else if (role === 'admin' && lastPath === '/admin') {
-            console.log('App: Redirecting to admin route:', lastPath);
-            navigate(lastPath);
-          } else {
-            console.log('App: Role or path mismatch, redirecting to default route for role:', role);
-            navigate(
-              role === 'patient'
-                ? '/patient/select-doctor'
-                : role === 'doctor'
-                ? '/doctor/chat'
-                : role === 'admin'
-                ? '/admin'
-                : '/login'
-            );
-          }
-        } else {
-          console.log('App: No firebaseUser, redirecting to login');
-          navigate('/login');
-        }
-
-        // Save the current path for the next refresh
-        if (location.pathname !== '/login' && location.pathname !== '/register') {
-          console.log('App: Saving current path to sessionStorage:', location.pathname);
-          sessionStorage.setItem('lastPath', location.pathname);
-        }
-      } else {
-        console.log('App: Page is hidden, visibilityState:', document.visibilityState);
-      }
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    console.log('App: Visibility change listener added');
-
-    // Initialize lastPath on mount
-    const initialPath = location.pathname;
-    if (initialPath !== '/login' && initialPath !== '/register') {
-      console.log('App: Initializing lastPath in sessionStorage:', initialPath);
-      sessionStorage.setItem('lastPath', initialPath);
+  // Function to handle route restoration
+  const redirectToLastPath = (lastPath) => {
+    if (!firebaseUser || !role) {
+      console.log('App: Cannot redirect yet, firebaseUser or role not set');
+      return;
     }
 
-    return () => {
-      console.log('App: Removing visibility change listener');
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-    };
-  }, [firebaseUser, user, role, patientId, navigate, location.pathname]);
+    console.log('App: Redirecting to last path:', lastPath);
+    if (role === 'patient' && lastPath.startsWith('/patient')) {
+      if (lastPath === '/patient/select-doctor' || lastPath.startsWith('/patient/language-preference') || lastPath.startsWith('/patient/chat')) {
+        console.log('App: Redirecting to patient route:', lastPath);
+        navigate(lastPath, { replace: true });
+      } else {
+        console.log('App: Invalid patient route, redirecting to /patient/select-doctor');
+        navigate('/patient/select-doctor', { replace: true });
+      }
+    } else if (role === 'doctor' && lastPath === '/doctor/chat') {
+      console.log('App: Redirecting to doctor route:', lastPath);
+      navigate(lastPath, { replace: true });
+    } else if (role === 'admin' && lastPath === '/admin') {
+      console.log('App: Redirecting to admin route:', lastPath);
+      navigate(lastPath, { replace: true });
+    } else {
+      console.log('App: Role or path mismatch, redirecting to default route for role:', role);
+      navigate(
+        role === 'patient'
+          ? '/patient/select-doctor'
+          : role === 'doctor'
+          ? '/doctor/chat'
+          : role === 'admin'
+          ? '/admin'
+          : '/login',
+        { replace: true }
+      );
+    }
+  };
+
+  // Save the current path on route change (excluding login/register)
+  useEffect(() => {
+    if (location.pathname !== '/login' && location.pathname !== '/register') {
+      console.log('App: Saving current path to sessionStorage:', location.pathname);
+      sessionStorage.setItem('lastPath', location.pathname);
+    }
+  }, [location.pathname]);
+
+  // Handle initial load and refresh
+  useEffect(() => {
+    if (!loading && firebaseUser && role) {
+      const lastPath = sessionStorage.getItem('lastPath') || location.pathname;
+      console.log('App: Initial load/refresh detected, restoring path:', lastPath);
+      redirectToLastPath(lastPath);
+    } else if (!loading && !firebaseUser) {
+      console.log('App: No firebaseUser on initial load, redirecting to login');
+      navigate('/login', { replace: true });
+    }
+  }, [loading, firebaseUser, role]);
 
   // Clear error on route change
   useEffect(() => {
@@ -235,9 +221,10 @@ function App() {
     setPatientId(null);
     sessionStorage.removeItem('userId');
     sessionStorage.removeItem('patientId');
-    sessionStorage.removeItem('lastPath'); // Clear last path on logout
+    sessionStorage.removeItem('lastPath');
     setLoading(false);
     console.log('App: Auth failure handled, loading set to false');
+    navigate('/login', { replace: true });
   };
 
   const handleLogout = async () => {
@@ -276,7 +263,7 @@ function App() {
     } catch (err) {
       console.error('App: Logout error:', err.message);
       setError(`Failed to log out: ${err.message}`);
-      throw err; // Let components like DoctorChat handle navigation
+      throw err;
     }
   };
 
