@@ -68,18 +68,14 @@ export default async function handler(req, res) {
 
   const adminId = req.headers['x-user-uid'];
 
-  if (!adminId) {
+  // Only check authentication for POST requests (admin-only action)
+  if (req.method === 'POST' && !adminId) {
     return res.status(401).json({ error: { code: 401, message: 'Unauthorized: Missing x-user-uid header' } });
   }
 
   try {
-    // Verify admin role
-    const userDoc = await operationWithRetry(() => db.collection('users').doc(adminId).get());
-    if (!userDoc.exists || userDoc.data().role !== 'admin') {
-      return res.status(403).json({ error: { code: 403, message: 'Forbidden: Only admins can perform this action' } });
-    }
-
     if (req.method === 'GET') {
+      // Allow both admins and patients to fetch doctors
       const pathSegments = req.url.split('/').filter(Boolean);
       const endpoint = pathSegments[1]; // "doctors"
       const param = pathSegments[2]; // e.g., [id], "by-specialty"
@@ -126,6 +122,15 @@ export default async function handler(req, res) {
         return res.status(404).json({ error: { code: 404, message: 'Endpoint not found', details: `Method: ${req.method}, Path: /${pathSegments.join('/')}` } });
       }
     } else if (req.method === 'POST') {
+      // Verify admin role for POST requests only
+      if (!adminId) {
+        return res.status(401).json({ error: { code: 401, message: 'Unauthorized: Missing x-user-uid header' } });
+      }
+      const userDoc = await operationWithRetry(() => db.collection('users').doc(adminId).get());
+      if (!userDoc.exists || userDoc.data().role !== 'admin') {
+        return res.status(403).json({ error: { code: 403, message: 'Forbidden: Only admins can perform this action' } });
+      }
+
       const { email, password, name, age, sex, experience, specialty, qualification, address, contactNumber } = req.body;
 
       // Validate inputs
@@ -193,7 +198,7 @@ export default async function handler(req, res) {
       await operationWithRetry(() => db.collection('users').doc(doctorUid).set(doctorData));
       await operationWithRetry(() => db.collection('doctors').doc(doctorId).set(doctorData));
 
-      // Trigger Pusher event (optional, e.g., to notify admins)
+      // Trigger Pusher event (optional)
       pusher.trigger('admin-channel', 'doctor-added', { doctorId, name });
 
       return res.status(201).json({ message: 'Doctor added successfully', uid: doctorUid, doctorId });
