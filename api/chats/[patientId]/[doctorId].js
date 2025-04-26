@@ -26,7 +26,7 @@ try {
 }
 
 const auth = getAuth();
-const db = getFirestore();
+const db = getFirestore(); // Kept for doctor_assignments; remove if not needed
 
 // Initialize GCS
 let storage;
@@ -48,7 +48,7 @@ try {
   throw new Error(`GCS initialization failed: ${error.message}`);
 }
 
-const bucketName = process.env.GCS_BUCKET_NAME || 'healthcare-app-d887.appspot.com';
+const bucketName = process.env.GCS_BUCKET_NAME || 'fir-project-vercel';
 const bucket = storage.bucket(bucketName);
 
 // Initialize Pusher
@@ -112,7 +112,7 @@ const generateSignedUrl = async filePath => {
   }
 };
 
-// Initialize doctor assignment in Firestore
+// Initialize doctor assignment in Firestore (optional)
 const initializeDoctorAssignment = async (patientId, doctorId) => {
   const assignmentId = `${patientId}_${doctorId}`;
   const assignmentRef = db.collection('doctor_assignments').doc(assignmentId);
@@ -161,17 +161,18 @@ export default async function handler(req, res) {
       return res.status(403).json({ error: 'Unauthorized user' });
     }
 
-    // Authorize user for this chat
-    const patientQuery = await db.collection('patients').where('uid', '==', userId).get();
-    const doctorQuery = await db.collection('doctors').where('uid', '==', userId).get();
+    // Authorize user for this chat using Firebase Auth custom claims
+    const user = await auth.getUser(userId);
+    const isPatient = user.customClaims?.patientId === patientId;
+    const isDoctor = user.customClaims?.doctorId === doctorId;
     let isAuthorized = false;
     let userRole = null;
 
-    if (!patientQuery.empty && patientQuery.docs[0].data().patientId === patientId) {
+    if (isPatient) {
       isAuthorized = true;
       userRole = 'patient';
       console.log(`User ${userId} authorized as patient ${patientId}`);
-    } else if (!doctorQuery.empty && doctorQuery.docs[0].data().doctorId === doctorId) {
+    } else if (isDoctor) {
       isAuthorized = true;
       userRole = 'doctor';
       console.log(`User ${userId} authorized as doctor ${doctorId}`);
@@ -182,28 +183,24 @@ export default async function handler(req, res) {
       return res.status(403).json({ error: 'You are not authorized to access this chat' });
     }
 
-    // Check doctor assignment
-    const assignmentId = `${patientId}_${doctorId}`;
-    const assignmentDoc = await db.collection('doctor_assignments').doc(assignmentId).get();
-    if (!assignmentDoc.exists) {
-      console.log(`No chat assignment found for patient ${patientId} and doctor ${doctorId}`);
-      return res.status(404).json({ error: 'No chat assignment found' });
-    }
+    // Check or initialize doctor assignment (optional)
+    await initializeDoctorAssignment(patientId, doctorId);
 
-    const chatId = `${patientId}_${doctorId}`;
-    const chatRef = db.collection('chats').doc(chatId);
+    const chatId = `${patientId}-${doctorId}`;
+    const chatFile = bucket.file(`chats/${chatId}/messages.json`);
 
     if (req.method === 'GET') {
-      // Fetch messages from Firestore
-      const chatDoc = await chatRef.get();
-      if (!chatDoc.exists) {
+      // Fetch messages from GCS
+      const [exists] = await chatFile.exists();
+      if (!exists) {
         console.log(`No messages found for chat ${chatId}`);
         return res.status(200).json({ messages: [], userRole });
       }
 
-      const messages = chatDoc.data().messages || [];
+      const [contents] = await chatFile.download();
+      const data = JSON.parse(contents.toString('utf8'));
       const messagesWithUrls = await Promise.all(
-        messages.map(async message => {
+        (data.messages || []).map(async message => {
           const updatedMessage = { ...message };
           if (message.audioPath) {
             updatedMessage.audioUrl = await generateSignedUrl(message.audioPath);
@@ -265,20 +262,19 @@ export default async function handler(req, res) {
             validateSender(effectiveSender);
 
             // Validate sender matches user role
-            let expectedId;
-            if (effectiveSender === 'doctor') {
-              expectedId = doctorId;
-            } else if (effectiveSender === 'patient') {
-              expectedId = patientId;
-            }
             if ((effectiveSender === 'doctor' && userRole !== 'doctor') || (effectiveSender === 'patient' && userRole !== 'patient')) {
               console.error(`User ${userId} not authorized to send as ${effectiveSender}`);
               return res.status(403).json({ error: `You are not authorized to send messages as this ${effectiveSender}` });
             }
 
-            await initializeDoctorAssignment(patientId, doctorId);
-
             const chatDir = `chats/${chatId}`;
+            let chatData = { messages: [] };
+            const [exists] = await chatFile.exists();
+            if (exists) {
+              const [contents] = await chatFile.download();
+              chatData = JSON.parse(contents.toString('utf8')) || { messages: [] };
+            }
+
             const newMessage = {
               text: message.text || '',
               timestamp: new Date().toISOString(),
@@ -304,17 +300,12 @@ export default async function handler(req, res) {
               await uploadWithRetry(imageFile, imageFileBuffer, {
                 contentType: imageFileName.endsWith('.png') ? 'image/png' : 'image/jpeg',
               });
-              newMessage.imagePath = `${chatDir}/images/${audioFileName}`;
+              newMessage.imagePath = `${chatDir}/images/${imageFileName}`;
               newMessage.imageUrl = await generateSignedUrl(newMessage.imagePath);
             }
 
-            await chatRef.set(
-              {
-                messages: FieldValue.arrayUnion(newMessage),
-                updatedAt: FieldValue.serverTimestamp(),
-              },
-              { merge: true }
-            );
+            chatData.messages.push(newMessage);
+            await uploadWithRetry(chatFile, JSON.stringify(chatData), { contentType: 'application/json' });
 
             await pusher.trigger(`chat-${chatId}`, 'newMessage', newMessage);
             console.log(`Pusher event 'newMessage' triggered on channel chat-${chatId}`);
@@ -322,9 +313,6 @@ export default async function handler(req, res) {
             return res.status(200).json({ message: 'Message saved successfully', newMessage });
           } catch (error) {
             console.error(`Error processing file upload for chat ${chatId}:`, error.message);
-            if (error.message.includes('Invalid sender type')) {
-              return res.status(400).json({ error: error.message });
-            }
             return res.status(500).json({ error: 'Failed to process file upload', details: error.message });
           }
         });
@@ -345,7 +333,12 @@ export default async function handler(req, res) {
           return res.status(403).json({ error: `You are not authorized to send messages as this ${message.sender}` });
         }
 
-        await initializeDoctorAssignment(patientId, doctorId);
+        let chatData = { messages: [] };
+        const [exists] = await chatFile.exists();
+        if (exists) {
+          const [contents] = await chatFile.download();
+          chatData = JSON.parse(contents.toString('utf8')) || { messages: [] };
+        }
 
         const newMessage = {
           ...message,
@@ -353,13 +346,8 @@ export default async function handler(req, res) {
           senderId: userId,
         };
 
-        await chatRef.set(
-          {
-            messages: FieldValue.arrayUnion(newMessage),
-            updatedAt: FieldValue.serverTimestamp(),
-          },
-          { merge: true }
-        );
+        chatData.messages.push(newMessage);
+        await uploadWithRetry(chatFile, JSON.stringify(chatData), { contentType: 'application/json' });
 
         await pusher.trigger(`chat-${chatId}`, 'newMessage', newMessage);
         console.log(`Pusher event 'newMessage' triggered on channel chat-${chatId}`);
