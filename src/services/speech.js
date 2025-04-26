@@ -11,7 +11,7 @@ const truncate = (str, maxLength = 50) => {
 const fetchWithRetry = async (url, options, maxRetries = 3, backoff = 1000) => {
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      !isProduction && console.log(`fetchWithRetry: Attempt ${attempt} for ${url}`);
+      !isProduction && console.log(`fetchWithRetry: Attempt ${attempt} for ${truncate(url)}`);
       const response = await fetch(url, options);
       if (!response.ok) {
         const errorText = await response.text();
@@ -36,7 +36,7 @@ const fetchWithRetry = async (url, options, maxRetries = 3, backoff = 1000) => {
       return response;
     } catch (error) {
       if (attempt === maxRetries) {
-        !isProduction && console.error(`fetchWithRetry: All ${maxRetries} attempts failed for ${url}: ${error.message}`);
+        !isProduction && console.error(`fetchWithRetry: All ${maxRetries} attempts failed for ${truncate(url)}: ${error.message}`);
         throw error;
       }
       const delay = backoff * Math.pow(2, attempt - 1);
@@ -48,6 +48,10 @@ const fetchWithRetry = async (url, options, maxRetries = 3, backoff = 1000) => {
 
 // Normalize language codes to a consistent format (en-US or kn-IN)
 const normalizeLanguageCode = (code) => {
+  if (!code || typeof code !== 'string') {
+    !isProduction && console.warn('normalizeLanguageCode: Invalid code received, defaulting to en-US');
+    return 'en-US';
+  }
   const lowerCode = code.toLowerCase();
   switch (lowerCode) {
     case 'kn':
@@ -58,6 +62,7 @@ const normalizeLanguageCode = (code) => {
     case 'en-gb':
       return 'en-US';
     default:
+      !isProduction && console.warn(`normalizeLanguageCode: Unrecognized code "${code}", defaulting to en-US`);
       return 'en-US'; // Default to English if invalid
   }
 };
@@ -70,7 +75,7 @@ async function transcribeAudio(audioBlob, languageCode = 'en-US', userId, idToke
     throw new Error('Invalid language code: Must be a non-empty string.');
   }
   if (!userId || typeof userId !== 'string' || userId.trim() === '') {
-    !isProduction && console.error(`transcribeAudio: Invalid userId received - userId="${userId}"`);
+    !isProduction && console.error(`transcribeAudio: Invalid userId received - userId="${truncate(userId)}"`);
     throw new Error('Invalid userId: Must be a non-empty string.');
   }
   if (!idToken || typeof idToken !== 'string' || idToken.trim() === '') {
@@ -78,7 +83,7 @@ async function transcribeAudio(audioBlob, languageCode = 'en-US', userId, idToke
   }
 
   const normalizedLanguageCode = normalizeLanguageCode(languageCode);
-  !nominalizeLanguageCode && console.log(`transcribeAudio: Starting with languageCode=${normalizedLanguageCode}, uid=${userId}`);
+  !isProduction && console.log(`transcribeAudio: Starting with languageCode=${normalizedLanguageCode}, uid=${truncate(userId)}`);
 
   const formData = new FormData();
   formData.append('audio', audioBlob, `recording-${Date.now()}.webm`);
@@ -124,7 +129,7 @@ async function transcribeAudio(audioBlob, languageCode = 'en-US', userId, idToke
       console.log(
         `transcribeAudio: Success - transcription="${truncate(
           transcription
-        )}", audioUrl="${audioUrl}", translatedText="${truncate(finalTranslatedText || 'N/A')}"`
+        )}", audioUrl="${truncate(audioUrl)}", translatedText="${truncate(finalTranslatedText || 'N/A')}"`
       );
     return {
       transcription,
@@ -145,7 +150,7 @@ async function detectLanguage(text, userId, idToken) {
     throw new Error('Invalid text: Must be a non-empty string.');
   }
   if (!userId || typeof userId !== 'string' || userId.trim() === '') {
-    !isProduction && console.error(`detectLanguage: Invalid userId received - userId="${userId}"`);
+    !isProduction && console.error(`detectLanguage: Invalid userId received - userId="${truncate(userId)}"`);
     throw new Error('Invalid userId: Must be a non-empty string.');
   }
   if (!idToken || typeof idToken !== 'string' || idToken.trim() === '') {
@@ -172,7 +177,7 @@ async function detectLanguage(text, userId, idToken) {
     return detectedLang;
   } catch (error) {
     !isProduction && console.error(`detectLanguage: Error - ${error.message}`);
-    throw error;
+    throw new Error(`Language detection failed: ${error.message}`);
   }
 }
 
@@ -187,7 +192,7 @@ async function translateText(text, sourceLanguageCode, targetLanguageCode, userI
     throw new Error('Invalid target language code: Must be a non-empty string.');
   }
   if (!userId || typeof userId !== 'string' || userId.trim() === '') {
-    !isProduction && console.error(`translateText: Invalid userId received - userId="${userId}"`);
+    !isProduction && console.error(`translateText: Invalid userId received - userId="${truncate(userId)}"`);
     throw new Error('Invalid userId: Must be a non-empty string.');
   }
   if (!idToken || typeof idToken !== 'string' || idToken.trim() === '') {
@@ -228,7 +233,7 @@ async function translateText(text, sourceLanguageCode, targetLanguageCode, userI
     return translatedText || text; // Fallback to original text if translation fails
   } catch (error) {
     !isProduction && console.error(`translateText: Error - ${error.message}`);
-    throw error;
+    throw new Error(`Translation failed: ${error.message}`);
   }
 }
 
@@ -240,7 +245,7 @@ async function textToSpeechConvert(text, languageCode = 'en-US', userId, idToken
     throw new Error('Invalid language code: Must be a non-empty string.');
   }
   if (!userId || typeof userId !== 'string' || userId.trim() === '') {
-    !isProduction && console.error(`textToSpeechConvert: Invalid userId received - userId="${userId}"`);
+    !isProduction && console.error(`textToSpeechConvert: Invalid userId received - userId="${truncate(userId)}"`);
     throw new Error('Invalid userId: Must be a non-empty string.');
   }
   if (!idToken || typeof idToken !== 'string' || idToken.trim() === '') {
@@ -250,7 +255,7 @@ async function textToSpeechConvert(text, languageCode = 'en-US', userId, idToken
   const normalizedLanguageCode = normalizeLanguageCode(languageCode);
   !isProduction &&
     console.log(
-      `textToSpeechConvert: Converting text="${truncate(text)}" with languageCode=${normalizedLanguageCode}, uid=${userId}`
+      `textToSpeechConvert: Converting text="${truncate(text)}" with languageCode=${normalizedLanguageCode}, uid=${truncate(userId)}`
     );
 
   try {
@@ -269,10 +274,10 @@ async function textToSpeechConvert(text, languageCode = 'en-US', userId, idToken
     if (!data.audioUrl || typeof data.audioUrl !== 'string') {
       throw new Error('Text-to-speech response missing or invalid audioUrl.');
     }
-    !isProduction && console.log(`textToSpeechConvert: Success - Audio URL="${data.audioUrl}"`);
+    !isProduction && console.log(`textToSpeechConvert: Success - Audio URL="${truncate(data.audioUrl)}"`);
 
     // Validate the audio URL format (basic check)
-    if (!data.audioUrl.startsWith('https://storage.googleapis.com/')) {
+    if (!data.audioUrl.startsWith('https://')) {
       !isProduction && console.warn('textToSpeechConvert: Unexpected audio URL format:', data.audioUrl);
     }
 
@@ -299,7 +304,7 @@ async function playAudio(audioUrl) {
     throw new Error('Invalid audio URL: Must be a non-empty string.');
   }
 
-  !isProduction && console.log(`playAudio: Attempting to play audio from ${audioUrl}`);
+  !isProduction && console.log(`playAudio: Attempting to play audio from ${truncate(audioUrl)}`);
 
   return new Promise((resolve, reject) => {
     const audio = new Audio(audioUrl);
@@ -313,9 +318,9 @@ async function playAudio(audioUrl) {
         reject(new Error(`Playback failed: ${playError.message}`));
       });
     };
-    audio.onerror = (error) => {
-      !isProduction && console.error('playAudio: Load error:', error.message);
-      reject(new Error(`Failed to load audio: ${error.message}`));
+    audio.onerror = () => {
+      !isProduction && console.error('playAudio: Load error: Unable to load audio');
+      reject(new Error('Failed to load audio: Invalid or inaccessible audio URL'));
     };
   });
 }
