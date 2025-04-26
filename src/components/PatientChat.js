@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Pusher from 'pusher-js';
@@ -10,7 +11,8 @@ import {
 } from '../services/speech.js';
 import { verifyMedicine, notifyAdmin } from '../services/medicineVerify.js';
 import { doc, getDoc, collection, addDoc, getDocs, updateDoc } from 'firebase/firestore';
-import { db } from '../services/firebase.js';
+import { db, auth } from '../services/firebase.js';
+import { signOut } from 'firebase/auth';
 
 function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   const { patientId: urlPatientId, doctorId } = useParams();
@@ -43,10 +45,10 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   const effectiveUserId = user?.uid || '';
   const effectivePatientId = urlPatientId || patientId || '';
   const apiBaseUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
-  const pusherKey = process.env.PUSHER_KEY || '2ed44c3ce3ef227d9924';
-  const pusherCluster = process.env.PUSHER_CLUSTER || 'ap2';
+  const pusherKey = process.env.REACT_APP_PUSHER_KEY || '2ed44c3ce3ef227d9924';
+  const pusherCluster = process.env.REACT_APP_PUSHER_CLUSTER || 'ap2';
 
-  // Add fetch interceptor to debug the /j7akqc 404 error
+  // Fetch interceptor for debugging
   useEffect(() => {
     const originalFetch = window.fetch;
     window.fetch = async (...args) => {
@@ -94,8 +96,16 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     return () => timers.forEach(clearTimeout);
   }, [missedDoseAlerts]);
 
+  // Validate user state and fetch patient data
   useEffect(() => {
-    if (!effectiveUserId || !effectivePatientId || !doctorId || role !== 'patient') {
+    if (!firebaseUser || !effectiveUserId || !effectivePatientId || !doctorId || role !== 'patient') {
+      console.log('PatientChat: Invalid user state or missing params, redirecting to /login', {
+        firebaseUser,
+        effectiveUserId,
+        effectivePatientId,
+        doctorId,
+        role,
+      });
       setError('User authentication, role, or patient/doctor ID missing. Please log in as a patient.');
       navigate('/login');
       return;
@@ -132,6 +142,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           navigate('/login');
         }
       } catch (err) {
+        console.error('PatientChat: Failed to fetch patient data:', err.message);
         setError(`Failed to fetch patient data: ${err.message}`);
         navigate('/login');
       }
@@ -153,6 +164,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         calculateAdherenceRate(fetchedReminders);
         checkMissedDoses(fetchedReminders);
       } catch (err) {
+        console.error('PatientChat: Failed to fetch reminders:', err.message);
         setError(`Failed to fetch reminders: ${err.message}`);
       }
     };
@@ -160,7 +172,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     const checkDoctorPrompt = async () => {
       const lastContact = localStorage.getItem(`lastContact_${effectivePatientId}_${doctorId}`);
       const now = new Date();
-      if (!lastContact || (now - new Date(lastContact) > 7 * 24 * 60 * 60 * 1000)) {
+      if (!lastContact || now - new Date(lastContact) > 7 * 24 * 60 * 60 * 1000) {
         setDoctorPrompt(true);
       }
     };
@@ -170,29 +182,61 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     checkDoctorPrompt();
 
     return () => {
-      if (pusherRef.current) {
-        pusherRef.current.disconnect();
-        console.log('PatientChat.js: Pusher disconnected');
-      }
       reminderTimeoutsRef.current.forEach((timeoutId) => clearTimeout(timeoutId));
       reminderTimeoutsRef.current.clear();
       clearTimeout(retryTimeoutRef.current);
     };
-  }, [effectiveUserId, effectivePatientId, doctorId, role, navigate]);
+  }, [firebaseUser, effectiveUserId, effectivePatientId, doctorId, role, navigate]);
 
+  // Handle Pusher and message fetching
   useEffect(() => {
-    const doctorMessages = messages.filter((msg) => msg.sender === 'doctor' && msg.prescription);
-    if (doctorMessages.length > 0) {
-      const latestPrescription = doctorMessages.sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0]?.prescription;
-      if (latestPrescription) {
-        console.log('Processing prescription:', latestPrescription, typeof latestPrescription);
-        setupMedicationSchedule(latestPrescription);
+    if (!firebaseUser || !languagePreference) return;
+
+    const fetchMessages = async () => {
+      try {
+        const fetchUrl = `${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`;
+        console.log('Fetching messages:', {
+          url: fetchUrl,
+          userId: effectiveUserId,
+        });
+        const idToken = await firebaseUser.getIdToken(true);
+        const response = await fetch(fetchUrl, {
+          headers: { 'x-user-uid': effectiveUserId, Authorization: `Bearer ${idToken}` },
+          credentials: 'include',
+        });
+
+        if (!response.ok) {
+          if (response.status === 404) {
+            console.log('Chat not found, initializing empty chat');
+            setMessages([]);
+            return;
+          }
+          const errorData = await response.json();
+          throw new Error(`Failed to fetch messages: ${response.status} - ${errorData.error?.message || 'Unknown error'}`);
+        }
+
+        const data = await response.json();
+        const fetchedMessages = data.messages || [];
+        setMessages(fetchedMessages.sort((a, b) => a.timestamp.localeCompare(b.timestamp)));
+
+        const doctorMessages = fetchedMessages.filter((msg) => msg.sender === 'doctor');
+        const latestDiagnosis = doctorMessages
+          .filter((msg) => msg.diagnosis)
+          .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0]?.diagnosis || '';
+        const latestPrescription = doctorMessages
+          .filter((msg) => msg.prescription)
+          .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0]?.prescription || '';
+        if (latestDiagnosis || latestPrescription) {
+          validatePrescription(latestDiagnosis, latestPrescription, 'latest');
+        }
+      } catch (err) {
+        console.error('PatientChat: Error fetching messages:', err.message);
+        setError(`Error fetching messages: ${err.message}`);
+        if (err.message.includes('404')) {
+          setTimeout(fetchMessages, 2000);
+        }
       }
-    }
-  }, [messages]);
-
-  useEffect(() => {
-    if (!languagePreference) return;
+    };
 
     try {
       pusherRef.current = new Pusher(pusherKey, {
@@ -216,7 +260,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
 
       const channel = pusherRef.current.subscribe(`chat-${effectivePatientId}-${doctorId}`);
       channel.bind('newMessage', (message) => {
-        console.log('PatientChat.js: Received new message:', {
+        console.log('PatientChat: Received new message:', {
           ...message,
           audioUrl: message.audioUrl ? '[Audio URL]' : null,
         });
@@ -229,7 +273,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
               msg.audioUrl === message.audioUrl
           );
           if (isDuplicate) {
-            console.log('PatientChat.js: Skipped duplicate message:', message.timestamp, message.text);
+            console.log('PatientChat: Skipped duplicate message:', message.timestamp, message.text);
             return prev;
           }
           return [...prev, message].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
@@ -244,66 +288,32 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         setMissedDoseAlerts((prev) => [...prev, { ...alert, id: Date.now().toString() }]);
       });
 
-      const fetchMessages = async () => {
-        try {
-          const fetchUrl = `${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`;
-          console.log('Fetching messages:', {
-            url: fetchUrl,
-            userId: effectiveUserId,
-          });
-          const idToken = await firebaseUser.getIdToken(true);
-          const response = await fetch(fetchUrl, {
-            headers: { 'x-user-uid': effectiveUserId, Authorization: `Bearer ${idToken}` },
-            credentials: 'include',
-          });
-
-          if (!response.ok) {
-            if (response.status === 404) {
-              console.log('Chat not found, initializing empty chat');
-              setMessages([]);
-              return;
-            }
-            const errorData = await response.json();
-            throw new Error(`Failed to fetch messages: ${response.statusText} - ${errorData.error?.message || 'Unknown error'}`);
-          }
-
-          const data = await response.json();
-          const fetchedMessages = data.messages || [];
-          setMessages(fetchedMessages.sort((a, b) => a.timestamp.localeCompare(b.timestamp)));
-
-          const doctorMessages = fetchedMessages.filter((msg) => msg.sender === 'doctor');
-          const latestDiagnosis = doctorMessages
-            .filter((msg) => msg.diagnosis)
-            .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0]?.diagnosis || '';
-          const latestPrescription = doctorMessages
-            .filter((msg) => msg.prescription)
-            .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0]?.prescription || '';
-          if (latestDiagnosis || latestPrescription) {
-            validatePrescription(latestDiagnosis, latestPrescription, 'latest');
-          }
-        } catch (err) {
-          console.error('Error fetching messages:', err);
-          setError(`Error fetching messages: ${err.message}`);
-          if (err.message.includes('404')) {
-            setTimeout(fetchMessages, 2000);
-          }
-        }
-      };
-
       fetchMessages();
-
-      return () => {
-        if (pusherRef.current) {
-          pusherRef.current.unsubscribe(`chat-${effectivePatientId}-${doctorId}`);
-          pusherRef.current.disconnect();
-          console.log('PatientChat.js: Pusher disconnected');
-        }
-      };
     } catch (err) {
       console.error('Pusher initialization failed:', err);
       setError('Failed to initialize real-time messaging. Please refresh the page.');
     }
-  }, [effectiveUserId, effectivePatientId, doctorId, languagePreference, apiBaseUrl, firebaseUser, pusherKey, pusherCluster]);
+
+    return () => {
+      if (pusherRef.current) {
+        pusherRef.current.unsubscribe(`chat-${effectivePatientId}-${doctorId}`);
+        pusherRef.current.disconnect();
+        console.log('PatientChat: Pusher disconnected');
+      }
+    };
+  }, [firebaseUser, effectiveUserId, effectivePatientId, doctorId, languagePreference, apiBaseUrl, pusherKey, pusherCluster]);
+
+  // Process prescriptions
+  useEffect(() => {
+    const doctorMessages = messages.filter((msg) => msg.sender === 'doctor' && msg.prescription);
+    if (doctorMessages.length > 0) {
+      const latestPrescription = doctorMessages.sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0]?.prescription;
+      if (latestPrescription) {
+        console.log('Processing prescription:', latestPrescription, typeof latestPrescription);
+        setupMedicationSchedule(latestPrescription);
+      }
+    }
+  }, [messages]);
 
   const normalizeLanguageCode = useCallback((code) => {
     switch (code?.toLowerCase()) {
@@ -621,8 +631,9 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   };
 
   const retryUpload = async (audioBlob, language) => {
-    if (!audioBlob || !language) {
-      setError('Invalid retry data. Please start a new recording.');
+    if (!firebaseUser || !audioBlob || !language) {
+      setError('Invalid retry data or user session. Please log in again.');
+      navigate('/login');
       return;
     }
 
@@ -677,7 +688,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
 
         if (!saveResponse.ok) {
           const errorData = await saveResponse.json();
-          throw new Error(`Failed to save message: ${saveResponse.statusText} - ${errorData.error?.message || 'Unknown error'}`);
+          throw new Error(`Failed to save message: ${saveResponse.status} - ${errorData.error?.message || 'Unknown error'}`);
         }
         const data = await saveResponse.json();
         setMessages((prev) => {
@@ -689,7 +700,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
               msg.audioUrl === data.newMessage.audioUrl
           );
           if (isDuplicate) {
-            console.log('PatientChat.js: Skipped duplicate retry message:', data.newMessage.timestamp, data.newMessage.text);
+            console.log('PatientChat: Skipped duplicate retry message:', data.newMessage.timestamp, data.newMessage.text);
             return prev;
           }
           return [...prev, data.newMessage].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
@@ -712,6 +723,12 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   };
 
   const startRecording = async () => {
+    if (!firebaseUser) {
+      setError('User authentication failed. Please log in again.');
+      navigate('/login');
+      return;
+    }
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
@@ -725,12 +742,6 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
         if (audioBlob.size === 0) {
           setError('Recorded audio is empty. Please try again.');
-          return;
-        }
-
-        if (!effectiveUserId) {
-          setError('User authentication failed. Please log in again.');
-          navigate('/login');
           return;
         }
 
@@ -781,7 +792,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
 
           if (!response.ok) {
             const errorData = await response.json();
-            throw new Error(`Failed to save message: ${response.statusText} - ${errorData.error?.message || 'Unknown error'}`);
+            throw new Error(`Failed to save message: ${response.status} - ${errorData.error?.message || 'Unknown error'}`);
           }
           const data = await response.json();
           setMessages((prev) => {
@@ -793,7 +804,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                 msg.audioUrl === data.newMessage.audioUrl
             );
             if (isDuplicate) {
-              console.log('PatientChat.js: Skipped duplicate recording message:', data.newMessage.timestamp, data.newMessage.text);
+              console.log('PatientChat: Skipped duplicate recording message:', data.newMessage.timestamp, data.newMessage.text);
               return prev;
             }
             return [...prev, data.newMessage].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
@@ -831,15 +842,15 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   };
 
   const handleImageUpload = async (e) => {
-    const file = e.target.files[0];
-    if (!file) {
-      setError('No file selected. Please choose an image.');
+    if (!firebaseUser) {
+      setError('User authentication failed. Please log in again.');
+      navigate('/login');
       return;
     }
 
-    if (!effectiveUserId || !effectivePatientId || !doctorId) {
-      setError('Authentication or patient/doctor ID missing. Please log in again.');
-      navigate('/login');
+    const file = e.target.files[0];
+    if (!file) {
+      setError('No file selected. Please choose an image.');
       return;
     }
 
@@ -893,7 +904,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
 
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(`Image upload failed: ${response.statusText} - ${errorData.error?.message || 'Unknown error'}`);
+        throw new Error(`Image upload failed: ${response.status} - ${errorData.error?.message || 'Unknown error'}`);
       }
 
       const data = await response.json();
@@ -917,7 +928,6 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     try {
       const normalizedLang = normalizeLanguageCode(lang);
       const audioUrl = await textToSpeechConvert(text.trim(), normalizedLang, effectiveUserId);
-      // Pre-flight check with detailed logging
       const response = await fetch(audioUrl, { method: 'HEAD', mode: 'cors' });
       if (!response.ok) {
         throw new Error(`Audio URL inaccessible: ${audioUrl} (Status: ${response.status}) - ${response.statusText}`);
@@ -969,6 +979,12 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   };
 
   const handleSendText = async () => {
+    if (!firebaseUser) {
+      setError('User authentication failed. Please log in again.');
+      navigate('/login');
+      return;
+    }
+
     if (!textInput.trim()) return;
 
     const message = {
@@ -986,7 +1002,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       if (!prev.some((msg) => msg.timestamp === message.timestamp && msg.text === message.text)) {
         return [...prev, message].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
       }
-      console.log('PatientChat.js: Skipped duplicate text message:', message.timestamp, message.text);
+      console.log('PatientChat: Skipped duplicate text message:', message.timestamp, message.text);
       return prev;
     });
     setTextInput('');
@@ -1010,7 +1026,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       });
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(`Failed to save text message: ${response.statusText} - ${errorData.error?.message || 'Unknown error'}`);
+        throw new Error(`Failed to save text message: ${response.status} - ${errorData.error?.message || 'Unknown error'}`);
       }
       const data = await response.json();
       setMessages((prev) =>
@@ -1028,6 +1044,12 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   };
 
   const handleQuickReply = async (replyText) => {
+    if (!firebaseUser) {
+      setError('User authentication failed. Please log in again.');
+      navigate('/login');
+      return;
+    }
+
     const message = {
       sender: 'patient',
       text: replyText,
@@ -1043,7 +1065,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       if (!prev.some((msg) => msg.timestamp === message.timestamp && msg.text === message.text)) {
         return [...prev, message].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
       }
-      console.log('PatientChat.js: Skipped duplicate quick reply:', message.timestamp, message.text);
+      console.log('PatientChat: Skipped duplicate quick reply:', message.timestamp, message.text);
       return prev;
     });
 
@@ -1066,7 +1088,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       });
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(`Failed to save quick reply message: ${response.statusText} - ${errorData.error?.message || 'Unknown error'}`);
+        throw new Error(`Failed to save quick reply message: ${response.status} - ${errorData.error?.message || 'Unknown error'}`);
       }
       const data = await response.json();
       setMessages((prev) =>
@@ -1087,6 +1109,26 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     } else {
       setDoctorPrompt(false);
       navigate('/login');
+    }
+  };
+
+  const handleLogoutClick = async () => {
+    try {
+      await signOut(auth);
+      await fetch(`${apiBaseUrl}/misc/logout`, {
+        method: 'POST',
+        headers: {
+          'x-user-uid': effectiveUserId,
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+      });
+      if (handleLogout) handleLogout();
+      console.log('PatientChat: Logged out successfully, redirecting to /login');
+      navigate('/login');
+    } catch (err) {
+      console.error('PatientChat: Logout error:', err.message);
+      setError('Failed to log out. Please try again.');
     }
   };
 
@@ -1119,7 +1161,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         </button>
         <h2>Patient Chat (ID: {effectivePatientId})</h2>
         <div className="header-actions">
-          <button onClick={handleLogout} className="logout-button">
+          <button onClick={handleLogoutClick} className="logout-button">
             Logout
           </button>
         </div>
@@ -1920,7 +1962,6 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           text-align: center;
           margin-top: 20px;
         }
-
 
         .message {
           display: flex;
