@@ -40,27 +40,7 @@
       "destination": "/api/:path"
     },
     {
-      "source": "/patient/chat/:patientId/:doctorId",
-      "destination": "/index.html"
-    },
-    {
-      "source": "/patient/select-doctor",
-      "destination": "/index.html"
-    },
-    {
-      "source": "/patient/language-preference/:patientId/:doctorId",
-      "destination": "/index.html"
-    },
-    {
-      "source": "/doctor",
-      "destination": "/index.html"
-    },
-    {
-      "source": "/doctor/chat",
-      "destination": "/index.html"
-    },
-    {
-      "source": "/admin",
+      "source": "/login",
       "destination": "/index.html"
     },
     {
