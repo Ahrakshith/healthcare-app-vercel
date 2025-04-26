@@ -1,5 +1,4 @@
 {
-  "version": 2,
   "headers": [
     {
       "source": "/api/(.*)",
@@ -8,12 +7,6 @@
         { "key": "Access-Control-Allow-Methods", "value": "GET, POST, OPTIONS" },
         { "key": "Access-Control-Allow-Headers", "value": "Authorization, x-user-uid, Content-Type, Accept" },
         { "key": "Access-Control-Max-Age", "value": "86400" }
-      ]
-    },
-    {
-      "source": "/(.*).(html|js|css)",
-      "headers": [
-        { "key": "Cache-Control", "value": "no-store" }
       ]
     }
   ],
@@ -47,24 +40,8 @@
       "destination": "/api/index.js"
     },
     {
-      "source": "/[^.]+",
-      "destination": "/index.html"
-    },
-    {
       "source": "/(.*)",
       "destination": "/index.html"
-    }
-  ],
-  "routes": [
-    {
-      "src": "/(.*).html",
-      "dest": "/index.html"
-    },
-    {
-      "src": "/static/(.*)",
-      "headers": {
-        "Cache-Control": "public, max-age=31536000, immutable"
-      }
     }
   ],
   "cleanUrls": true,
