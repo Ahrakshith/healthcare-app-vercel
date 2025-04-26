@@ -1,15 +1,4 @@
 {
-  "version": 2,
-  "builds": [
-    {
-      "src": "build/**",
-      "use": "@vercel/static"
-    },
-    {
-      "src": "api/**/*.js",
-      "use": "@vercel/node"
-    }
-  ],
   "headers": [
     {
       "source": "/api/(.*)",
@@ -19,49 +8,40 @@
         { "key": "Access-Control-Allow-Headers", "value": "Authorization, x-user-uid, Content-Type, Accept" },
         { "key": "Access-Control-Max-Age", "value": "86400" }
       ]
-    },
-    {
-      "source": "/(.*)\\.(html|js|css)",
-      "headers": [
-        {
-          "key": "Cache-Control",
-          "value": "no-store"
-        }
-      ]
     }
   ],
-  "routes": [
+  "rewrites": [
     {
-      "src": "/api/audio/translate",
-      "dest": "/api/index.js"
+      "source": "/api/audio/translate",
+      "destination": "/api/index.js"
     },
     {
-      "src": "/api/chats/:patientId/:doctorId",
-      "dest": "/api/index.js"
+      "source": "/api/chats/:patientId/:doctorId",
+      "destination": "/api/index.js"
     },
     {
-      "src": "/api/users/:uid",
-      "dest": "/api/index.js"
+      "source": "/api/users/:uid",
+      "destination": "/api/index.js"
     },
     {
-      "src": "/api/misc/logout",
-      "dest": "/api/index.js"
+      "source": "/api/misc/logout",
+      "destination": "/api/index.js"
     },
     {
-      "src": "/api/misc/notify-missed-dose",
-      "dest": "/api/index.js"
+      "source": "/api/misc/notify-missed-dose",
+      "destination": "/api/index.js"
     },
     {
-      "src": "/api/misc/uploadImage/:patientId",
-      "dest": "/api/index.js"
+      "source": "/api/misc/uploadImage/:patientId",
+      "destination": "/api/index.js"
     },
     {
-      "src": "/api/:path*",
-      "dest": "/api/index.js"
+      "source": "/api/:path*",
+      "destination": "/api/index.js"
     },
     {
-      "src": "/(.*)",
-      "dest": "/index.html"
+      "source": "/(.*)",
+      "destination": "/index.html"
     }
   ],
   "cleanUrls": true,
