@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { auth as firebaseAuth, db } from './services/firebase.js';
 import { signOut } from 'firebase/auth';
@@ -63,6 +63,8 @@ function App() {
   const [patientId, setPatientId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const navigate = useNavigate();
+  const location = useLocation();
 
   useEffect(() => {
     console.log('App: Starting auth state listener setup');
@@ -149,52 +151,48 @@ function App() {
         console.log('App: Current patientId:', patientId);
         console.log('App: SessionStorage userId:', sessionStorage.getItem('userId'));
         console.log('App: SessionStorage patientId:', sessionStorage.getItem('patientId'));
+        console.log('App: Current location:', location.pathname);
 
-        // Re-check authentication state on visibility
-        if (!firebaseUser) {
-          console.log('App: No firebaseUser detected on refresh, initiating auth check');
-          firebaseAuth.onAuthStateChanged((authUser) => {
-            console.log('App: Auth state re-checked, authUser:', authUser ? authUser.uid : null);
-            if (authUser) {
-              setFirebaseUser(authUser);
-              console.log('App: Re-authenticated user detected, UID:', authUser.uid);
-              const userId = authUser.uid;
-              const userRef = doc(db, 'users', userId);
-              onSnapshot(userRef, (docSnapshot) => {
-                console.log('App: Re-fetched Firestore snapshot for user:', userId);
-                if (docSnapshot.exists()) {
-                  const userData = docSnapshot.data();
-                  console.log('App: Re-fetched Firestore user data:', userData);
-                  setUser({ uid: userId, email: authUser.email, ...userData });
-                  setRole(userData.role);
-                  if (userData.role === 'patient') {
-                    const pid = userData.patientId || userId;
-                    setPatientId(pid);
-                    sessionStorage.setItem('patientId', pid);
-                    console.log(`App: Re-set patientId=${pid} on refresh`);
-                  } else {
-                    setPatientId(null);
-                    sessionStorage.removeItem('patientId');
-                    console.log('App: Re-cleared patientId on refresh');
-                  }
-                  sessionStorage.setItem('userId', userId);
-                  console.log('App: User state updated after refresh');
-                } else {
-                  console.log('App: User document not found on refresh for UID:', userId);
-                  handleAuthFailure();
-                }
-              }, (error) => {
-                console.error('App: Firestore re-fetch error on refresh:', error.message);
-                setError(`Failed to re-fetch user data: ${error.message}`);
-                handleAuthFailure();
-              });
+        // Restore the previous route on refresh if authenticated
+        if (firebaseUser) {
+          const lastPath = sessionStorage.getItem('lastPath') || location.pathname;
+          console.log('App: Attempting to restore last path:', lastPath);
+
+          if (role === 'patient' && lastPath.startsWith('/patient')) {
+            if (lastPath === '/patient/select-doctor' || lastPath.startsWith('/patient/language-preference') || lastPath.startsWith('/patient/chat')) {
+              console.log('App: Redirecting to patient route:', lastPath);
+              navigate(lastPath);
             } else {
-              console.log('App: No user authenticated after refresh, redirecting to login');
-              handleAuthFailure();
+              console.log('App: Invalid patient route, redirecting to /patient/select-doctor');
+              navigate('/patient/select-doctor');
             }
-          });
+          } else if (role === 'doctor' && lastPath === '/doctor/chat') {
+            console.log('App: Redirecting to doctor route:', lastPath);
+            navigate(lastPath);
+          } else if (role === 'admin' && lastPath === '/admin') {
+            console.log('App: Redirecting to admin route:', lastPath);
+            navigate(lastPath);
+          } else {
+            console.log('App: Role or path mismatch, redirecting to default route for role:', role);
+            navigate(
+              role === 'patient'
+                ? '/patient/select-doctor'
+                : role === 'doctor'
+                ? '/doctor/chat'
+                : role === 'admin'
+                ? '/admin'
+                : '/login'
+            );
+          }
         } else {
-          console.log('App: FirebaseUser still valid, no re-authentication needed');
+          console.log('App: No firebaseUser, redirecting to login');
+          navigate('/login');
+        }
+
+        // Save the current path for the next refresh
+        if (location.pathname !== '/login' && location.pathname !== '/register') {
+          console.log('App: Saving current path to sessionStorage:', location.pathname);
+          sessionStorage.setItem('lastPath', location.pathname);
         }
       } else {
         console.log('App: Page is hidden, visibilityState:', document.visibilityState);
@@ -204,11 +202,18 @@ function App() {
     document.addEventListener('visibilitychange', handleVisibilityChange);
     console.log('App: Visibility change listener added');
 
+    // Initialize lastPath on mount
+    const initialPath = location.pathname;
+    if (initialPath !== '/login' && initialPath !== '/register') {
+      console.log('App: Initializing lastPath in sessionStorage:', initialPath);
+      sessionStorage.setItem('lastPath', initialPath);
+    }
+
     return () => {
       console.log('App: Removing visibility change listener');
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [firebaseUser, user, role, patientId]);
+  }, [firebaseUser, user, role, patientId, navigate, location.pathname]);
 
   // Clear error on route change
   useEffect(() => {
@@ -230,6 +235,7 @@ function App() {
     setPatientId(null);
     sessionStorage.removeItem('userId');
     sessionStorage.removeItem('patientId');
+    sessionStorage.removeItem('lastPath'); // Clear last path on logout
     setLoading(false);
     console.log('App: Auth failure handled, loading set to false');
   };
