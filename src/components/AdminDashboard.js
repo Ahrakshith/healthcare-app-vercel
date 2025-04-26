@@ -52,7 +52,7 @@ function AdminDashboard({ user, role, handleLogout, setUser }) {
       const q = query(doctorIdsRef, where('doctorId', '==', generatedId));
       const querySnapshot = await getDocs(q);
       if (querySnapshot.empty) break;
-      console.log(`Generated doctorId ${generatedId} already exists, regenerating...`);
+      console.log(`AdminDashboard.js: Generated doctorId ${generatedId} already exists, regenerating...`);
     }
 
     console.log('AdminDashboard.js: Generated unique doctorId:', generatedId);
@@ -174,7 +174,8 @@ function AdminDashboard({ user, role, handleLogout, setUser }) {
       };
 
       console.log('AdminDashboard: Sending request to /api/doctors with payload:', doctorData);
-      const createResponse = await fetch(`${process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app'}/api/doctors`, {
+      const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app';
+      const createResponse = await fetch(`${apiUrl}/api/doctors`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -193,12 +194,15 @@ function AdminDashboard({ user, role, handleLogout, setUser }) {
       // Parse JSON with error handling
       let createData;
       try {
-        createData = JSON.parse(responseText);
+        createData = responseText ? JSON.parse(responseText) : {};
       } catch (jsonError) {
         throw new Error(`Failed to parse response as JSON: ${jsonError.message}. Raw response: ${responseText}`);
       }
 
       if (!createResponse.ok) {
+        if (createResponse.status === 405) {
+          throw new Error('Server does not support adding doctors at this endpoint. Please check server configuration.');
+        }
         throw new Error(createData.error?.message || `Failed to create doctor: ${createResponse.statusText}`);
       }
 
@@ -270,7 +274,6 @@ function AdminDashboard({ user, role, handleLogout, setUser }) {
     }
 
     try {
-      // Create admin via backend
       const adminData = {
         email: newAdmin.email,
         password: newAdmin.password,
@@ -278,7 +281,8 @@ function AdminDashboard({ user, role, handleLogout, setUser }) {
         createdAt: new Date().toISOString(),
       };
 
-      const response = await fetch('http://localhost:5005/create-admin', {
+      const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app';
+      const response = await fetch(`${apiUrl}/api/admins`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -291,7 +295,7 @@ function AdminDashboard({ user, role, handleLogout, setUser }) {
 
       const responseData = await response.json();
       if (!response.ok) {
-        throw new Error(`Failed to create admin: ${responseData.error}`);
+        throw new Error(`Failed to create admin: ${responseData.error?.message || response.statusText}`);
       }
 
       const adminUid = responseData.uid;
