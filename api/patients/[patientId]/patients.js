@@ -21,7 +21,7 @@ const db = admin.firestore();
 export default async function handler(req, res) {
   // Set CORS headers
   res.setHeader('Access-Control-Allow-Origin', 'https://healthcare-app-vercel.vercel.app');
-  res.setHeader('Access-Control-Allow-Methods', 'POST');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, PATCH, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'x-user-uid, Content-Type, Authorization');
 
   // Handle preflight CORS requests
@@ -62,38 +62,37 @@ export default async function handler(req, res) {
       return res.status(403).json({ error: { code: 403, message: 'Unauthorized: Only doctors can update patient data' } });
     }
 
-    // Ensure the doctorId in the request matches the authenticated doctor's UID
-    if (req.method === 'POST') {
+    // Handle POST (create/update) and PATCH (partial update)
+    if (req.method === 'POST' || req.method === 'PATCH') {
       const { diagnosis, prescription, doctorId } = req.body;
 
-      // Validate request body
+      // Validate doctorId matches UID
       if (!doctorId || doctorId !== uid) {
         console.error('Invalid or mismatched doctorId. Expected:', uid, 'Received:', doctorId);
         return res.status(403).json({ error: { code: 403, message: 'Invalid or mismatched doctorId' } });
       }
 
       // Validate that at least one field is provided to update
-      if (!diagnosis && !prescription && !doctorId) {
+      if (!diagnosis && !prescription) {
         console.error('No fields provided to update for patient:', patientId);
-        return res.status(400).json({ error: { code: 400, message: 'At least one field (diagnosis, prescription, or doctorId) is required' } });
+        return res.status(400).json({ error: { code: 400, message: 'At least one field (diagnosis or prescription) is required' } });
       }
 
-      // Validate field formats
+      // Validate diagnosis
       if (diagnosis && (typeof diagnosis !== 'string' || diagnosis.trim() === '')) {
         console.error('Invalid diagnosis format:', diagnosis);
         return res.status(400).json({ error: { code: 400, message: 'Diagnosis must be a non-empty string' } });
       }
 
+      // Validate prescription
       if (prescription) {
         if (typeof prescription === 'string') {
-          // Validate prescription string format (e.g., "Medicine, 500mg, 8:00 AM and 8:00 PM, 5 days")
           const regex = /(.+?),\s*(\d+mg),\s*(\d{1,2}[:.]\d{2}\s*(?:AM|PM))\s*and\s*(\d{1,2}[:.]\d{2}\s*(?:AM|PM)),\s*(\d+)\s*days?/i;
           if (!regex.test(prescription)) {
             console.error('Invalid prescription string format:', prescription);
             return res.status(400).json({ error: { code: 400, message: 'Prescription string format invalid. Expected: "Medicine, dosage, time1 and time2, duration days"' } });
           }
         } else if (typeof prescription === 'object') {
-          // Validate prescription object format
           if (!prescription.medicine || !prescription.dosage || !prescription.frequency || !prescription.duration) {
             console.error('Invalid prescription object format:', prescription);
             return res.status(400).json({ error: { code: 400, message: 'Prescription object must include medicine, dosage, frequency, and duration' } });
@@ -116,16 +115,15 @@ export default async function handler(req, res) {
       const updateData = {};
       if (diagnosis) updateData.diagnosis = diagnosis.trim();
       if (prescription) updateData.prescription = prescription;
-      if (doctorId) updateData.doctorId = doctorId;
 
-      // Update patient data
+      // Update patient data (merge for PATCH, overwrite for POST if needed)
       await patientRef.set(updateData, { merge: true });
       console.log(`Successfully updated patient ${patientId} with data:`, updateData);
 
       return res.status(200).json({ success: true, message: 'Patient data updated successfully', data: updateData });
     } else {
       console.error('Method not allowed:', req.method);
-      return res.status(405).json({ error: { code: 405, message: 'Method not allowed. Use POST.' } });
+      return res.status(405).json({ error: { code: 405, message: `Method ${req.method} not allowed. Use POST or PATCH.` } });
     }
   } catch (error) {
     console.error('Error in /api/patients/[patientId]/patients.js:', error.message);

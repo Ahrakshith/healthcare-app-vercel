@@ -228,7 +228,7 @@ const handlePatientUpdate = async (req, res, patientId, userId) => {
   }
 
   try {
-    const { diagnosis, prescription, doctorId, updatedAt } = req.body;
+    const { diagnosis, prescription, doctorId } = req.body;
 
     if (!diagnosis && !prescription) {
       return res.status(400).json({ error: { code: 400, message: 'At least one of diagnosis or prescription is required' } });
@@ -260,7 +260,7 @@ const handlePatientUpdate = async (req, res, patientId, userId) => {
       ...(diagnosis ? { diagnosis } : {}),
       ...(prescription ? { prescription } : {}),
       doctorId,
-      updatedAt: updatedAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
       lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
     };
 
@@ -439,7 +439,7 @@ const handleChatRequest = async (req, res, patientId, doctorId, userId) => {
 
       req.pipe(bb);
     } else {
-      const { message, append } = req.body;
+      const { message } = req.body;
       if (!message || typeof message !== 'object') {
         return res.status(400).json({ error: { code: 400, message: 'Message object is required' } });
       }
@@ -487,12 +487,7 @@ const handleChatRequest = async (req, res, patientId, doctorId, userId) => {
           timestamp: message.timestamp || new Date().toISOString(),
           senderId: userId,
         };
-
-        if (append) {
-          chatData.messages.push(newMessage);
-        } else {
-          chatData.messages = [newMessage];
-        }
+        chatData.messages.push(newMessage);
 
         await uploadWithRetry(chatFile, JSON.stringify(chatData), { contentType: 'application/json' });
 
@@ -536,13 +531,11 @@ export default async function handler(req, res) {
       return res.status(403).json({ error: { code: 403, message: 'Unauthorized: Token does not match user' } });
     }
 
-    // Route parsing and parameter extraction
     const urlPath = req.url.split('?')[0]; // Remove query parameters from URL
     const pathSegments = urlPath.split('/').filter(segment => segment);
 
     let patientId, doctorId;
 
-    // Handle different routes
     if (pathSegments[0] === 'patients' && pathSegments[1]) {
       patientId = pathSegments[1];
       if (req.method !== 'PATCH') {

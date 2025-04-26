@@ -636,7 +636,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
 
       const prescriptionString =
         actionType === 'Prescription' || actionType === 'Combined'
-          ? `${prescription.medicine}, ${prescription.dosage}, ${prescription.frequency}, ${prescription.duration}`
+          ? `${prescription.medicine}, ${prescription.dosage}, ${prescription.frequency}, ${prescription.duration} days`
           : undefined;
 
       const message = {
@@ -681,7 +681,6 @@ function DoctorChat({ user, role, handleLogout, setError }) {
             ...(actionType === 'Diagnosis' || actionType === 'Combined' ? { diagnosis } : {}),
             ...(actionType === 'Prescription' || actionType === 'Combined' ? { prescription: prescriptionString } : {}),
             doctorId,
-            updatedAt: new Date().toISOString(),
           }),
           credentials: 'include',
         });
@@ -719,9 +718,6 @@ function DoctorChat({ user, role, handleLogout, setError }) {
         setActionType('');
       } catch (err) {
         setError(`Failed to send action: ${err.message}`);
-        if (err.message.includes('405')) {
-          setTimeout(() => sendAction(), 1000); // Retry after 1 second for HTTP 405
-        }
         console.error('Send action error:', err);
       }
     },
