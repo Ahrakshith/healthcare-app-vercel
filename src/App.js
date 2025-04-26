@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { auth as firebaseAuth, db } from './services/firebase.js';
@@ -62,16 +62,17 @@ function App() {
   const [patientId, setPatientId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const unsubscribeFirestoreRef = useRef(() => {});
 
   useEffect(() => {
     console.log('App: Starting auth state listener setup');
-    let unsubscribeFirestore = () => {};
 
     const unsubscribeAuth = firebaseAuth.onAuthStateChanged(async (authUser) => {
       console.log('App: Auth state changed, authUser:', authUser ? authUser.uid : null);
       setFirebaseUser(authUser);
 
-      if (authUser) {
+      if (authUser && !isLoggingOut) {
         if (process.env.NODE_ENV !== 'production') {
           console.log('App: Authenticated user detected, UID:', authUser.uid);
         }
@@ -79,7 +80,7 @@ function App() {
         const userId = authUser.uid;
         console.log('App: Fetching user data for UID:', userId);
         const userRef = doc(db, 'users', userId);
-        unsubscribeFirestore = onSnapshot(
+        unsubscribeFirestoreRef.current = onSnapshot(
           userRef,
           (docSnapshot) => {
             console.log('App: Firestore snapshot received for user:', userId);
@@ -123,17 +124,18 @@ function App() {
           }
         );
       } else {
-        console.log('App: No authenticated user detected');
+        console.log('App: No authenticated user detected or logging out');
+        unsubscribeFirestoreRef.current();
         handleAuthFailure();
       }
     });
 
     return () => {
       unsubscribeAuth();
-      unsubscribeFirestore();
+      unsubscribeFirestoreRef.current();
       console.log('App: Cleaned up auth and Firestore listeners');
     };
-  }, []);
+  }, [isLoggingOut]);
 
   // Clear error on route change
   useEffect(() => {
@@ -153,17 +155,14 @@ function App() {
     setUser(null);
     setRole(null);
     setPatientId(null);
-    sessionStorage.removeItem('userId');
-    sessionStorage.removeItem('patientId');
-    sessionStorage.removeItem('lastPath');
-    localStorage.removeItem('patientId');
-    localStorage.removeItem('userId');
     setLoading(false);
+    setIsLoggingOut(false);
     console.log('App: Auth failure handled, loading set to false');
   };
 
   const handleLogout = async () => {
     console.log('App: Initiating logout process');
+    setIsLoggingOut(true);
     try {
       let idToken = null;
       let userId = sessionStorage.getItem('userId') || '';
@@ -194,25 +193,36 @@ function App() {
         if (!response.ok) {
           const errorText = await response.text();
           console.error('App: Logout request failed, details:', errorText);
-          // Continue with sign-out even if API call fails
         }
       } else {
         console.warn('App: No userId available, skipping API logout request');
       }
 
       console.log('App: Initiating Firebase sign-out');
+      unsubscribeFirestoreRef.current();
       await signOut(firebaseAuth);
       console.log('App: Firebase sign-out completed');
 
       console.log('App: Clearing app state');
+      sessionStorage.removeItem('userId');
+      sessionStorage.removeItem('patientId');
+      sessionStorage.removeItem('lastPath');
+      localStorage.removeItem('patientId');
+      localStorage.removeItem('userId');
       handleAuthFailure();
       console.log('App: Local state cleared successfully');
     } catch (err) {
       console.error('App: Logout error:', err.message);
       setError(`Failed to log out: ${err.message}. Redirecting to login.`);
+      unsubscribeFirestoreRef.current();
       await signOut(firebaseAuth).catch((signOutErr) => {
         console.error('App: Firebase sign-out failed:', signOutErr.message);
       });
+      sessionStorage.removeItem('userId');
+      sessionStorage.removeItem('patientId');
+      sessionStorage.removeItem('lastPath');
+      localStorage.removeItem('patientId');
+      localStorage.removeItem('userId');
       handleAuthFailure();
     }
   };
@@ -242,7 +252,7 @@ function App() {
 
   // Determine redirect path based on role
   const getRedirectPath = () => {
-    if (!user || !role) return '/login';
+    if (!user || !role || isLoggingOut) return '/login';
     switch (role) {
       case 'patient':
         return '/patient/select-doctor';
@@ -275,7 +285,7 @@ function App() {
         <Route
           path="/login"
           element={
-            user && role ? (
+            user && role && !isLoggingOut ? (
               <Navigate to={getRedirectPath()} replace />
             ) : (
               <Login
@@ -291,7 +301,7 @@ function App() {
         <Route
           path="/register"
           element={
-            user && role ? (
+            user && role && !isLoggingOut ? (
               <Navigate to={getRedirectPath()} replace />
             ) : (
               <Register
@@ -307,7 +317,7 @@ function App() {
         <Route
           path="/patient/select-doctor"
           element={
-            user && role === 'patient' ? (
+            user && role === 'patient' && !isLoggingOut ? (
               <SelectDoctor
                 firebaseUser={firebaseUser}
                 user={user}
@@ -323,7 +333,7 @@ function App() {
         <Route
           path="/patient/language-preference/:patientId/:doctorId"
           element={
-            user && role === 'patient' ? (
+            user && role === 'patient' && !isLoggingOut ? (
               <LanguagePreference
                 firebaseUser={firebaseUser}
                 user={user}
@@ -338,7 +348,7 @@ function App() {
         <Route
           path="/patient/chat/:patientId/:doctorId"
           element={
-            user && role === 'patient' ? (
+            user && role === 'patient' && !isLoggingOut ? (
               <PatientChat
                 firebaseUser={firebaseUser}
                 user={user}
@@ -354,7 +364,7 @@ function App() {
         <Route
           path="/doctor/chat"
           element={
-            user && role === 'doctor' ? (
+            user && role === 'doctor' && !isLoggingOut ? (
               <DoctorChat user={user} role={role} handleLogout={handleLogout} setError={setError} />
             ) : (
               <Navigate to="/login" replace />
@@ -364,7 +374,7 @@ function App() {
         <Route
           path="/admin"
           element={
-            user && role === 'admin' ? (
+            user && role === 'admin' && !isLoggingOut ? (
               <AdminDashboard user={user} role={role} handleLogout={handleLogout} setUser={setUser} />
             ) : (
               <Navigate to="/login" replace />
@@ -380,7 +390,6 @@ function App() {
 
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap');
-
         .app-container {
           min-height: 100vh;
           background: linear-gradient(135deg, #2C1A3D, #3E2A5A);

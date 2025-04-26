@@ -1,13 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { auth } from '../services/firebase.js';
 import { SPECIALTIES } from '../constants/specialties.js';
-import { signOut } from 'firebase/auth';
 
 function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
   const [specialty, setSpecialty] = useState('All');
   const [doctors, setDoctors] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [authLoading, setAuthLoading] = useState(true);
   const [loadingDoctorId, setLoadingDoctorId] = useState(null);
   const [error, setError] = useState('');
   const navigate = useNavigate();
@@ -15,23 +14,29 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
   const apiBaseUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
 
   useEffect(() => {
-    // Early validation for authenticated user
-    if (!firebaseUser) {
-      console.log('SelectDoctor: No authenticated user, redirecting to /login');
-      setError('No authenticated user. Please log in.');
-      navigate('/login');
-      return;
-    }
+    // Wait for auth state to stabilize
+    const authTimeout = setTimeout(() => {
+      if (!firebaseUser || !user || role !== 'patient' || !patientId) {
+        console.log('SelectDoctor: Invalid auth state, redirecting to /login', {
+          firebaseUser: !!firebaseUser,
+          user: !!user,
+          role,
+          patientId,
+        });
+        setError('Invalid session. Please log in again.');
+        navigate('/login', { replace: true });
+      } else {
+        setAuthLoading(false);
+      }
+    }, 500); // Delay to allow App.js to set auth state
 
-    // Validate user state
-    if (!user || role !== 'patient' || !patientId) {
-      console.error('SelectDoctor: Invalid user state:', { user, role, patientId, firebaseUser });
-      setError('Invalid session. Please log in again.');
-      navigate('/login');
-      return;
-    }
+    return () => clearTimeout(authTimeout);
+  }, [firebaseUser, user, role, patientId, navigate]);
 
-    console.log('Fetching doctors for patient:', { patientId, uid: user.uid });
+  useEffect(() => {
+    if (authLoading) return; // Skip fetching until auth is confirmed
+
+    console.log('SelectDoctor: Fetching doctors for patient:', { patientId, uid: user.uid });
 
     const fetchDoctors = async () => {
       setLoading(true);
@@ -73,7 +78,7 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
     };
 
     fetchDoctors();
-  }, [specialty, user, firebaseUser, role, patientId, navigate, apiBaseUrl]);
+  }, [specialty, user, firebaseUser, role, patientId, apiBaseUrl, authLoading]);
 
   async function fetchWithRetry(url, options, retries = 3, backoff = 1000) {
     for (let attempt = 1; attempt <= retries; attempt++) {
@@ -117,8 +122,6 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
 
       const result = await response.json();
       console.log(`SelectDoctor: Assigned doctor ${doctorId} to patient ${patientId}`, result);
-
-      // Navigate to language preference page
       navigate(`/patient/language-preference/${patientId}/${doctorId}`);
     } catch (err) {
       console.error('SelectDoctor: Error assigning doctor:', err.message);
@@ -140,23 +143,45 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
 
   const handleLogoutClick = async () => {
     try {
-      await signOut(auth);
-      await fetch(`${apiBaseUrl}/misc/logout`, {
-        method: 'POST',
-        headers: {
-          'x-user-uid': user.uid,
-          'Content-Type': 'application/json',
-        },
-        credentials: 'include',
-      });
-      handleLogout();
-      navigate('/login');
-      console.log('Logged out successfully');
+      await handleLogout();
+      console.log('SelectDoctor: Logged out successfully');
     } catch (err) {
-      console.error('Logout error:', err.message);
+      console.error('SelectDoctor: Logout error:', err.message);
       setError('Failed to log out. Please try again.');
     }
   };
+
+  if (authLoading) {
+    return (
+      <div className="select-doctor-container">
+        <p className="loading-message" role="status">
+          Loading authentication...
+        </p>
+        <style>{`
+          .select-doctor-container {
+            width: 100%;
+            padding: 20px;
+            background: linear-gradient(135deg, #6e48aa, #9d50bb);
+            min-height: 100vh;
+            font-family: 'Arial', sans-serif;
+            box-sizing: border-box;
+          }
+          .loading-message {
+            color: #fff;
+            font-size: 1rem;
+            text-align: center;
+            padding: 10px;
+            animation: pulse 1.5s infinite;
+          }
+          @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+          }
+        `}</style>
+      </div>
+    );
+  }
 
   return (
     <div className="select-doctor-container">
@@ -247,7 +272,6 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
           font-family: 'Arial', sans-serif;
           box-sizing: border-box;
         }
-
         .header {
           display: flex;
           justify-content: space-between;
@@ -256,7 +280,6 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
           flex-wrap: wrap;
           gap: 10px;
         }
-
         h2 {
           color: #fff;
           font-size: 2rem;
@@ -264,7 +287,6 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
           text-align: center;
           flex: 1;
         }
-
         .logout-button {
           padding: 8px 16px;
           background: #e74c3c;
@@ -274,17 +296,14 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
           cursor: pointer;
           transition: background 0.3s ease, transform 0.2s ease;
         }
-
         .logout-button:hover:not(:disabled) {
           background: #c0392b;
           transform: scale(1.05);
         }
-
         .logout-button:disabled {
           background: #a0a0a0;
           cursor: not-allowed;
         }
-
         .filter-container {
           margin-bottom: 20px;
           display: flex;
@@ -294,12 +313,10 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
           justify-content: center;
           flex-wrap: wrap;
         }
-
         label {
           font-size: 1.1rem;
           font-weight: 500;
         }
-
         select {
           padding: 8px 12px;
           border: 2px solid #ddd;
@@ -310,18 +327,15 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
           transition: border-color 0.3s ease, box-shadow 0.3s ease;
           min-width: 200px;
         }
-
         select:focus {
           outline: none;
           border-color: #6e48aa;
           box-shadow: 0 0 8px rgba(110, 72, 170, 0.3);
         }
-
         select:disabled {
           background: #e0e0e0;
           cursor: not-allowed;
         }
-
         .error-message {
           color: #e74c3c;
           font-size: 1rem;
@@ -332,7 +346,6 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
           border-radius: 5px;
           animation: fadeIn 0.5s ease;
         }
-
         .loading-message {
           color: #fff;
           font-size: 1rem;
@@ -341,7 +354,6 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
           padding: 10px;
           animation: pulse 1.5s infinite;
         }
-
         table {
           width: 100%;
           border-collapse: collapse;
@@ -350,37 +362,30 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
           overflow: hidden;
           box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
         }
-
-        th,
-        td {
+        th, td {
           padding: 15px;
           text-align: left;
           font-size: 1rem;
           color: #333;
         }
-
         th {
           background: #6e48aa;
           color: #ffffff;
           font-weight: 600;
           text-transform: uppercase;
         }
-
         tr:nth-child(even) {
           background: #f8f9fa;
         }
-
         tr:hover:not(:first-child) {
           background: #e9ecef;
           transition: background 0.2s ease;
         }
-
         .no-data {
           text-align: center;
           color: #666;
           font-style: italic;
         }
-
         .select-button {
           padding: 8px 12px;
           background: #6e48aa;
@@ -390,70 +395,47 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
           cursor: pointer;
           transition: background 0.3s ease, transform 0.2s ease;
         }
-
         .select-button:hover:not(:disabled) {
           background: #5a3e8b;
           transform: scale(1.05);
         }
-
         .select-button:disabled {
           background: #a0a0a0;
           cursor: not-allowed;
         }
-
         @keyframes fadeIn {
-          from {
-            opacity: 0;
-          }
-          to {
-            opacity: 1;
-          }
+          from { opacity: 0; }
+          to { opacity: 1; }
         }
-
         @keyframes pulse {
-          0% {
-            opacity: 1;
-          }
-          50% {
-            opacity: 0.5;
-          }
-          100% {
-            opacity: 1;
-          }
+          0% { opacity: 1; }
+          50% { opacity: 0.5; }
+          100% { opacity: 1; }
         }
-
         @media (max-width: 768px) {
-          th,
-          td {
+          th, td {
             padding: 10px;
             font-size: 0.9rem;
           }
-
           .select-doctor-container {
             padding: 15px;
           }
-
           h2 {
             font-size: 1.5rem;
           }
         }
-
         @media (max-width: 480px) {
-          th,
-          td {
+          th, td {
             padding: 8px;
             font-size: 0.8rem;
           }
-
           .filter-container {
             flex-direction: column;
             align-items: flex-start;
           }
-
           select {
             width: 100%;
           }
-
           h2 {
             font-size: 1.2rem;
           }
