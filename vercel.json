@@ -1,32 +1,60 @@
 {
-   "version": 2,
-   "headers": [
-     {
-       "source": "/api/(.*)",
-       "headers": [
-         { "key": "Access-Control-Allow-Origin", "value": "https://healthcare-app-vercel.vercel.app" },
-         { "key": "Access-Control-Allow-Methods", "value": "GET, POST, OPTIONS" },
-         { "key": "Access-Control-Allow-Headers", "value": "Authorization, x-user-uid, Content-Type, Accept" },
-         { "key": "Access-Control-Max-Age", "value": "86400" }
-       ]
-     },
-     {
-       "source": "/(.*).(html|js|css)",
-       "headers": [
-         { "key": "Cache-Control", "value": "no-store" }
-       ]
-     }
-   ],
+  "headers": [
+    {
+      "source": "/api/(.*)",
+      "headers": [
+        { "key": "Access-Control-Allow-Origin", "value": "https://healthcare-app-vercel.vercel.app" },
+        { "key": "Access-Control-Allow-Methods", "value": "GET, POST, OPTIONS" },
+        { "key": "Access-Control-Allow-Headers", "value": "Authorization, x-user-uid, Content-Type, Accept" },
+        { "key": "Access-Control-Max-Age", "value": "86400" }
+      ]
+    }
+  ],
   "rewrites": [
-    { "source": "/api/admin", "destination": "/api/admin/index.js" },
-    { "source": "/api/audio/translate", "destination": "/api/audio/index.js" },
-    { "source": "/api/chats/:patientId/:doctorId", "destination": "/api/chats/[patientId]/[doctorId]/index.js" },
-    { "source": "/api/users/:uid", "destination": "/api/users/[uid]/index.js" },
-    { "source": "/api/misc/logout", "destination": "/api/misc/logout.js" },
-    { "source": "/api/misc/notify-missed-dose", "destination": "/api/misc/notify-missed-dose.js" },
-    { "source": "/api/misc/uploadImage/:patientId", "destination": "/api/misc/uploadImage/[patientId]/index.js" },
-    { "source": "/api/audio", "destination": "/api/audio/index.js" },
-    { "source": "/(.*)", "destination": "/" }
+    {
+      "source": "/api/audio/translate",
+      "destination": "/api/audio"
+    },
+    {
+      "source": "/api/chats/:patientId/:doctorId",
+      "destination": "/api/chats/[patientId]/[doctorId]"
+    },
+    {
+      "source": "/api/users/:uid",
+      "destination": "/api/users/[uid]"
+    },
+    {
+      "source": "/api/misc/logout",
+      "destination": "/api/misc/logout"
+    },
+    {
+      "source": "/api/:path*",
+      "destination": "/api/:path*"
+    },
+    {
+      "source": "/patient/chat/:patientId/:doctorId",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/patient/select-doctor",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/patient/language-preference/:patientId/:doctorId",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/doctor/chat",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/admin",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/"
+    }
   ],
   "cleanUrls": true,
   "trailingSlash": false,

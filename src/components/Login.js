@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { signInWithEmailAndPassword, onAuthStateChanged } from 'firebase/auth';
-import { auth } from '../services/firebase.js';
+import { doc, getDoc } from 'firebase/firestore';
+import { auth, db } from '../services/firebase.js';
 
 function Login({ setUser, setRole, setPatientId, user, setError: setParentError }) {
   const [email, setEmail] = useState('');
@@ -46,21 +47,28 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
             rawResponse: responseText.substring(0, 100) + (responseText.length > 100 ? '...' : ''),
           });
 
-          if (!response.ok) {
-            throw new Error(`Failed to fetch user data: ${response.status} ${response.statusText}`);
-          }
-
           let userData;
-          try {
-            userData = JSON.parse(responseText);
-            if (!userData || typeof userData !== 'object' || !userData.role) {
-              throw new Error('Invalid user data structure or missing role');
+          if (response.ok) {
+            try {
+              userData = JSON.parse(responseText);
+              if (!userData || typeof userData !== 'object' || !userData.role) {
+                throw new Error('Invalid user data structure or missing role');
+              }
+            } catch (parseError) {
+              console.error('JSON parsing failed during auth state change:', parseError.message, 'Raw response:', responseText);
+              throw new Error('Invalid JSON response from server');
             }
-          } catch (parseError) {
-            console.error('JSON parsing failed during auth state change:', parseError.message, 'Raw response:', responseText);
-            // Fallback to Firestore data if API returns HTML
-            userData = { role: 'patient', patientId: 'xxh3zc' }; // Temporary fallback
-            console.warn('Using fallback user data due to invalid JSON response');
+          } else {
+            console.warn('API request failed, falling back to Firestore', { status: response.status });
+            // Fallback to Firestore
+            const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
+            if (!userDoc.exists()) {
+              throw new Error('User not found in Firestore');
+            }
+            userData = userDoc.data();
+            if (!userData.role) {
+              throw new Error('Missing role in Firestore user data');
+            }
           }
 
           const updatedUser = {
@@ -107,14 +115,14 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
   const handleInputChange = (setter) => (e) => {
     if (error) {
       setError('');
-      setParentError(''); // Clear parent error as well
+      setParentError('');
     }
     setter(e.target.value);
   };
 
   const handleLogin = async (e) => {
     e.preventDefault();
-    if (isLoading) return; // Prevent multiple clicks
+    if (isLoading) return;
     setError('');
     setParentError('');
     setIsLoading(true);
@@ -170,7 +178,17 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
         });
 
         if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}, text: ${responseText}`);
+          // Fallback to Firestore if API fails
+          console.warn('API request failed, falling back to Firestore', { status: response.status });
+          const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
+          if (!userDoc.exists()) {
+            throw new Error('User not found in Firestore');
+          }
+          userData = userDoc.data();
+          if (!userData.role) {
+            throw new Error('Missing role in Firestore user data');
+          }
+          break;
         }
 
         try {
@@ -178,18 +196,27 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
           if (!userData || typeof userData !== 'object' || !userData.role) {
             throw new Error('Invalid user data structure or missing role');
           }
-          break; // Exit loop on successful parse
+          break;
         } catch (parseError) {
           console.error('JSON parsing failed:', parseError.message, 'Raw response:', responseText);
           if (attempt === maxAttempts - 1) {
-            throw new Error('Server returned invalid JSON response after retries');
+            // Fallback to Firestore after retries
+            console.warn('Falling back to Firestore after failed retries');
+            const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
+            if (!userDoc.exists()) {
+              throw new Error('User not found in Firestore');
+            }
+            userData = userDoc.data();
+            if (!userData.role) {
+              throw new Error('Missing role in Firestore user data');
+            }
+            break;
           }
           attempt++;
-          await new Promise((resolve) => setTimeout(resolve, 1000 * attempt)); // Exponential backoff
+          await new Promise((resolve) => setTimeout(resolve, 1000 * attempt));
         }
       }
 
-      // State updates inside the try block where userData is defined
       const updatedUser = {
         uid: firebaseUser.uid,
         email,
@@ -219,14 +246,12 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
         errorMessage = 'User not found. Please register first.';
       } else if (error.code === 'auth/wrong-password') {
         errorMessage = 'Incorrect password. Please try again.';
-      } else if (error.message.includes('HTTP error')) {
-        if (error.message.includes('404')) {
-          errorMessage = 'User data not found on server. Please register or contact support.';
-        } else {
-          errorMessage = 'Failed to fetch user data. Please check the server or try again later.';
-        }
-      } else if (error.message.includes('invalid JSON')) {
-        errorMessage = 'Server error: Invalid response format. Please try again later or contact support.';
+      } else if (error.message.includes('User not found in Firestore')) {
+        errorMessage = 'User data not found. Please register or contact support.';
+      } else if (error.message.includes('Missing role')) {
+        errorMessage = 'User role not configured. Please contact support.';
+      } else if (error.message.includes('HTTP error') || error.message.includes('invalid JSON')) {
+        errorMessage = 'Server error: Unable to fetch user data. Please try again later or contact support.';
       } else {
         errorMessage = `Login failed: ${error.message}`;
       }
