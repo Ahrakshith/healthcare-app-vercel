@@ -21,6 +21,10 @@
       "destination": "/api/chats/[patientId]/[doctorId]"
     },
     {
+      "source": "/api/admin",
+      "destination": "/api/admin/index"
+    },
+    {
       "source": "/api/users",
       "destination": "/api/users/index"
     },

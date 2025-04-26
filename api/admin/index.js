@@ -1,8 +1,7 @@
-import { Storage } from '@google-cloud/storage';
 import admin from 'firebase-admin';
 import Pusher from 'pusher';
+import { Storage } from '@google-cloud/storage';
 import busboy from 'busboy';
-//import
 
 // Initialize Firebase Admin
 if (!admin.apps.length) {
@@ -115,13 +114,35 @@ const generateSignedUrl = async (filePath) => {
 // Admin endpoint to fetch missed dose alerts or other admin data
 const handleAdminRequest = async (req, res, patientId, doctorId, userId) => {
   try {
-    // Authorization check for admin role
-    const adminQuery = await db.collection('admins').where('uid', '==', userId).get();
-    if (adminQuery.empty) {
-      return res.status(403).json({ error: { code: 403, message: 'You are not authorized as an admin' } });
+    // Authorization check: Allow doctors to fetch alerts for their assigned patients
+    const userDoc = await db.collection('users').doc(userId).get();
+    if (!userDoc.exists) {
+      return res.status(404).json({ error: { code: 404, message: 'User not found' } });
     }
 
-    // Example: Fetch missed dose alerts for the given patient and doctor
+    const userData = userDoc.data();
+    if (userData.role !== 'doctor' && userData.role !== 'admin') {
+      return res.status(403).json({ error: { code: 403, message: 'You are not authorized to access this endpoint' } });
+    }
+
+    if (userData.role === 'doctor') {
+      // Verify the doctorId matches the authenticated user
+      const doctorQuery = await db.collection('doctors').where('uid', '==', userId).where('doctorId', '==', doctorId).get();
+      if (doctorQuery.empty) {
+        return res.status(403).json({ error: { code: 403, message: 'Forbidden: Invalid doctorId for this user' } });
+      }
+
+      // Verify the patient is assigned to this doctor
+      const assignmentQuery = await db.collection('doctor_assignments')
+        .where('patientId', '==', patientId)
+        .where('doctorId', '==', doctorId)
+        .get();
+      if (assignmentQuery.empty) {
+        return res.status(403).json({ error: { code: 403, message: 'Forbidden: Patient not assigned to this doctor' } });
+      }
+    }
+
+    // Fetch missed dose alerts for the given patient and doctor
     const alertsRef = db.collection('missed_dose_alerts')
       .where('patientId', '==', patientId)
       .where('doctorId', '==', doctorId);
@@ -130,7 +151,7 @@ const handleAdminRequest = async (req, res, patientId, doctorId, userId) => {
     const alerts = snapshot.docs.map(doc => ({
       id: doc.id,
       ...doc.data(),
-      timestamp: doc.data().timestamp?.toDate().toISOString() || new Date().toISOString(),
+      timestamp: doc.data().timestamp?.toDate?.().toISOString() || doc.data().timestamp || new Date().toISOString(),
     }));
 
     console.log(`Fetched ${alerts.length} missed dose alerts for patient ${patientId} and doctor ${doctorId}`);
@@ -141,7 +162,7 @@ const handleAdminRequest = async (req, res, patientId, doctorId, userId) => {
   }
 };
 
-// Chat endpoint handler
+// Chat endpoint handler (preserved for compatibility with previous routing logic)
 const handleChatRequest = async (req, res, patientId, doctorId, userId) => {
   if (req.method === 'GET') {
     // Authorization check
@@ -372,33 +393,50 @@ const handleChatRequest = async (req, res, patientId, doctorId, userId) => {
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', process.env.FRONTEND_URL || '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'x-user-uid, Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Authorization, x-user-uid, Content-Type, Accept');
 
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
 
   const userId = req.headers['x-user-uid'];
-  if (!userId) {
-    return res.status(400).json({ error: { code: 400, message: 'Firebase UID is required in x-user-uid header' } });
-  }
+  const authHeader = req.headers['authorization'];
 
-  // Handle dynamic routing based on path
-  const { patientId, doctorId } = req.query;
-
-  if (req.url.startsWith('/admin') && (req.method === 'GET' || req.method === 'POST')) {
-    return handleAdminRequest(req, res, patientId, doctorId, userId);
-  } else if (req.url.startsWith('/chats') && (req.method === 'GET' || req.method === 'POST')) {
-    if (!patientId || !doctorId) {
-      return res.status(400).json({ error: { code: 400, message: 'patientId and doctorId are required' } });
-    }
-    return handleChatRequest(req, res, patientId, doctorId, userId);
-  } else {
-    res.setHeader('Allow', ['GET', 'POST']);
-    return res.status(405).json({ error: { code: 405, message: `Method ${req.method} Not Allowed for ${req.url}` } });
+  if (!userId || !authHeader) {
+    console.error('Missing authentication headers:', { userId, authHeader });
+    return res.status(401).json({ error: { code: 401, message: 'Authentication headers missing' } });
   }
 
   try {
+    // Verify Firebase ID token
+    const token = authHeader.replace('Bearer ', '');
+    const decodedToken = await admin.auth().verifyIdToken(token);
+    if (decodedToken.uid !== userId) {
+      console.error('User ID mismatch:', { tokenUid: decodedToken.uid, headerUid: userId });
+      return res.status(403).json({ error: { code: 403, message: 'Unauthorized: Token does not match user' } });
+    }
+
+    // Since /api/admin doesn't have patientId/doctorId in the URL, get them from the request body for POST
+    let patientId, doctorId;
+    if (req.method === 'POST') {
+      const { patientId: bodyPatientId, doctorId: bodyDoctorId } = req.body;
+      patientId = bodyPatientId;
+      doctorId = bodyDoctorId;
+    }
+
+    if (!patientId || !doctorId) {
+      return res.status(400).json({ error: { code: 400, message: 'patientId and doctorId are required in the request body' } });
+    }
+
+    // Route handling
+    if (req.url.startsWith('/admin') || req.url === '/') {
+      return handleAdminRequest(req, res, patientId, doctorId, userId);
+    } else if (req.url.startsWith('/chats')) {
+      return handleChatRequest(req, res, patientId, doctorId, userId);
+    } else {
+      res.setHeader('Allow', ['GET', 'POST']);
+      return res.status(405).json({ error: { code: 405, message: `Method ${req.method} Not Allowed for ${req.url}` } });
+    }
   } catch (error) {
     console.error(`Error in api/admin/index.js (${req.method}) for user ${userId}:`, error.message);
     if (error.message === 'Invalid sender type') {
