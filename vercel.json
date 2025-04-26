@@ -9,23 +9,41 @@
         { "key": "Access-Control-Allow-Headers", "value": "Authorization, x-user-uid, Content-Type, Accept" },
         { "key": "Access-Control-Max-Age", "value": "86400" }
       ]
-    },
-    {
-      "source": "/(.*).(html|js|css)",
-      "headers": [
-        { "key": "Cache-Control", "value": "no-store" }
-      ]
     }
   ],
   "rewrites": [
-    { "source": "/api/audio/translate", "destination": "/api/audio/index.js" },
-    { "source": "/api/chats/:patientId/:doctorId", "destination": "/api/chats/[patientId]/[doctorId]/index.js" },
-    { "source": "/api/users/:uid", "destination": "/api/users/[uid]/index.js" },
-    { "source": "/api/misc/logout", "destination": "/api/misc/logout.js" },
-    { "source": "/api/misc/notify-missed-dose", "destination": "/api/misc/notify-missed-dose.js" },
-    { "source": "/api/misc/uploadImage/:patientId", "destination": "/api/misc/uploadImage/[patientId]/index.js" },
-    { "source": "/api/audio", "destination": "/api/audio/index.js" },
-    { "source": "/(.*)", "destination": "/" }
+    {
+      "source": "/api/audio/translate",
+      "destination": "/api/index.js"
+    },
+    {
+      "source": "/api/chats/:patientId/:doctorId",
+      "destination": "/api/index.js"
+    },
+    {
+      "source": "/api/users/:uid",
+      "destination": "/api/index.js"
+    },
+    {
+      "source": "/api/misc/logout",
+      "destination": "/api/index.js"
+    },
+    {
+      "source": "/api/misc/notify-missed-dose",
+      "destination": "/api/index.js"
+    },
+    {
+      "source": "/api/misc/uploadImage/:patientId",
+      "destination": "/api/index.js"
+    },
+    {
+      "source": "/api/:path*",
+      "destination": "/api/index.js"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/"
+    }
   ],
   "cleanUrls": true,
   "trailingSlash": false,

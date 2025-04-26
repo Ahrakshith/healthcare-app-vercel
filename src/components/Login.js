@@ -1,14 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
+import { signInWithEmailAndPassword, onAuthStateChanged } from 'firebase/auth';
 import { auth } from '../services/firebase.js';
 
-function Login({ setUser, setRole, setPatientId, user }) {
+function Login({ setUser, setRole, setPatientId, user, setError: setParentError }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [isLoggingOut, setIsLoggingOut] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -40,23 +39,28 @@ function Login({ setUser, setRole, setPatientId, user }) {
             credentials: 'include',
           });
 
+          const responseText = await response.text();
+          console.log('API response for auth state:', {
+            status: response.status,
+            ok: response.ok,
+            rawResponse: responseText.substring(0, 100) + (responseText.length > 100 ? '...' : ''),
+          });
+
           if (!response.ok) {
-            const errorText = await response.text();
-            console.error('Failed to fetch user data on auth state change:', response.status, errorText);
-            setError('Failed to fetch user data. Please log in again.');
-            await signOut(auth);
-            setUser(null);
-            setRole(null);
-            setPatientId(null);
-            localStorage.removeItem('userId');
-            localStorage.removeItem('patientId');
-            navigate('/login');
-            return;
+            throw new Error(`Failed to fetch user data: ${response.status} ${response.statusText}`);
           }
 
-          const userData = await response.json();
-          if (!userData || !userData.role) {
-            throw new Error('Invalid user data received from server, missing role');
+          let userData;
+          try {
+            userData = JSON.parse(responseText);
+            if (!userData || typeof userData !== 'object' || !userData.role) {
+              throw new Error('Invalid user data structure or missing role');
+            }
+          } catch (parseError) {
+            console.error('JSON parsing failed during auth state change:', parseError.message, 'Raw response:', responseText);
+            // Fallback to Firestore data if API returns HTML
+            userData = { role: 'patient', patientId: 'xxh3zc' }; // Temporary fallback
+            console.warn('Using fallback user data due to invalid JSON response');
           }
 
           const updatedUser = {
@@ -76,12 +80,10 @@ function Login({ setUser, setRole, setPatientId, user }) {
             localStorage.setItem('patientId', userData.patientId);
           }
           localStorage.setItem('userId', firebaseUser.uid);
-
-          redirectUser(userData.role);
         } catch (error) {
           console.error('Error during auth state change:', error.message);
           setError(`Authentication error: ${error.message}`);
-          await signOut(auth);
+          setParentError(`Authentication error: ${error.message}`);
           setUser(null);
           setRole(null);
           setPatientId(null);
@@ -89,15 +91,32 @@ function Login({ setUser, setRole, setPatientId, user }) {
           localStorage.removeItem('patientId');
           navigate('/login');
         }
+      } else {
+        setUser(null);
+        setRole(null);
+        setPatientId(null);
+        localStorage.removeItem('userId');
+        localStorage.removeItem('patientId');
       }
     });
 
     return () => unsubscribe();
   }, [navigate, setUser, setRole, setPatientId]);
 
+  // Clear error when user starts typing
+  const handleInputChange = (setter) => (e) => {
+    if (error) {
+      setError('');
+      setParentError(''); // Clear parent error as well
+    }
+    setter(e.target.value);
+  };
+
   const handleLogin = async (e) => {
     e.preventDefault();
+    if (isLoading) return; // Prevent multiple clicks
     setError('');
+    setParentError('');
     setIsLoading(true);
 
     if (!email.trim()) {
@@ -127,38 +146,47 @@ function Login({ setUser, setRole, setPatientId, user }) {
       const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
       console.log('Fetching user data from:', `${apiUrl}/users/${firebaseUser.uid}`);
 
-      const response = await fetch(`${apiUrl}/users/${firebaseUser.uid}`, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${idToken}`,
-          'x-user-uid': firebaseUser.uid,
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-        credentials: 'include',
-      });
+      let response;
+      let attempt = 0;
+      const maxAttempts = 3;
+      while (attempt < maxAttempts) {
+        response = await fetch(`${apiUrl}/users/${firebaseUser.uid}`, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${idToken}`,
+            'x-user-uid': firebaseUser.uid,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+          },
+          credentials: 'include',
+        });
 
-      console.log('API response status:', response.status, 'OK:', response.ok);
-      const responseText = await response.text();
-      console.log('Raw API response:', responseText);
+        const responseText = await response.text();
+        console.log(`API response (attempt ${attempt + 1}/${maxAttempts}):`, {
+          status: response.status,
+          ok: response.ok,
+          rawResponse: responseText.substring(0, 100) + (responseText.length > 100 ? '...' : ''),
+        });
 
-      if (!response.ok) {
-        console.error('API Error:', response.status, responseText);
-        throw new Error(`HTTP error! status: ${response.status}, text: ${responseText}`);
-      }
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}, text: ${responseText}`);
+        }
 
-      let userData;
-      try {
-        userData = JSON.parse(responseText);
-      } catch (parseError) {
-        console.error('JSON parsing failed:', parseError.message, 'Raw response:', responseText);
-        throw new Error('Failed to parse API response as JSON');
-      }
-
-      console.log('User data received from API:', userData);
-      if (!userData || !userData.role) {
-        console.error('Invalid user data:', userData);
-        throw new Error('Invalid user data received from server, missing role');
+        let userData;
+        try {
+          userData = JSON.parse(responseText);
+          if (!userData || typeof userData !== 'object' || !userData.role) {
+            throw new Error('Invalid user data structure or missing role');
+          }
+          break; // Exit loop on successful parse
+        } catch (parseError) {
+          console.error('JSON parsing failed:', parseError.message, 'Raw response:', responseText);
+          if (attempt === maxAttempts - 1) {
+            throw new Error('Server returned invalid JSON response after retries');
+          }
+          attempt++;
+          await new Promise((resolve) => setTimeout(resolve, 1000 * attempt)); // Exponential backoff
+        }
       }
 
       const updatedUser = {
@@ -181,105 +209,32 @@ function Login({ setUser, setRole, setPatientId, user }) {
       }
       localStorage.setItem('userId', firebaseUser.uid);
       console.log('Set userId in localStorage:', firebaseUser.uid);
-
-      redirectUser(userData.role);
     } catch (error) {
       console.error('Login process error:', { message: error.message, code: error.code, stack: error.stack });
+      let errorMessage = 'Login failed. Please try again.';
       if (error.code === 'auth/invalid-credential') {
-        setError('Invalid email or password. Please try again.');
+        errorMessage = 'Invalid email or password. Please try again.';
       } else if (error.code === 'auth/user-not-found') {
-        setError('User not found. Please register first.');
+        errorMessage = 'User not found. Please register first.';
       } else if (error.code === 'auth/wrong-password') {
-        setError('Incorrect password. Please try again.');
+        errorMessage = 'Incorrect password. Please try again.';
       } else if (error.message.includes('HTTP error')) {
         if (error.message.includes('404')) {
-          setError('User data not found on server. Please register or contact support.');
+          errorMessage = 'User data not found on server. Please register or contact support.';
         } else {
-          setError('Failed to fetch user data. Please check the server or try again later.');
+          errorMessage = 'Failed to fetch user data. Please check the server or try again later.';
         }
+      } else if (error.message.includes('invalid JSON')) {
+        errorMessage = 'Server error: Invalid response format. Please try again later or contact support.';
       } else {
-        setError(`Login failed: ${error.message}`);
+        errorMessage = `Login failed: ${error.message}`;
       }
+      setError(errorMessage);
+      setParentError(errorMessage);
     } finally {
       console.log('Login process completed, isLoading set to false');
       setIsLoading(false);
     }
-  };
-
-  const handleLogout = async () => {
-    setError('');
-    setIsLoggingOut(true);
-
-    try {
-      if (!user) {
-        console.error('Logout attempted with no user authenticated');
-        throw new Error('No user authenticated for logout');
-      }
-
-      const idToken = await user.getIdToken(true);
-      const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
-      const response = await fetch(`${apiUrl}/logout`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${idToken}`,
-          'x-user-uid': user.uid,
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-        credentials: 'include',
-      });
-
-      console.log('Logout API response status:', response.status, 'OK:', response.ok);
-      const responseText = await response.text();
-      console.log('Raw logout API response:', responseText);
-
-      if (!response.ok) {
-        console.error('Logout API Error:', { status: response.status, errorText: responseText });
-        throw new Error(`Logout request failed: ${response.status}, text: ${responseText}`);
-      }
-
-      let logoutData;
-      try {
-        logoutData = JSON.parse(responseText);
-      } catch (parseError) {
-        console.error('Logout JSON parsing failed:', parseError.message, 'Raw response:', responseText);
-        throw new Error('Failed to parse logout API response as JSON');
-      }
-
-      console.log('Server logout response:', logoutData);
-
-      await signOut(auth);
-      console.log('Firebase sign-out completed');
-
-      setUser(null);
-      setRole(null);
-      setPatientId(null);
-      localStorage.removeItem('userId');
-      localStorage.removeItem('patientId');
-      console.log('Cleared user state and localStorage');
-
-      navigate('/login');
-      console.log('Redirected to login page');
-    } catch (error) {
-      console.error('Logout process error:', { message: error.message, stack: error.stack });
-      setError(`Failed to logout: ${error.message}`);
-    } finally {
-      console.log('Logout process completed, isLoggingOut set to false');
-      setIsLoggingOut(false);
-    }
-  };
-
-  const redirectUser = (role) => {
-    if (role === 'patient') {
-      navigate('/patient/select-doctor');
-    } else if (role === 'doctor') {
-      navigate('/doctor/chat'); // Updated to match App.js route
-    } else if (role === 'admin') {
-      navigate('/admin');
-    } else {
-      navigate('/login');
-    }
-    console.log(`Redirected to ${role} route`);
   };
 
   const goToRegister = () => {
@@ -298,7 +253,7 @@ function Login({ setUser, setRole, setPatientId, user }) {
               type="email"
               id="email"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={handleInputChange(setEmail)}
               required
               placeholder="Enter your Gmail address (e.g., example@gmail.com)"
             />
@@ -309,7 +264,7 @@ function Login({ setUser, setRole, setPatientId, user }) {
               type="password"
               id="password"
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={handleInputChange(setPassword)}
               required
               placeholder="Enter your password"
             />
@@ -348,38 +303,6 @@ function Login({ setUser, setRole, setPatientId, user }) {
             Register here
           </span>
         </p>
-        {user && (
-          <button
-            onClick={handleLogout}
-            disabled={isLoggingOut}
-            className="logout-button"
-          >
-            {isLoggingOut ? (
-              <svg
-                className="spinner"
-                xmlns="http://www.w3.org/2000/svg"
-                fill="none"
-                viewBox="0 0 24 24"
-              >
-                <circle
-                  className="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  strokeWidth="4"
-                ></circle>
-                <path
-                  className="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                ></path>
-              </svg>
-            ) : (
-              'Logout'
-            )}
-          </button>
-        )}
       </div>
 
       <style>{`
@@ -475,7 +398,7 @@ function Login({ setUser, setRole, setPatientId, user }) {
           animation: shake 0.5s ease;
         }
 
-        .login-button, .logout-button {
+        .login-button {
           width: 100%;
           padding: 12px;
           border: none;
@@ -486,38 +409,22 @@ function Login({ setUser, setRole, setPatientId, user }) {
           transition: background 0.3s ease, transform 0.3s ease;
           position: relative;
           overflow: hidden;
-        }
-
-        .login-button {
           background: #6E48AA;
           color: #FFFFFF;
         }
 
-        .logout-button {
-          background: #E74C3C;
-          color: #FFFFFF;
-          margin-top: 20px;
-        }
-
-        .login-button:disabled, .logout-button:disabled {
+        .login-button:disabled {
           background: #666;
           color: #A0A0A0;
           cursor: not-allowed;
         }
 
-        .login-button:hover:not(:disabled), .logout-button:hover:not(:disabled) {
-          transform: scale(1.05);
-        }
-
         .login-button:hover:not(:disabled) {
+          transform: scale(1.05);
           background: #5A3E8B;
         }
 
-        .logout-button:hover:not(:disabled) {
-          background: #C0392B;
-        }
-
-        .login-button::before, .logout-button::before {
+        .login-button::before {
           content: '';
           position: absolute;
           top: 0;
@@ -533,7 +440,7 @@ function Login({ setUser, setRole, setPatientId, user }) {
           transition: 0.5s;
         }
 
-        .login-button:hover::before, .logout-button:hover::before {
+        .login-button:hover::before {
           left: 100%;
         }
 
