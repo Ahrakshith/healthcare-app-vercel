@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { auth as firebaseAuth, db } from './services/firebase.js';
 import { signOut } from 'firebase/auth';
@@ -14,12 +14,11 @@ import './components/patient.css';
 
 // Custom 404 Component
 const NotFound = () => {
-  const location = useLocation();
-  console.log(`NotFound: Rendering for path "${location.pathname}"`);
+  console.log('NotFound: Rendering 404 page');
   return (
     <div className="not-found-container">
       <h2>404 - Page Not Found</h2>
-      <p>The requested path "{location.pathname}" does not exist.</p>
+      <p>The requested path does not exist.</p>
       <p>
         Go to <a href="/login">Login</a>
       </p>
@@ -63,8 +62,6 @@ function App() {
   const [patientId, setPatientId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const navigate = useNavigate();
-  const location = useLocation();
 
   useEffect(() => {
     console.log('App: Starting auth state listener setup');
@@ -139,82 +136,6 @@ function App() {
     };
   }, []);
 
-  // Handle page refresh/visibility change
-  useEffect(() => {
-    const handleVisibilityChange = () => {
-      console.log('App: Visibility state changed, current state:', document.visibilityState);
-      if (document.visibilityState === 'visible') {
-        console.log('App: Page became visible - possible refresh detected');
-        console.log('App: Current firebaseUser:', firebaseUser ? firebaseUser.uid : null);
-        console.log('App: Current user state:', user);
-        console.log('App: Current role:', role);
-        console.log('App: Current patientId:', patientId);
-        console.log('App: SessionStorage userId:', sessionStorage.getItem('userId'));
-        console.log('App: SessionStorage patientId:', sessionStorage.getItem('patientId'));
-        console.log('App: Current location:', location.pathname);
-
-        // Restore the previous route on refresh if authenticated
-        if (firebaseUser) {
-          const lastPath = sessionStorage.getItem('lastPath') || location.pathname;
-          console.log('App: Attempting to restore last path:', lastPath);
-
-          if (role === 'patient' && lastPath.startsWith('/patient')) {
-            if (lastPath === '/patient/select-doctor' || lastPath.startsWith('/patient/language-preference') || lastPath.startsWith('/patient/chat')) {
-              console.log('App: Redirecting to patient route:', lastPath);
-              navigate(lastPath);
-            } else {
-              console.log('App: Invalid patient route, redirecting to /patient/select-doctor');
-              navigate('/patient/select-doctor');
-            }
-          } else if (role === 'doctor' && lastPath === '/doctor/chat') {
-            console.log('App: Redirecting to doctor route:', lastPath);
-            navigate(lastPath);
-          } else if (role === 'admin' && lastPath === '/admin') {
-            console.log('App: Redirecting to admin route:', lastPath);
-            navigate(lastPath);
-          } else {
-            console.log('App: Role or path mismatch, redirecting to default route for role:', role);
-            navigate(
-              role === 'patient'
-                ? '/patient/select-doctor'
-                : role === 'doctor'
-                ? '/doctor/chat'
-                : role === 'admin'
-                ? '/admin'
-                : '/login'
-            );
-          }
-        } else {
-          console.log('App: No firebaseUser, redirecting to login');
-          navigate('/login');
-        }
-
-        // Save the current path for the next refresh
-        if (location.pathname !== '/login' && location.pathname !== '/register') {
-          console.log('App: Saving current path to sessionStorage:', location.pathname);
-          sessionStorage.setItem('lastPath', location.pathname);
-        }
-      } else {
-        console.log('App: Page is hidden, visibilityState:', document.visibilityState);
-      }
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    console.log('App: Visibility change listener added');
-
-    // Initialize lastPath on mount
-    const initialPath = location.pathname;
-    if (initialPath !== '/login' && initialPath !== '/register') {
-      console.log('App: Initializing lastPath in sessionStorage:', initialPath);
-      sessionStorage.setItem('lastPath', initialPath);
-    }
-
-    return () => {
-      console.log('App: Removing visibility change listener');
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-    };
-  }, [firebaseUser, user, role, patientId, navigate, location.pathname]);
-
   // Clear error on route change
   useEffect(() => {
     const handleRouteChange = () => {
@@ -235,7 +156,7 @@ function App() {
     setPatientId(null);
     sessionStorage.removeItem('userId');
     sessionStorage.removeItem('patientId');
-    sessionStorage.removeItem('lastPath'); // Clear last path on logout
+    sessionStorage.removeItem('lastPath');
     setLoading(false);
     console.log('App: Auth failure handled, loading set to false');
   };
@@ -276,7 +197,7 @@ function App() {
     } catch (err) {
       console.error('App: Logout error:', err.message);
       setError(`Failed to log out: ${err.message}`);
-      throw err; // Let components like DoctorChat handle navigation
+      throw err;
     }
   };
 
@@ -445,16 +366,31 @@ function App() {
           element={
             user ? (
               role === 'patient' ? (
-                <Navigate to="/patient/select-doctor" replace />
+                <>
+                  {console.log('App: Redirecting to /patient/select-doctor for patient role')}
+                  <Navigate to="/patient/select-doctor" replace />
+                </>
               ) : role === 'doctor' ? (
-                <Navigate to="/doctor/chat" replace />
+                <>
+                  {console.log('App: Redirecting to /doctor/chat for doctor role')}
+                  <Navigate to="/doctor/chat" replace />
+                </>
               ) : role === 'admin' ? (
-                <Navigate to="/admin" replace />
+                <>
+                  {console.log('App: Redirecting to /admin for admin role')}
+                  <Navigate to="/admin" replace />
+                </>
               ) : (
-                <Navigate to="/login" replace />
+                <>
+                  {console.log('App: Redirecting to /login for unknown role')}
+                  <Navigate to="/login" replace />
+                </>
               )
             ) : (
-              <Navigate to="/login" replace />
+              <>
+                {console.log('App: Redirecting to /login, no user authenticated')}
+                <Navigate to="/login" replace />
+              </>
             )
           }
         />

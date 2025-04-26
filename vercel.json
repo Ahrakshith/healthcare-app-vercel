@@ -25,7 +25,7 @@
     },
     {
       "source": "/api/misc/logout",
-      "destination": "/api/misc/logout"
+      "destination": "/api/misc"
     },
     {
       "source": "/api/:path*",
