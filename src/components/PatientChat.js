@@ -44,8 +44,8 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   const effectiveUserId = user?.uid || '';
   const effectivePatientId = urlPatientId || patientId || '';
   const apiBaseUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
-  const pusherKey = process.env.REACT_APP_PUSHER_KEY;
-  const pusherCluster = process.env.REACT_APP_PUSHER_CLUSTER;
+  const pusherKey = process.env.PUSHER_KEY;
+  const pusherCluster = process.env.PUSHER_CLUSTER;
 
   // Validate environment variables
   useEffect(() => {

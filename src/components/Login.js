@@ -149,6 +149,7 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
       let response;
       let attempt = 0;
       const maxAttempts = 3;
+      let userData;
       while (attempt < maxAttempts) {
         response = await fetch(`${apiUrl}/users/${firebaseUser.uid}`, {
           method: 'GET',
@@ -172,7 +173,6 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
           throw new Error(`HTTP error! status: ${response.status}, text: ${responseText}`);
         }
 
-        let userData;
         try {
           userData = JSON.parse(responseText);
           if (!userData || typeof userData !== 'object' || !userData.role) {
@@ -189,6 +189,7 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
         }
       }
 
+      // State updates inside the try block where userData is defined
       const updatedUser = {
         uid: firebaseUser.uid,
         email,

@@ -10,7 +10,7 @@ import DoctorChat from './components/DoctorChat.js';
 import AdminDashboard from './components/AdminDashboard.js';
 import SelectDoctor from './components/SelectDoctor.js';
 import LanguagePreference from './components/LanguagePreference.js';
-import './components/patient.css';
+
 
 // Custom 404 Component
 const NotFound = () => {
