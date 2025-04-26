@@ -52,7 +52,6 @@ function DoctorChat({ user, role, handleLogout, setError }) {
     scrollToBottom();
   }, [messages, scrollToBottom]);
 
-  // Fetch Doctor ID and Profile
   useEffect(() => {
     if (role !== 'doctor' || !user?.uid) {
       setError('Please log in as a doctor.');
@@ -87,7 +86,6 @@ function DoctorChat({ user, role, handleLogout, setError }) {
     fetchDoctorId();
   }, [role, user?.uid, navigate, setError]);
 
-  // Fetch Assigned Patients
   useEffect(() => {
     if (!doctorId) return;
 
@@ -121,7 +119,6 @@ function DoctorChat({ user, role, handleLogout, setError }) {
     return () => unsubscribe();
   }, [doctorId, selectedPatientId, setError]);
 
-  // Fetch Accepted Patients Status
   useEffect(() => {
     if (!doctorId) return;
 
@@ -141,7 +138,6 @@ function DoctorChat({ user, role, handleLogout, setError }) {
     fetchAcceptedPatients();
   }, [doctorId, setError]);
 
-  // Function to get Firebase ID token
   const getIdToken = async () => {
     try {
       const currentUser = auth.currentUser;
@@ -157,11 +153,9 @@ function DoctorChat({ user, role, handleLogout, setError }) {
     }
   };
 
-  // Pusher and Data Fetching
   useEffect(() => {
     if (!selectedPatientId || !user?.uid || !doctorId) return;
 
-    // Initialize Pusher
     const pusher = new Pusher(process.env.REACT_APP_PUSHER_APP_ID || '2ed44c3ce3ef227d9924', {
       cluster: process.env.REACT_APP_PUSHER_CLUSTER || 'ap2',
       authEndpoint: `${apiBaseUrl}/pusher/auth`,
@@ -172,10 +166,8 @@ function DoctorChat({ user, role, handleLogout, setError }) {
       },
     });
 
-    // Subscribe to the chat channel
     const channel = pusher.subscribe(`chat-${selectedPatientId}-${doctorId}`);
 
-    // Listen for new messages
     channel.bind('new-message', (message) => {
       setMessages((prev) => {
         if (!prev.some((msg) => msg.timestamp === message.timestamp && msg.text === message.text)) {
@@ -195,14 +187,12 @@ function DoctorChat({ user, role, handleLogout, setError }) {
       });
     });
 
-    // Listen for missed dose alerts
     channel.bind('missedDoseAlert', (alert) => {
       if (alert.patientId === selectedPatientId) {
         setMissedDoseAlerts((prev) => [...prev, { ...alert, id: Date.now().toString() }]);
       }
     });
 
-    // Fetch initial messages
     const fetchMessages = async () => {
       setLoadingMessages(true);
       try {
@@ -218,8 +208,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
         });
 
         if (!response.ok) {
-          const errorText = await response.text();
-          throw new Error(`HTTP ${response.status}: ${errorText || 'Failed to fetch messages'}`);
+          throw new Error(`HTTP ${response.status}: ${await response.text() || 'Failed to fetch messages'}`);
         }
 
         const data = await response.json();
@@ -244,7 +233,6 @@ function DoctorChat({ user, role, handleLogout, setError }) {
       }
     };
 
-    // Fetch language preference
     const fetchLanguagePreference = async () => {
       try {
         const patientRef = doc(db, 'patients', selectedPatientId);
@@ -256,7 +244,6 @@ function DoctorChat({ user, role, handleLogout, setError }) {
       }
     };
 
-    // Fetch missed dose alerts
     const fetchMissedDoseAlerts = async () => {
       try {
         const idToken = await getIdToken();
@@ -272,8 +259,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
         });
 
         if (!response.ok) {
-          const errorText = await response.text();
-          throw new Error(`HTTP ${response.status}: ${errorText || 'Failed to fetch alerts'}`);
+          throw new Error(`HTTP ${response.status}: ${await response.text() || 'Failed to fetch alerts'}`);
         }
 
         const data = await response.json();
@@ -306,7 +292,6 @@ function DoctorChat({ user, role, handleLogout, setError }) {
     };
   }, [selectedPatientId, user?.uid, doctorId, apiBaseUrl, setError]);
 
-  // Diagnosis Prompt Logic
   useEffect(() => {
     if (!selectedPatientId || !patients.length) return;
 
@@ -666,7 +651,6 @@ function DoctorChat({ user, role, handleLogout, setError }) {
       try {
         const idToken = await getIdToken();
 
-        // Send message to chat
         const chatResponse = await fetch(`${apiBaseUrl}/chats/${selectedPatientId}/${doctorId}`, {
           method: 'POST',
           headers: {
@@ -686,7 +670,6 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           return prev;
         });
 
-        // Update patient record
         const patientResponse = await fetch(`${apiBaseUrl}/patients/${selectedPatientId}`, {
           method: 'PATCH',
           headers: {
@@ -704,7 +687,6 @@ function DoctorChat({ user, role, handleLogout, setError }) {
         });
         if (!patientResponse.ok) throw new Error(`HTTP ${patientResponse.status}: ${await patientResponse.text()}`);
 
-        // Notify admin
         const selectedPatient = patients.find((p) => p.patientId === selectedPatientId);
         const disease = actionType === 'Prescription' ? messages
           .filter((msg) => msg.sender === 'doctor' && msg.diagnosis)
@@ -737,6 +719,9 @@ function DoctorChat({ user, role, handleLogout, setError }) {
         setActionType('');
       } catch (err) {
         setError(`Failed to send action: ${err.message}`);
+        if (err.message.includes('405')) {
+          setTimeout(() => sendAction(), 1000); // Retry after 1 second for HTTP 405
+        }
         console.error('Send action error:', err);
       }
     },
@@ -795,7 +780,6 @@ function DoctorChat({ user, role, handleLogout, setError }) {
     }
   }, [handleLogout, navigate, setError]);
 
-  // Memoize patient list rendering to prevent unnecessary re-renders
   const patientList = useMemo(() => (
     <ul className="patient-list">
       {patients.map((patient) => (

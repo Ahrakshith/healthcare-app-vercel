@@ -113,8 +113,12 @@ const generateSignedUrl = async (filePath) => {
 
 // Admin endpoint to fetch missed dose alerts
 const handleAdminRequest = async (req, res, patientId, doctorId, userId) => {
+  if (req.method !== 'POST') {
+    res.setHeader('Allow', ['POST']);
+    return res.status(405).json({ error: { code: 405, message: `Method ${req.method} Not Allowed for /admin` } });
+  }
+
   try {
-    // Authorization check
     const userDoc = await db.collection('users').doc(userId).get();
     if (!userDoc.exists) {
       return res.status(404).json({ error: { code: 404, message: 'User not found' } });
@@ -126,7 +130,10 @@ const handleAdminRequest = async (req, res, patientId, doctorId, userId) => {
     }
 
     if (userData.role === 'doctor') {
-      const doctorQuery = await db.collection('doctors').where('uid', '==', userId).where('doctorId', '==', doctorId).get();
+      const doctorQuery = await db.collection('doctors')
+        .where('uid', '==', userId)
+        .where('doctorId', '==', doctorId)
+        .get();
       if (doctorQuery.empty) {
         return res.status(403).json({ error: { code: 403, message: 'Forbidden: Invalid doctorId for this user' } });
       }
@@ -161,6 +168,11 @@ const handleAdminRequest = async (req, res, patientId, doctorId, userId) => {
 
 // Admin notification endpoint
 const handleAdminNotify = async (req, res, userId) => {
+  if (req.method !== 'POST') {
+    res.setHeader('Allow', ['POST']);
+    return res.status(405).json({ error: { code: 405, message: `Method ${req.method} Not Allowed for /admin/notify` } });
+  }
+
   try {
     const {
       patientId,
@@ -210,6 +222,11 @@ const handleAdminNotify = async (req, res, userId) => {
 
 // Patient update endpoint
 const handlePatientUpdate = async (req, res, patientId, userId) => {
+  if (req.method !== 'PATCH') {
+    res.setHeader('Allow', ['PATCH']);
+    return res.status(405).json({ error: { code: 405, message: `Method ${req.method} Not Allowed for /patients/${patientId}` } });
+  }
+
   try {
     const { diagnosis, prescription, doctorId, updatedAt } = req.body;
 
@@ -222,7 +239,10 @@ const handlePatientUpdate = async (req, res, patientId, userId) => {
       return res.status(403).json({ error: { code: 403, message: 'Only doctors can update patient records' } });
     }
 
-    const doctorQuery = await db.collection('doctors').where('uid', '==', userId).where('doctorId', '==', doctorId).get();
+    const doctorQuery = await db.collection('doctors')
+      .where('uid', '==', userId)
+      .where('doctorId', '==', doctorId)
+      .get();
     if (doctorQuery.empty) {
       return res.status(403).json({ error: { code: 403, message: 'Forbidden: Invalid doctorId for this user' } });
     }
@@ -254,59 +274,64 @@ const handlePatientUpdate = async (req, res, patientId, userId) => {
   }
 };
 
-// Chat endpoint handler (unchanged)
+// Chat endpoint handler
 const handleChatRequest = async (req, res, patientId, doctorId, userId) => {
   if (req.method === 'GET') {
-    const patientQuery = await db.collection('patients').where('uid', '==', userId).get();
-    const doctorQuery = await db.collection('doctors').where('uid', '==', userId).get();
-    let isAuthorized = false;
-    let userRole = null;
+    try {
+      const patientQuery = await db.collection('patients').where('uid', '==', userId).get();
+      const doctorQuery = await db.collection('doctors').where('uid', '==', userId).get();
+      let isAuthorized = false;
+      let userRole = null;
 
-    if (!patientQuery.empty && patientQuery.docs[0].data().patientId === patientId) {
-      isAuthorized = true;
-      userRole = 'patient';
-    } else if (!doctorQuery.empty && doctorQuery.docs[0].data().doctorId === doctorId) {
-      isAuthorized = true;
-      userRole = 'doctor';
+      if (!patientQuery.empty && patientQuery.docs[0].data().patientId === patientId) {
+        isAuthorized = true;
+        userRole = 'patient';
+      } else if (!doctorQuery.empty && doctorQuery.docs[0].data().doctorId === doctorId) {
+        isAuthorized = true;
+        userRole = 'doctor';
+      }
+
+      if (!isAuthorized) {
+        return res.status(403).json({ error: { code: 403, message: 'You are not authorized to access this chat' } });
+      }
+
+      const assignmentQuery = await db.collection('doctor_assignments')
+        .where('patientId', '==', patientId)
+        .where('doctorId', '==', doctorId)
+        .get();
+      if (assignmentQuery.empty) {
+        return res.status(404).json({ error: { code: 404, message: 'No chat assignment found' } });
+      }
+
+      const chatFile = bucket.file(`chats/${patientId}-${doctorId}/messages.json`);
+      const [exists] = await chatFile.exists();
+      if (!exists) {
+        console.log(`No messages found for chat between patient ${patientId} and doctor ${doctorId}`);
+        return res.json({ messages: [], userRole });
+      }
+
+      const [contents] = await chatFile.download();
+      const data = JSON.parse(contents.toString('utf8'));
+
+      const messagesWithUrls = await Promise.all(
+        (data.messages || []).map(async (message) => {
+          const updatedMessage = { ...message };
+          if (message.audioPath) {
+            updatedMessage.audioUrl = await generateSignedUrl(message.audioPath);
+          }
+          if (message.imagePath) {
+            updatedMessage.imageUrl = await generateSignedUrl(message.imagePath);
+          }
+          return updatedMessage;
+        })
+      );
+
+      console.log(`Fetched ${messagesWithUrls.length} messages for chat between patient ${patientId} and doctor ${doctorId}`);
+      return res.json({ messages: messagesWithUrls, userRole });
+    } catch (error) {
+      console.error(`Error fetching chat for patient ${patientId} and doctor ${doctorId}:`, error.message);
+      return res.status(500).json({ error: { code: 500, message: 'Failed to fetch messages', details: error.message } });
     }
-
-    if (!isAuthorized) {
-      return res.status(403).json({ error: { code: 403, message: 'You are not authorized to access this chat' } });
-    }
-
-    const assignmentQuery = await db.collection('doctor_assignments')
-      .where('patientId', '==', patientId)
-      .where('doctorId', '==', doctorId)
-      .get();
-    if (assignmentQuery.empty) {
-      return res.status(404).json({ error: { code: 404, message: 'No chat assignment found' } });
-    }
-
-    const chatFile = bucket.file(`chats/${patientId}-${doctorId}/messages.json`);
-    const [exists] = await chatFile.exists();
-    if (!exists) {
-      console.log(`No messages found for chat between patient ${patientId} and doctor ${doctorId}`);
-      return res.json({ messages: [], userRole });
-    }
-
-    const [contents] = await chatFile.download();
-    const data = JSON.parse(contents.toString('utf8'));
-
-    const messagesWithUrls = await Promise.all(
-      (data.messages || []).map(async (message) => {
-        const updatedMessage = { ...message };
-        if (message.audioPath) {
-          updatedMessage.audioUrl = await generateSignedUrl(message.audioPath);
-        }
-        if (message.imagePath) {
-          updatedMessage.imageUrl = await generateSignedUrl(message.imagePath);
-        }
-        return updatedMessage;
-      })
-    );
-
-    console.log(`Fetched ${messagesWithUrls.length} messages for chat between patient ${patientId} and doctor ${doctorId}`);
-    return res.json({ messages: messagesWithUrls, userRole });
   } else if (req.method === 'POST') {
     const contentType = req.headers['content-type'];
     let messageData;
@@ -414,62 +439,75 @@ const handleChatRequest = async (req, res, patientId, doctorId, userId) => {
 
       req.pipe(bb);
     } else {
-      const { message } = req.body;
+      const { message, append } = req.body;
       if (!message || typeof message !== 'object') {
         return res.status(400).json({ error: { code: 400, message: 'Message object is required' } });
       }
 
-      validateSender(message.sender);
+      try {
+        validateSender(message.sender);
 
-      let expectedId;
-      if (message.sender === 'doctor') {
-        const doctorQuery = await db.collection('doctors').where('uid', '==', userId).get();
-        if (doctorQuery.empty) {
-          return res.status(404).json({ error: { code: 404, message: 'Doctor profile not found for this user' } });
+        let expectedId;
+        if (message.sender === 'doctor') {
+          const doctorQuery = await db.collection('doctors').where('uid', '==', userId).get();
+          if (doctorQuery.empty) {
+            return res.status(404).json({ error: { code: 404, message: 'Doctor profile not found for this user' } });
+          }
+          expectedId = doctorQuery.docs[0].data().doctorId;
+        } else if (message.sender === 'patient') {
+          const patientQuery = await db.collection('patients').where('uid', '==', userId).get();
+          if (patientQuery.empty) {
+            return res.status(404).json({ error: { code: 404, message: 'Patient profile not found for this user' } });
+          }
+          expectedId = patientQuery.docs[0].data().patientId;
         }
-        expectedId = doctorQuery.docs[0].data().doctorId;
-      } else if (message.sender === 'patient') {
-        const patientQuery = await db.collection('patients').where('uid', '==', userId).get();
-        if (patientQuery.empty) {
-          return res.status(404).json({ error: { code: 404, message: 'Patient profile not found for this user' } });
+
+        if ((message.sender === 'doctor' && doctorId !== expectedId) || (message.sender === 'patient' && patientId !== expectedId)) {
+          return res.status(403).json({ error: { code: 403, message: `You are not authorized to send messages as this ${message.sender}` } });
         }
-        expectedId = patientQuery.docs[0].data().patientId;
+
+        const assignmentQuery = await db.collection('doctor_assignments')
+          .where('patientId', '==', patientId)
+          .where('doctorId', '==', doctorId)
+          .get();
+        if (assignmentQuery.empty) {
+          return res.status(404).json({ error: { code: 404, message: 'No chat assignment found' } });
+        }
+
+        const chatFile = bucket.file(`chats/${patientId}-${doctorId}/messages.json`);
+        let chatData = { messages: [] };
+        const [exists] = await chatFile.exists();
+        if (exists) {
+          const [contents] = await chatFile.download();
+          chatData = JSON.parse(contents.toString('utf8')) || { messages: [] };
+        }
+
+        const newMessage = {
+          ...message,
+          timestamp: message.timestamp || new Date().toISOString(),
+          senderId: userId,
+        };
+
+        if (append) {
+          chatData.messages.push(newMessage);
+        } else {
+          chatData.messages = [newMessage];
+        }
+
+        await uploadWithRetry(chatFile, JSON.stringify(chatData), { contentType: 'application/json' });
+
+        await pusher.trigger(`chat-${patientId}-${doctorId}`, 'new-message', newMessage);
+        console.log(`Pusher event 'new-message' triggered on channel chat-${patientId}-${doctorId}`);
+
+        return res.status(200).json({ message: 'Message saved successfully', newMessage });
+      } catch (error) {
+        console.error(`Error saving message for chat between patient ${patientId} and doctor ${doctorId}:`, error.message);
+        return res.status(500).json({ error: { code: 500, message: 'Failed to save message', details: error.message } });
       }
-
-      if ((message.sender === 'doctor' && doctorId !== expectedId) || (message.sender === 'patient' && patientId !== expectedId)) {
-        return res.status(403).json({ error: { code: 403, message: `You are not authorized to send messages as this ${message.sender}` } });
-      }
-
-      const assignmentQuery = await db.collection('doctor_assignments')
-        .where('patientId', '==', patientId)
-        .where('doctorId', '==', doctorId)
-        .get();
-      if (assignmentQuery.empty) {
-        return res.status(404).json({ error: { code: 404, message: 'No chat assignment found' } });
-      }
-
-      const chatFile = bucket.file(`chats/${patientId}-${doctorId}/messages.json`);
-      let chatData = { messages: [] };
-      const [exists] = await chatFile.exists();
-      if (exists) {
-        const [contents] = await chatFile.download();
-        chatData = JSON.parse(contents.toString('utf8')) || { messages: [] };
-      }
-
-      const newMessage = {
-        ...message,
-        timestamp: message.timestamp || new Date().toISOString(),
-        senderId: userId,
-      };
-      chatData.messages.push(newMessage);
-
-      await uploadWithRetry(chatFile, JSON.stringify(chatData), { contentType: 'application/json' });
-
-      await pusher.trigger(`chat-${patientId}-${doctorId}`, 'new-message', newMessage);
-      console.log(`Pusher event 'new-message' triggered on channel chat-${patientId}-${doctorId}`);
-
-      return res.status(200).json({ message: 'Message saved successfully', newMessage });
     }
+  } else {
+    res.setHeader('Allow', ['GET', 'POST']);
+    return res.status(405).json({ error: { code: 405, message: `Method ${req.method} Not Allowed for /chats/${patientId}/${doctorId}` } });
   }
 };
 
@@ -498,40 +536,40 @@ export default async function handler(req, res) {
       return res.status(403).json({ error: { code: 403, message: 'Unauthorized: Token does not match user' } });
     }
 
-    let patientId, doctorId;
-    if (req.method === 'GET') {
-      // Support query parameters for GET requests
-      patientId = req.query.patientId;
-      doctorId = req.query.doctorId;
-    } else if (req.method === 'POST' || req.method === 'PATCH') {
-      patientId = req.body.patientId;
-      doctorId = req.body.doctorId;
-    }
+    // Route parsing and parameter extraction
+    const urlPath = req.url.split('?')[0]; // Remove query parameters from URL
+    const pathSegments = urlPath.split('/').filter(segment => segment);
 
-    // Route handling
-    if (req.url.startsWith('/patients/')) {
-      const patientIdFromUrl = req.url.split('/')[2];
+    let patientId, doctorId;
+
+    // Handle different routes
+    if (pathSegments[0] === 'patients' && pathSegments[1]) {
+      patientId = pathSegments[1];
       if (req.method !== 'PATCH') {
         res.setHeader('Allow', ['PATCH']);
-        return res.status(405).json({ error: { code: 405, message: `Method ${req.method} Not Allowed for /patients/${patientIdFromUrl}` } });
+        return res.status(405).json({ error: { code: 405, message: `Method ${req.method} Not Allowed for /patients/${patientId}` } });
       }
-      return handlePatientUpdate(req, res, patientIdFromUrl, userId);
-    } else if (req.url.startsWith('/admin/notify')) {
+      return handlePatientUpdate(req, res, patientId, userId);
+    } else if (pathSegments[0] === 'admin' && pathSegments[1] === 'notify') {
       if (req.method !== 'POST') {
         res.setHeader('Allow', ['POST']);
         return res.status(405).json({ error: { code: 405, message: `Method ${req.method} Not Allowed for /admin/notify` } });
       }
       return handleAdminNotify(req, res, userId);
-    } else if (req.url.startsWith('/admin') || req.url === '/') {
-      if (req.method !== 'GET' && req.method !== 'POST') {
-        res.setHeader('Allow', ['GET', 'POST']);
+    } else if (pathSegments[0] === 'admin' || pathSegments[0] === '') {
+      if (req.method !== 'POST') {
+        res.setHeader('Allow', ['POST']);
         return res.status(405).json({ error: { code: 405, message: `Method ${req.method} Not Allowed for /admin` } });
       }
+      patientId = req.body.patientId;
+      doctorId = req.body.doctorId;
       if (!patientId || !doctorId) {
         return res.status(400).json({ error: { code: 400, message: 'patientId and doctorId are required' } });
       }
       return handleAdminRequest(req, res, patientId, doctorId, userId);
-    } else if (req.url.startsWith('/chats')) {
+    } else if (pathSegments[0] === 'chats' && pathSegments[1] && pathSegments[2]) {
+      patientId = pathSegments[1];
+      doctorId = pathSegments[2];
       if (!patientId || !doctorId) {
         return res.status(400).json({ error: { code: 400, message: 'patientId and doctorId are required' } });
       }
