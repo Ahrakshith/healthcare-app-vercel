@@ -2,9 +2,9 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom';
 import { collection, query, where, onSnapshot, getDocs, doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../services/firebase.js';
-import { getAuth } from 'firebase/auth'; // Import Firebase Auth to get the ID token
+import { getAuth } from 'firebase/auth';
 import Pusher from 'pusher-js';
-import { transcribeAudio, translateText, textToSpeechConvert } from '../services/speech.js';
+import { transcribeAudio, translateText, textToSpeechConvert, playAudio } from '../services/speech.js';
 
 function DoctorChat({ user, role, handleLogout, setError }) {
   const [selectedPatientId, setSelectedPatientId] = useState(null);
@@ -41,7 +41,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
   const streamRef = useRef(null);
   const navigate = useNavigate();
 
-  const auth = getAuth(); // Initialize Firebase Auth to get the ID token
+  const auth = getAuth();
   const apiBaseUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
 
   const scrollToBottom = useCallback(() => {
@@ -79,6 +79,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
         });
       } catch (err) {
         setError(`Failed to fetch doctor profile: ${err.message}`);
+        console.error('Fetch doctor profile error:', err);
         setLoadingPatients(false);
       }
     };
@@ -112,6 +113,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
       },
       (err) => {
         setError(`Failed to fetch patients: ${err.message}`);
+        console.error('Fetch patients error:', err);
         setLoadingPatients(false);
       }
     );
@@ -150,6 +152,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
       return idToken;
     } catch (error) {
       setError(`Failed to get ID token: ${error.message}`);
+      console.error('Get ID token error:', error);
       throw error;
     }
   };
@@ -249,6 +252,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
         setLanguagePreference(patientDoc.exists() ? patientDoc.data().languagePreference || 'en' : 'en');
       } catch (err) {
         setError(`Failed to fetch language preference: ${err.message}`);
+        console.error('Fetch language preference error:', err);
       }
     };
 
@@ -256,17 +260,13 @@ function DoctorChat({ user, role, handleLogout, setError }) {
     const fetchMissedDoseAlerts = async () => {
       try {
         const idToken = await getIdToken();
-        const response = await fetch(`${apiBaseUrl}/admin`, {
-          method: 'POST',
+        const response = await fetch(`${apiBaseUrl}/admin?patientId=${selectedPatientId}&doctorId=${doctorId}`, {
+          method: 'GET', // Changed from POST to GET
           headers: {
-            'Content-Type': 'application/json',
             'x-user-uid': user.uid,
             'Authorization': `Bearer ${idToken}`,
+            'Content-Type': 'application/json',
           },
-          body: JSON.stringify({
-            patientId: selectedPatientId,
-            doctorId: doctorId,
-          }),
           credentials: 'include',
         });
 
@@ -379,14 +379,13 @@ function DoctorChat({ user, role, handleLogout, setError }) {
         const message = {
           sender: 'doctor',
           text: 'Sorry, I am not available at the moment. Please chat with another doctor.',
-          translatedText:
-            languagePreference === 'kn'
-              ? await translateText(
-                  'Sorry, I am not available at the moment. Please chat with another doctor.',
-                  'en',
-                  'kn'
-                )
-              : null,
+          translatedText: languagePreference === 'kn' ? await translateText(
+            'Sorry, I am not available at the moment. Please chat with another doctor.',
+            'en',
+            'kn',
+            user.uid,
+            await getIdToken()
+          ) : null,
           language: 'en',
           recordingLanguage: 'en',
           timestamp: new Date().toISOString(),
@@ -416,7 +415,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
         }
       }
     },
-    [selectedPatientId, languagePreference, doctorId, user.uid, apiBaseUrl, acceptedPatients, setError]
+    [selectedPatientId, languagePreference, doctorId, user?.uid, apiBaseUrl, acceptedPatients, setError]
   );
 
   const retryUpload = useCallback(
@@ -440,12 +439,16 @@ function DoctorChat({ user, role, handleLogout, setError }) {
         setLoadingAudio(false);
       }
     },
-    [user.uid, setError]
+    [user?.uid, setError]
   );
 
   const startRecording = useCallback(async () => {
     if (!selectedPatientId) {
       setError('No patient selected.');
+      return;
+    }
+    if (!user?.uid) {
+      setError('User not authenticated.');
       return;
     }
     try {
@@ -484,10 +487,10 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           }
 
           transcribedText = transcriptionResult.transcription || 'Transcription failed';
-          audioUrlEn = await textToSpeechConvert(transcribedText, 'en-US');
+          audioUrlEn = await textToSpeechConvert(transcribedText, 'en-US', user.uid, idToken);
           if (languagePreference === 'kn') {
-            translatedText = await translateText(transcribedText, 'en', 'kn');
-            audioUrlKn = await textToSpeechConvert(translatedText, 'kn-IN');
+            translatedText = await translateText(transcribedText, 'en', 'kn', user.uid, idToken);
+            audioUrlKn = await textToSpeechConvert(translatedText, 'kn-IN', user.uid, idToken);
           }
         } catch (err) {
           setError(`Failed to process audio: ${err.message}`);
@@ -544,7 +547,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
       setError(`Failed to start recording: ${err.message}`);
       console.error('Recording error:', err);
     }
-  }, [selectedPatientId, languagePreference, user.uid, apiBaseUrl, doctorId, setError]);
+  }, [selectedPatientId, languagePreference, user?.uid, apiBaseUrl, doctorId, setError]);
 
   const stopRecording = useCallback(() => {
     if (mediaRecorder) {
@@ -566,10 +569,11 @@ function DoctorChat({ user, role, handleLogout, setError }) {
     let audioUrlKn = null;
 
     try {
-      audioUrlEn = await textToSpeechConvert(newMessage, 'en-US');
+      const idToken = await getIdToken();
+      audioUrlEn = await textToSpeechConvert(newMessage, 'en-US', user.uid, idToken);
       if (languagePreference === 'kn') {
-        translatedText = await translateText(newMessage, 'en', 'kn');
-        audioUrlKn = await textToSpeechConvert(translatedText, 'kn-IN');
+        translatedText = await translateText(newMessage, 'en', 'kn', user.uid, idToken);
+        audioUrlKn = await textToSpeechConvert(translatedText, 'kn-IN', user.uid, idToken);
       }
 
       const message = {
@@ -586,7 +590,6 @@ function DoctorChat({ user, role, handleLogout, setError }) {
         patientId: selectedPatientId,
       };
 
-      const idToken = await getIdToken();
       const response = await fetch(`${apiBaseUrl}/chats/${selectedPatientId}/${doctorId}`, {
         method: 'POST',
         headers: {
@@ -707,7 +710,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0]?.diagnosis : diagnosis;
 
         const adminResponse = await fetch(`${apiBaseUrl}/admin`, {
-          method: 'POST',
+          method: 'POST', // This POST is intentional for notifying admin
           headers: {
             'Content-Type': 'application/json',
             'x-user-uid': user.uid,
@@ -736,7 +739,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
         console.error('Send action error:', err);
       }
     },
-    [actionType, diagnosis, prescription, selectedPatientId, doctorId, user.uid, selectedPatientName, patients, messages, apiBaseUrl, setError]
+    [actionType, diagnosis, prescription, selectedPatientId, doctorId, user?.uid, selectedPatientName, patients, messages, apiBaseUrl, setError]
   );
 
   const readAloud = useCallback(
@@ -746,16 +749,20 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           setError('Cannot read aloud: No valid audio or text provided.');
           return;
         }
-        const normalizedLang = lang === 'kn' ? 'kn-IN' : 'en-US';
-        const audioToPlay = audioUrl || (await textToSpeechConvert(fallbackText.trim(), normalizedLang));
-        audioRef.current.src = audioToPlay;
-        audioRef.current.play();
+        if (audioUrl) {
+          await playAudio(audioUrl);
+        } else {
+          const idToken = await getIdToken();
+          const normalizedLang = lang === 'kn' ? 'kn-IN' : 'en-US';
+          const generatedAudioUrl = await textToSpeechConvert(fallbackText.trim(), normalizedLang, user.uid, idToken);
+          await playAudio(generatedAudioUrl);
+        }
       } catch (err) {
         setError(`Failed to read aloud: ${err.message}`);
         console.error('Read aloud error:', err);
       }
     },
-    [setError]
+    [user?.uid, setError]
   );
 
   const dismissAlert = useCallback((alertId) => {
@@ -1068,6 +1075,22 @@ function DoctorChat({ user, role, handleLogout, setError }) {
                   )}
                   <div ref={messagesEndRef} />
                 </div>
+                {failedUpload && (
+                  <div className="error-container">
+                    <p>Failed to upload audio. Would you like to retry?</p>
+                    <button
+                      onClick={() => retryUpload(failedUpload.audioBlob, failedUpload.language)}
+                      className="retry-button"
+                      aria-label="Retry audio upload"
+                    >
+                      Retry
+                    </button>
+                    <button onClick={dismissError} className="dismiss-error-button" aria-label="Dismiss error">
+                      Dismiss
+                    </button>
+                  </div>
+                )}
+                {loadingAudio && <p className="loading-audio">Processing audio...</p>}
                 <div className="controls">
                   <div className="recording-buttons">
                     <button
@@ -1718,6 +1741,22 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           color: #A0A0A0;
           margin-top: 8px;
           display: block;
+        }
+
+        .error-container {
+          background: rgba(231, 76, 60, 0.1);
+          padding: 15px;
+          border-radius: 10px;
+          margin-bottom: 20px;
+          display: flex;
+          gap: 10px;
+          align-items: center;
+          justify-content: center;
+        }
+
+        .error-container p {
+          color: #E74C3C;
+          font-size: 1rem;
         }
 
         .retry-button {

@@ -62,19 +62,23 @@ const normalizeLanguageCode = (code) => {
   }
 };
 
-async function transcribeAudio(audioBlob, languageCode = 'en-US', userId) {
+async function transcribeAudio(audioBlob, languageCode = 'en-US', userId, idToken) {
   if (!audioBlob || !(audioBlob instanceof Blob)) {
     throw new Error('Invalid audio blob: Must be a valid Blob object.');
   }
   if (!languageCode || typeof languageCode !== 'string') {
     throw new Error('Invalid language code: Must be a non-empty string.');
   }
-  if (!userId || typeof userId !== 'string') {
+  if (!userId || typeof userId !== 'string' || userId.trim() === '') {
+    !isProduction && console.error(`transcribeAudio: Invalid userId received - userId="${userId}"`);
     throw new Error('Invalid userId: Must be a non-empty string.');
+  }
+  if (!idToken || typeof idToken !== 'string' || idToken.trim() === '') {
+    throw new Error('Invalid idToken: Must be a non-empty string.');
   }
 
   const normalizedLanguageCode = normalizeLanguageCode(languageCode);
-  !isProduction && console.log(`transcribeAudio: Starting with languageCode=${normalizedLanguageCode}, uid=${userId}`);
+  !nominalizeLanguageCode && console.log(`transcribeAudio: Starting with languageCode=${normalizedLanguageCode}, uid=${userId}`);
 
   const formData = new FormData();
   formData.append('audio', audioBlob, `recording-${Date.now()}.webm`);
@@ -85,7 +89,10 @@ async function transcribeAudio(audioBlob, languageCode = 'en-US', userId) {
     !isProduction && console.log('transcribeAudio: Sending to /api/audio');
     const response = await fetchWithRetry(`${API_BASE_URL}/audio`, {
       method: 'POST',
-      headers: { 'x-user-uid': userId },
+      headers: {
+        'x-user-uid': userId,
+        'Authorization': `Bearer ${idToken}`,
+      },
       body: formData,
       credentials: 'include',
     });
@@ -133,12 +140,16 @@ async function transcribeAudio(audioBlob, languageCode = 'en-US', userId) {
   }
 }
 
-async function detectLanguage(text, userId) {
+async function detectLanguage(text, userId, idToken) {
   if (!text || typeof text !== 'string' || text.trim() === '') {
     throw new Error('Invalid text: Must be a non-empty string.');
   }
-  if (!userId || typeof userId !== 'string') {
+  if (!userId || typeof userId !== 'string' || userId.trim() === '') {
+    !isProduction && console.error(`detectLanguage: Invalid userId received - userId="${userId}"`);
     throw new Error('Invalid userId: Must be a non-empty string.');
+  }
+  if (!idToken || typeof idToken !== 'string' || idToken.trim() === '') {
+    throw new Error('Invalid idToken: Must be a non-empty string.');
   }
 
   !isProduction && console.log(`detectLanguage: Detecting for text="${truncate(text)}"`);
@@ -149,6 +160,7 @@ async function detectLanguage(text, userId) {
       headers: {
         'Content-Type': 'application/json',
         'x-user-uid': userId,
+        'Authorization': `Bearer ${idToken}`,
       },
       body: JSON.stringify({ text, sourceLanguageCode: 'auto', targetLanguageCode: 'en' }),
       credentials: 'include',
@@ -164,7 +176,7 @@ async function detectLanguage(text, userId) {
   }
 }
 
-async function translateText(text, sourceLanguageCode, targetLanguageCode, userId) {
+async function translateText(text, sourceLanguageCode, targetLanguageCode, userId, idToken) {
   if (!text || typeof text !== 'string' || text.trim() === '') {
     throw new Error('Invalid text: Must be a non-empty string.');
   }
@@ -174,8 +186,12 @@ async function translateText(text, sourceLanguageCode, targetLanguageCode, userI
   if (!targetLanguageCode || typeof targetLanguageCode !== 'string') {
     throw new Error('Invalid target language code: Must be a non-empty string.');
   }
-  if (!userId || typeof userId !== 'string') {
+  if (!userId || typeof userId !== 'string' || userId.trim() === '') {
+    !isProduction && console.error(`translateText: Invalid userId received - userId="${userId}"`);
     throw new Error('Invalid userId: Must be a non-empty string.');
+  }
+  if (!idToken || typeof idToken !== 'string' || idToken.trim() === '') {
+    throw new Error('Invalid idToken: Must be a non-empty string.');
   }
 
   const normalizedSource = normalizeLanguageCode(sourceLanguageCode);
@@ -197,6 +213,7 @@ async function translateText(text, sourceLanguageCode, targetLanguageCode, userI
       headers: {
         'Content-Type': 'application/json',
         'x-user-uid': userId,
+        'Authorization': `Bearer ${idToken}`,
       },
       body: JSON.stringify({
         text,
@@ -215,15 +232,19 @@ async function translateText(text, sourceLanguageCode, targetLanguageCode, userI
   }
 }
 
-async function textToSpeechConvert(text, languageCode = 'en-US', userId) {
+async function textToSpeechConvert(text, languageCode = 'en-US', userId, idToken) {
   if (!text || typeof text !== 'string' || text.trim() === '') {
     throw new Error('Invalid text: Must be a non-empty string.');
   }
   if (!languageCode || typeof languageCode !== 'string') {
     throw new Error('Invalid language code: Must be a non-empty string.');
   }
-  if (!userId || typeof userId !== 'string') {
+  if (!userId || typeof userId !== 'string' || userId.trim() === '') {
+    !isProduction && console.error(`textToSpeechConvert: Invalid userId received - userId="${userId}"`);
     throw new Error('Invalid userId: Must be a non-empty string.');
+  }
+  if (!idToken || typeof idToken !== 'string' || idToken.trim() === '') {
+    throw new Error('Invalid idToken: Must be a non-empty string.');
   }
 
   const normalizedLanguageCode = normalizeLanguageCode(languageCode);
@@ -238,6 +259,7 @@ async function textToSpeechConvert(text, languageCode = 'en-US', userId) {
       headers: {
         'Content-Type': 'application/json',
         'x-user-uid': userId,
+        'Authorization': `Bearer ${idToken}`,
       },
       body: JSON.stringify({ text, language: normalizedLanguageCode }),
       credentials: 'include',
@@ -264,6 +286,8 @@ async function textToSpeechConvert(text, languageCode = 'en-US', userId) {
       throw new Error('Text-to-speech service unavailable (503). Please try again later.');
     } else if (error.message.includes('audioUrl')) {
       throw new Error('Text-to-speech failed: Invalid or missing audio URL from server.');
+    } else if (error.message.includes('401')) {
+      throw new Error('Text-to-speech authentication failed (401). Please check your authentication token.');
     }
     throw new Error(`Text-to-speech conversion failed: ${error.message}`);
   }
