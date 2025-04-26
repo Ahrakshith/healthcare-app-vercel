@@ -146,7 +146,30 @@ function App() {
       console.log('App.js: Initiating logout for current tab');
     }
     try {
-      // Sign out from Firebase
+      const idToken = await firebaseAuth.currentUser?.getIdToken(true);
+      const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
+
+      // Call the logout endpoint
+      const response = await fetch(`${apiUrl}/misc/logout`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${idToken}`,
+          'x-user-uid': firebaseAuth.currentUser?.uid || '',
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        credentials: 'include',
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Logout request failed: ${response.status}, ${errorText}`);
+      }
+
+      const logoutData = await response.json();
+      console.log('Logout response:', logoutData);
+
+      // Sign out from Firebase client
       await signOut(firebaseAuth);
       console.log('App.js: Firebase sign-out completed');
 
@@ -154,8 +177,8 @@ function App() {
       handleAuthFailure();
       console.log('App.js: Local state cleared successfully');
 
-      // Ensure navigation to login
-      window.location.href = '/login'; // Force navigation to avoid React Router interference
+      // Force navigation to login
+      window.location.href = '/login';
     } catch (err) {
       console.error('App.js: Logout error:', err.message);
       setError(`Failed to log out: ${err.message}`);
@@ -308,7 +331,7 @@ function App() {
                 <Navigate to="/admin" replace />
               ) : (
                 <Navigate to="/login" replace />
-              )
+            )
             ) : (
               <Navigate to="/login" replace />
             )

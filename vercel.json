@@ -24,6 +24,18 @@
       "destination": "/api/users/[uid]"
     },
     {
+      "source": "/api/misc/logout",
+      "destination": "/api/misc/logout"
+    },
+    {
+      "source": "/api/misc/notify-missed-dose",
+      "destination": "/api/misc/notify-missed-dose"
+    },
+    {
+      "source": "/api/misc/uploadImage/:patientId",
+      "destination": "/api/misc/uploadImage/[patientId]"
+    },
+    {
       "source": "/api/:path*",
       "destination": "/api/:path"
     },
@@ -37,6 +49,10 @@
     },
     {
       "source": "/patient/language-preference/:patientId/:doctorId",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/doctor",
       "destination": "/index.html"
     },
     {

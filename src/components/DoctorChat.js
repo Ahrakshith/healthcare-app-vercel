@@ -229,16 +229,16 @@ function DoctorChat({ user, role, handleLogout }) {
       }
     };
 
-    // Fetch missed dose alerts
+    // Fetch missed dose alerts (Updated to POST)
     const fetchMissedDoseAlerts = async () => {
       try {
-        const url = new URL(`${apiBaseUrl}/admin`);
-        url.searchParams.append('patientId', selectedPatientId);
-        url.searchParams.append('doctorId', doctorId);
-
-        const response = await fetch(url, {
-          method: 'GET',
-          headers: { 'x-user-uid': user.uid },
+        const response = await fetch(`${apiBaseUrl}/admin`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
+          body: JSON.stringify({
+            patientId: selectedPatientId,
+            doctorId: doctorId,
+          }),
           credentials: 'include',
         });
 
@@ -652,11 +652,7 @@ function DoctorChat({ user, role, handleLogout }) {
           .filter((msg) => msg.sender === 'doctor' && msg.diagnosis)
           .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0]?.diagnosis : diagnosis;
 
-        const adminUrl = new URL(`${apiBaseUrl}/admin`);
-        adminUrl.searchParams.append('patientId', selectedPatientId);
-        adminUrl.searchParams.append('doctorId', doctorId);
-
-        const adminResponse = await fetch(adminUrl, {
+        const adminResponse = await fetch(`${apiBaseUrl}/admin`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-user-uid': user.uid },
           body: JSON.stringify({
@@ -1036,7 +1032,7 @@ function DoctorChat({ user, role, handleLogout }) {
                     <p>Processing audio...</p>
                   </div>
                 )}
-                <div className="controls">
+                <div classClassName="controls">
                   <div className="recording-buttons">
                     <button
                       onClick={startRecording}

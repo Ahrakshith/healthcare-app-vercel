@@ -1,4 +1,4 @@
-//api/misc/logout.js
+// api/misc/logout.js
 import { Storage } from '@google-cloud/storage';
 import admin from 'firebase-admin';
 
@@ -75,7 +75,7 @@ async function parseFormData(req) {
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', process.env.FRONTEND_URL || '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'x-user-uid, Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'x-user-uid, Content-Type, Authorization');
 
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
@@ -101,6 +101,16 @@ export default async function handler(req, res) {
         res.setHeader('Allow', ['POST']);
         return res.status(405).json({ error: 'Method not allowed' });
       }
+
+      // Revoke all refresh tokens for the user
+      await admin.auth().revokeRefreshTokens(userId);
+      console.log(`Revoked refresh tokens for user ${userId}`);
+
+      // Optionally, clear any session data in Firestore if needed
+      await db.collection('users').doc(userId).update({
+        lastLogout: new Date().toISOString(),
+      });
+
       return res.status(200).json({ message: 'Logged out successfully' });
     }
 

@@ -23,7 +23,7 @@ function Login({ setUser, setRole, setPatientId, user }) {
   // Check for existing user session on component mount
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (firebaseUser && !isLoggingOut) { // Prevent redirect during logout
+      if (firebaseUser && !isLoggingOut) {
         console.log('User already authenticated:', { uid: firebaseUser.uid, email: firebaseUser.email });
 
         try {
@@ -90,7 +90,6 @@ function Login({ setUser, setRole, setPatientId, user }) {
           navigate('/login');
         }
       } else if (!firebaseUser) {
-        // User is not authenticated, stay on login page
         setUser(null);
         setRole(null);
         setPatientId(null);
@@ -225,7 +224,7 @@ function Login({ setUser, setRole, setPatientId, user }) {
 
       const idToken = await user.getIdToken(true);
       const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
-      const response = await fetch(`${apiUrl}/logout`, {
+      const response = await fetch(`${apiUrl}/misc/logout`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${idToken}`,
