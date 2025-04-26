@@ -260,13 +260,14 @@ function DoctorChat({ user, role, handleLogout, setError }) {
     const fetchMissedDoseAlerts = async () => {
       try {
         const idToken = await getIdToken();
-        const response = await fetch(`${apiBaseUrl}/admin?patientId=${selectedPatientId}&doctorId=${doctorId}`, {
-          method: 'GET', // Changed from POST to GET
+        const response = await fetch(`${apiBaseUrl}/admin`, {
+          method: 'POST',
           headers: {
             'x-user-uid': user.uid,
             'Authorization': `Bearer ${idToken}`,
             'Content-Type': 'application/json',
           },
+          body: JSON.stringify({ patientId: selectedPatientId, doctorId }),
           credentials: 'include',
         });
 
@@ -656,9 +657,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
       const message = {
         sender: 'doctor',
         ...(actionType === 'Diagnosis' || actionType === 'Combined' ? { diagnosis } : {}),
-        ...(actionType === 'Prescription' || actionType === 'Combined'
-          ? { prescription: { ...prescription } }
-          : {}),
+        ...(actionType === 'Prescription' || actionType === 'Combined' ? { prescription: { ...prescription } } : {}),
         timestamp: new Date().toISOString(),
         doctorId,
         patientId: selectedPatientId,
@@ -688,8 +687,8 @@ function DoctorChat({ user, role, handleLogout, setError }) {
         });
 
         // Update patient record
-        await fetch(`${apiBaseUrl}/patients/${selectedPatientId}`, {
-          method: 'POST',
+        const patientResponse = await fetch(`${apiBaseUrl}/patients/${selectedPatientId}`, {
+          method: 'PATCH',
           headers: {
             'Content-Type': 'application/json',
             'x-user-uid': user.uid,
@@ -699,9 +698,11 @@ function DoctorChat({ user, role, handleLogout, setError }) {
             ...(actionType === 'Diagnosis' || actionType === 'Combined' ? { diagnosis } : {}),
             ...(actionType === 'Prescription' || actionType === 'Combined' ? { prescription: prescriptionString } : {}),
             doctorId,
+            updatedAt: new Date().toISOString(),
           }),
           credentials: 'include',
         });
+        if (!patientResponse.ok) throw new Error(`HTTP ${patientResponse.status}: ${await patientResponse.text()}`);
 
         // Notify admin
         const selectedPatient = patients.find((p) => p.patientId === selectedPatientId);
@@ -709,8 +710,8 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           .filter((msg) => msg.sender === 'doctor' && msg.diagnosis)
           .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0]?.diagnosis : diagnosis;
 
-        const adminResponse = await fetch(`${apiBaseUrl}/admin`, {
-          method: 'POST', // This POST is intentional for notifying admin
+        const adminResponse = await fetch(`${apiBaseUrl}/admin/notify`, {
+          method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'x-user-uid': user.uid,
