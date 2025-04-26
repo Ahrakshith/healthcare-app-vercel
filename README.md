@@ -71,3 +71,4 @@ This section has moved here: [https://facebook.github.io/create-react-app/docs/t
 # healthcare-app-vercel
 Fix root directory test
 Test auto-deploy after reauth
+Test auto-deploy after reauth
