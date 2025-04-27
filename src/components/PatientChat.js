@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Pusher from 'pusher-js';
@@ -412,6 +413,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     while (currentDate <= endDate) {
       const dateStr = currentDate.toISOString().split('T')[0];
 
+      // Reminder 1
       const scheduledDate1 = new Date(currentDate);
       scheduledDate1.setHours(time1.hours, time1.minutes, 0, 0);
       if (scheduledDate1 > new Date()) {
@@ -443,6 +445,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         }
       }
 
+      // Reminder 2
       const scheduledDate2 = new Date(currentDate);
       scheduledDate2.setHours(time2.hours, time2.minutes, 0, 0);
       if (scheduledDate2 > new Date()) {
