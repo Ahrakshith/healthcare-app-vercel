@@ -231,17 +231,19 @@ function AdminDashboard({ user, role, handleLogout, setUser }) {
     } catch (err) {
       console.error('AdminDashboard: Error adding doctor - Details:', err);
       if (isMounted.current) {
+        let errorMessage = err.message;
         if (err.message.includes('email-already-in-use') || err.message.includes('This email is already registered')) {
-          setAddDoctorError('This email is already registered.');
+          errorMessage = 'This email is already registered.';
         } else if (err.message.includes('invalid-email')) {
-          setAddDoctorError('Please enter a valid Gmail address (e.g., example@gmail.com).');
+          errorMessage = 'Please enter a valid Gmail address (e.g., example@gmail.com).';
         } else if (err.message.includes('weak-password')) {
-          setAddDoctorError('Password should be at least 6 characters long.');
+          errorMessage = 'Password should be at least 6 characters long.';
         } else if (err.message.includes('Forbidden')) {
-          setAddDoctorError('Insufficient permissions to add doctor.');
-        } else {
-          setAddDoctorError(`Error adding doctor: ${err.message}`);
+          errorMessage = 'Insufficient permissions to add doctor.';
+        } else if (err.message.includes('Server error')) {
+          errorMessage = 'A server error occurred. Please try again later.';
         }
+        setAddDoctorError(`Error adding doctor: ${errorMessage}`);
       }
     }
   }, [newDoctor, navigate]);
@@ -315,6 +317,8 @@ function AdminDashboard({ user, role, handleLogout, setUser }) {
           setAddAdminError('Password should be at least 6 characters long.');
         } else if (error.message.includes('Forbidden')) {
           setAddAdminError('Insufficient permissions to add admin.');
+        } else if (error.message.includes('Server error')) {
+          setAddAdminError('A server error occurred. Please try again later.');
         } else {
           setAddAdminError(`Failed to add admin: ${error.message}`);
         }
@@ -330,7 +334,9 @@ function AdminDashboard({ user, role, handleLogout, setUser }) {
     console.log('AdminDashboard: Initiating logout');
     try {
       await signOut(auth);
-      await fetch(`${process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app'}/api/misc/logout`, {
+      const baseApiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app';
+      const apiUrl = baseApiUrl.endsWith('/api') ? baseApiUrl.replace(/\/api$/, '') : baseApiUrl;
+      await fetch(`${apiUrl}/api/misc/logout`, {
         method: 'POST',
         headers: {
           'x-user-uid': localStorage.getItem('userId'),

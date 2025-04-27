@@ -21,8 +21,6 @@ function Register({ setUser, setRole, user }) {
 
   const { username: initialEmail, password: initialPassword } = location.state || {};
 
-  const apiBaseUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
-
   // Generate a unique 6-character alphanumeric patientId
   const generatePatientId = async () => {
     const characters = 'abcdefghijklmnopqrstuvwxyz0123456789';
@@ -65,6 +63,7 @@ function Register({ setUser, setRole, user }) {
     setError('');
     setIsLoading(true);
 
+    // Validation checks
     if (!termsAccepted) {
       setError('You must accept the terms and conditions.');
       setIsLoading(false);
@@ -86,6 +85,11 @@ function Register({ setUser, setRole, user }) {
       setIsLoading(false);
       return;
     }
+    if (password.length < 6) {
+      setError('Password must be at least 6 characters long.');
+      setIsLoading(false);
+      return;
+    }
     if (!name.trim()) {
       setError('Name is required.');
       setIsLoading(false);
@@ -96,8 +100,8 @@ function Register({ setUser, setRole, user }) {
       setIsLoading(false);
       return;
     }
-    if (!age || isNaN(age) || age <= 0) {
-      setError('Please enter a valid age.');
+    if (!age || isNaN(age) || age <= 0 || age > 120) {
+      setError('Please enter a valid age (1-120).');
       setIsLoading(false);
       return;
     }
@@ -121,7 +125,6 @@ function Register({ setUser, setRole, user }) {
       console.log('Register.js: User registered in Firebase Auth:', firebaseUser.uid);
 
       // Step 2: Store user data in Firestore (users collection)
-      const userDocRef = doc(db, 'users', firebaseUser.uid);
       const userData = {
         uid: firebaseUser.uid,
         email,
@@ -133,11 +136,10 @@ function Register({ setUser, setRole, user }) {
         address,
         patientId,
       };
-      await setDoc(userDocRef, userData);
+      await setDoc(doc(db, 'users', firebaseUser.uid), userData);
       console.log('Register.js: User data stored in Firestore (users):', firebaseUser.uid);
 
       // Step 3: Store patient data in Firestore (patients collection)
-      const patientDocRef = doc(db, 'patients', patientId);
       const patientData = {
         uid: firebaseUser.uid,
         patientId,
@@ -147,53 +149,17 @@ function Register({ setUser, setRole, user }) {
         address,
         createdAt: new Date().toISOString(),
       };
-      await setDoc(patientDocRef, patientData);
+      await setDoc(doc(db, 'patients', patientId), patientData);
       console.log('Register.js: Patient data stored in Firestore (patients):', patientId);
 
-      // Step 4: Store patient profile via API (calls /api/users)
-      try {
-        const idToken = await firebaseUser.getIdToken(true);
-        const patientProfile = {
-          role: 'patient',
-          email,
-          password,
-          name,
-          sex,
-          age: parseInt(age),
-          address,
-        };
-
-        const response = await fetch(`${apiBaseUrl}/users`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-user-uid': firebaseUser.uid,
-            Authorization: `Bearer ${idToken}`,
-          },
-          body: JSON.stringify(patientProfile),
-          credentials: 'include',
-        });
-
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(`Failed to store patient profile: ${errorData.error.message || response.statusText}`);
-        }
-
-        const result = await response.json();
-        console.log('Register.js: Patient profile stored via API:', result);
-      } catch (backendError) {
-        console.error('Register.js: API storage error:', backendError.message);
-        setError(`Registration successful, but failed to store patient profile via API: ${backendError.message}`);
-      }
-
-      // Step 5: Update application state and redirect
+      // Step 4: Update application state and redirect
       const updatedUser = { uid: firebaseUser.uid, email, role: 'patient', patientId, name, sex, age, address };
       setUser(updatedUser);
       setRole('patient');
       localStorage.setItem('userId', firebaseUser.uid);
       localStorage.setItem('patientId', patientId);
 
-      navigate('/');
+      navigate('/patient/select-doctor');
     } catch (error) {
       console.error('Register.js: Registration error:', error.message);
       if (error.code === 'auth/email-already-in-use') {
@@ -201,7 +167,9 @@ function Register({ setUser, setRole, user }) {
       } else if (error.code === 'auth/invalid-email') {
         setError('Please enter a valid Gmail address (e.g., example@gmail.com).');
       } else if (error.code === 'auth/weak-password') {
-        setError('Password should be at least 6 characters long.');
+        setError('Password must be at least 6 characters long.');
+      } else if (error.code === 'firestore/permission-denied') {
+        setError('Permission denied while saving data. Please contact support.');
       } else {
         setError(`Registration failed: ${error.message}`);
       }
@@ -210,12 +178,18 @@ function Register({ setUser, setRole, user }) {
     }
   };
 
-  const handleLogout = () => {
-    setUser(null);
-    setRole(null);
-    localStorage.removeItem('userId');
-    localStorage.removeItem('patientId');
-    navigate('/login');
+  const handleLogout = async () => {
+    try {
+      await auth.signOut();
+      setUser(null);
+      setRole(null);
+      localStorage.removeItem('userId');
+      localStorage.removeItem('patientId');
+      navigate('/login');
+    } catch (error) {
+      console.error('Register.js: Logout error:', error.message);
+      setError('Failed to log out. Please try again.');
+    }
   };
 
   const goToLogin = () => {
@@ -290,6 +264,7 @@ function Register({ setUser, setRole, user }) {
               required
               placeholder="Enter your age"
               min="1"
+              max="120"
             />
           </div>
           <div className="form-group">

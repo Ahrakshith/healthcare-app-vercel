@@ -27,7 +27,7 @@ if (!admin.apps.length) {
     });
     console.log('Firebase Admin initialized successfully in api/users/index.js');
   } catch (error) {
-    console.error('Firebase Admin initialization failed in api/users/index.js:', error.message);
+    console.error('Firebase Admin initialization failed in api/users/index.js:', error.message, error.stack);
     throw error;
   }
 }
@@ -50,7 +50,7 @@ try {
     console.log('Pusher initialized successfully in api/users/index.js');
   }
 } catch (error) {
-  console.error('Pusher initialization failed in api/users/index.js:', error.message);
+  console.error('Pusher initialization failed in api/users/index.js:', error.message, error.stack);
 }
 
 // Retry logic
@@ -60,7 +60,7 @@ async function operationWithRetry(operation, retries = 3, backoff = 1000) {
       return await operation();
     } catch (error) {
       if (attempt === retries) throw error;
-      console.warn(`Retry ${attempt}/${retries} failed in api/users/index.js: ${error.message}`);
+      console.warn(`Retry ${attempt}/${retries} failed in api/users/index.js: ${error.message}`, error.stack);
       await new Promise((resolve) => setTimeout(resolve, backoff * attempt));
     }
   }
@@ -226,11 +226,11 @@ export default async function handler(req, res) {
         displayName: name || email,
       });
     } catch (authError) {
+      console.error(`Firebase Auth error in api/users/index.js: ${authError.code}`, authError.stack);
       if (authError.code === 'auth/email-already-in-use') {
-        console.error(`Email already in use in api/users/index.js: ${email}`);
         return res.status(409).json({ error: { code: 409, message: 'This email is already registered' } });
       }
-      throw authError; // Re-throw other auth errors to be caught in the main catch block
+      throw authError; // Re-throw other auth errors
     }
 
     const uid = userRecord.uid;
@@ -248,8 +248,12 @@ export default async function handler(req, res) {
 
     // Trigger Pusher event (optional)
     if (pusher && role === 'doctor') {
-      await pusher.trigger('admin-channel', 'doctor-added', { [idField]: uniqueId, name: name || email });
-      console.log(`Pusher event 'doctor-added' triggered for ${idField}: ${uniqueId}`);
+      try {
+        await pusher.trigger('admin-channel', 'doctor-added', { [idField]: uniqueId, name: name || email });
+        console.log(`Pusher event 'doctor-added' triggered for ${idField}: ${uniqueId}`);
+      } catch (pusherError) {
+        console.warn(`Pusher trigger failed for doctor-added: ${pusherError.message}`, pusherError.stack);
+      }
     }
 
     return res.status(201).json({
@@ -259,15 +263,16 @@ export default async function handler(req, res) {
     });
   } catch (error) {
     console.error(`Error in /api/users for admin ${adminId}:`, error.message, error.stack);
+    let errorResponse = { error: { code: 500, message: 'Server error', details: error.message } };
     if (error.code === 'auth/email-already-in-use') {
-      return res.status(409).json({ error: { code: 409, message: 'This email is already registered' } });
+      errorResponse = { error: { code: 409, message: 'This email is already registered' } };
     } else if (error.code === 'auth/invalid-email') {
-      return res.status(400).json({ error: { code: 400, message: 'Invalid email address' } });
+      errorResponse = { error: { code: 400, message: 'Invalid email address' } };
     } else if (error.code === 'auth/weak-password') {
-      return res.status(400).json({ error: { code: 400, message: 'Password should be at least 6 characters long' } });
+      errorResponse = { error: { code: 400, message: 'Password should be at least 6 characters long' } };
     } else if (error.code === 'auth/invalid-id-token') {
-      return res.status(401).json({ error: { code: 401, message: 'Invalid authentication token' } });
+      errorResponse = { error: { code: 401, message: 'Invalid authentication token' } };
     }
-    return res.status(500).json({ error: { code: 500, message: 'Server error', details: error.message } });
+    return res.status(errorResponse.error.code).json(errorResponse);
   }
 }
