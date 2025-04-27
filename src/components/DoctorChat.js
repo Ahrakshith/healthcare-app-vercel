@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { collection, query, where, onSnapshot, getDocs, doc, getDoc, setDoc } from 'firebase/firestore';
@@ -801,6 +802,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           credentials: 'include',
         });
         if (!recordResponse.ok) {
+          console.error('Record storage failed:', await recordResponse.text());
           throw new Error(`HTTP ${recordResponse.status}: ${await recordResponse.text()}`);
         }
         console.log('Record stored successfully:', recordData);
@@ -1713,6 +1715,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           align-items: center;
           gap: 10px;
         }
+
 
         .missed-dose-alerts h3::before {
           content: '⚠️';

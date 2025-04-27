@@ -150,6 +150,7 @@ export default async function handler(req, res) {
   }
 
   try {
+    // Handle /api/doctors/records route
     if (req.url.includes('/records')) {
       return handleRecordsRequest(req, res, userId);
     }

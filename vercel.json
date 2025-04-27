@@ -73,7 +73,7 @@
     },
     {
       "source": "/api/doctors/records",
-      "destination": "/api/doctors/records"
+      "destination": "/api/doctors"
     },
     {
       "source": "/patient/chat/:patientId/:doctorId",
