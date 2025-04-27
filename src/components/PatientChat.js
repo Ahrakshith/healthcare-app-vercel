@@ -511,6 +511,8 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     }
   }, []);
 
+ // ... (previous code remains unchanged)
+
   const sendMissedDoseAlert = async () => {
     try {
       const idToken = await firebaseUser.getIdToken(true);
@@ -528,12 +530,9 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
 
       // Notify admin via API
       await notifyAdmin(
-        `Patient_${effectivePatientId}`,
-        'Doctor',
-        'Missed Doses Alert',
-        `Patient has missed 3 consecutive doses.`,
         effectivePatientId,
         doctorId,
+        alertData.message,
         effectiveUserId,
         idToken
       );
@@ -548,6 +547,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     }
   };
 
+  // ... (rest of the code remains unchanged)
   const handleConfirmReminder = async (id) => {
     try {
       const updatedReminders = reminders.map((reminder) =>
