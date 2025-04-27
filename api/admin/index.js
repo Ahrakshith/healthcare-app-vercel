@@ -380,13 +380,16 @@ const handleMissedDoseAlertsRequest = async (req, res, patientId, doctorId, user
 
 // Handler for admin notifications
 const handleAdminNotifyRequest = async (req, res, userId) => {
-  console.log('handleAdminNotifyRequest called with method:', req.method); // Debug log
-  if (req.method === 'POST') {
+  console.log(`[DEBUG] Entering handleAdminNotifyRequest with method: ${req.method}, URL: ${req.url}`);
+  console.log(`[DEBUG] Request headers: ${JSON.stringify(req.headers)}`);
+
+  if (req.method.toUpperCase() === 'POST') {
     try {
-      console.log('Received body:', req.body); // Debug log
+      console.log(`[DEBUG] Request body: ${JSON.stringify(req.body)}`);
       const { patientId, doctorId, message } = req.body;
 
       if (!patientId || !doctorId || !message) {
+        console.log(`[DEBUG] Missing required fields: patientId=${patientId}, doctorId=${doctorId}, message=${message}`);
         return res.status(400).json({ success: false, message: 'patientId, doctorId, and message are required' });
       }
 
@@ -397,11 +400,14 @@ const handleAdminNotifyRequest = async (req, res, userId) => {
 
       if (!patientQuery.empty && patientQuery.docs[0].data().patientId === patientId) {
         isAuthorized = true;
+        console.log(`[DEBUG] User ${userId} authorized as patient ${patientId}`);
       } else if (!doctorQuery.empty && doctorQuery.docs[0].data().doctorId === doctorId) {
         isAuthorized = true;
+        console.log(`[DEBUG] User ${userId} authorized as doctor ${doctorId}`);
       }
 
       if (!isAuthorized) {
+        console.log(`[DEBUG] User ${userId} not authorized for patient ${patientId} or doctor ${doctorId}`);
         return res.status(403).json({ success: false, message: 'You are not authorized to send this notification' });
       }
 
@@ -414,6 +420,7 @@ const handleAdminNotifyRequest = async (req, res, userId) => {
         timestamp: new Date().toISOString(),
         userId,
       });
+      console.log(`[DEBUG] Notification stored in Firestore with ID: ${notificationRef.id}`);
 
       // Trigger Pusher event to notify the doctor
       await pusher.trigger(`chat-${patientId}-${doctorId}`, 'admin-notification', {
@@ -423,6 +430,7 @@ const handleAdminNotifyRequest = async (req, res, userId) => {
         message,
         timestamp: new Date().toISOString(),
       });
+      console.log(`[DEBUG] Pusher event triggered for channel chat-${patientId}-${doctorId}`);
 
       console.log(`Admin notification sent for patient ${patientId} and doctor ${doctorId}`);
       return res.status(200).json({ success: true, message: 'Notification sent successfully' });
@@ -431,6 +439,7 @@ const handleAdminNotifyRequest = async (req, res, userId) => {
       return res.status(500).json({ success: false, message: 'Failed to send notification', details: error.message });
     }
   } else {
+    console.log(`[DEBUG] Method ${req.method} not allowed for /admin/notify`);
     res.setHeader('Allow', ['POST']);
     return res.status(405).json({ success: false, message: `Method ${req.method} Not Allowed for /admin/notify` });
   }
@@ -494,11 +503,13 @@ const handleAcceptPatientRequest = async (req, res, userId) => {
 
 // Main handler
 export default async function handler(req, res) {
+  console.log(`[DEBUG] Main handler called with method: ${req.method}, URL: ${req.url}`);
   res.setHeader('Access-Control-Allow-Origin', process.env.FRONTEND_URL || '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Authorization, x-user-uid, Content-Type, Accept');
 
   if (req.method === 'OPTIONS') {
+    console.log('[DEBUG] Handling OPTIONS request');
     return res.status(200).end();
   }
 
@@ -521,15 +532,19 @@ export default async function handler(req, res) {
     const { patientId, doctorId } = req.query;
 
     if (req.url.includes('/missed-doses')) {
+      console.log('[DEBUG] Routing to handleMissedDoseAlertsRequest');
       if (!patientId || !doctorId) {
         return res.status(400).json({ success: false, message: 'patientId and doctorId are required' });
       }
       return handleMissedDoseAlertsRequest(req, res, patientId, doctorId, userId);
     } else if (req.url.includes('/notify')) {
+      console.log('[DEBUG] Routing to handleAdminNotifyRequest');
       return handleAdminNotifyRequest(req, res, userId);
     } else if (req.url.includes('/accept-patient')) {
+      console.log('[DEBUG] Routing to handleAcceptPatientRequest');
       return handleAcceptPatientRequest(req, res, userId);
     } else {
+      console.log('[DEBUG] Routing to handleChatRequest');
       if (!patientId || !doctorId) {
         return res.status(400).json({ success: false, message: 'patientId and doctorId are required' });
       }
