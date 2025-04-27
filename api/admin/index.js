@@ -528,7 +528,7 @@ const handleDeleteDoctorRequest = async (req, res, userId) => {
       }
 
       // Verify the user is an admin
-      const adminQuery = await db.collection('users').where('uid', '==', userId).get();
+      const adminQuery = await db.collection('admins').where('uid', '==', userId).get();
       if (adminQuery.empty || adminQuery.docs[0].data().role !== 'admin') {
         return res.status(403).json({ success: false, message: 'Only admins can delete doctors' });
       }
@@ -581,7 +581,7 @@ const handleDeletePatientRequest = async (req, res, userId) => {
       }
 
       // Verify the user is an admin
-      const adminQuery = await db.collection('users').where('uid', '==', userId).get();
+      const adminQuery = await db.collection('admins').where('uid', '==', userId).get();
       if (adminQuery.empty || adminQuery.docs[0].data().role !== 'admin') {
         return res.status(403).json({ success: false, message: 'Only admins can delete patients' });
       }
@@ -627,29 +627,36 @@ const handleDeletePatientRequest = async (req, res, userId) => {
 const handleInvalidPrescriptionsRequest = async (req, res, userId) => {
   if (req.method === 'GET') {
     try {
-      // Verify the user is an admin
-      const adminQuery = await db.collection('users').where('uid', '==', userId).get();
-      console.log(`[DEBUG] Admin check for user ${userId}: Query result count = ${adminQuery.size}, UID queried: ${userId}`);
+      // Log the userId being queried
+      console.log(`[DEBUG] Verifying admin role for userId: ${userId}`);
+
+      // Verify the user is an admin by checking the 'admins' collection first
+      const adminQuery = await db.collection('admins').where('uid', '==', userId).get();
+      console.log(`[DEBUG] Admin query result in 'admins' collection: Query result count = ${adminQuery.size}, UID queried: ${userId}`);
+
       if (adminQuery.empty) {
-        console.log(`[DEBUG] No user document found for UID ${userId} in 'users' collection, checking 'admins' collection`);
-        const adminFallbackQuery = await db.collection('admins').where('uid', '==', userId).get();
-        if (adminFallbackQuery.empty) {
-          console.log(`[DEBUG] No admin document found for UID ${userId} in 'admins' collection`);
+        console.log(`[DEBUG] No admin document found for UID ${userId} in 'admins' collection, falling back to 'users' collection`);
+        const userQuery = await db.collection('users').where('uid', '==', userId).get();
+        console.log(`[DEBUG] User query result in 'users' collection: Query result count = ${userQuery.size}, UID queried: ${userId}`);
+
+        if (userQuery.empty) {
+          console.log(`[DEBUG] No user document found for UID ${userId} in 'users' collection`);
           return res.status(403).json({ success: false, message: 'Only admins can fetch invalid prescriptions', userFound: false });
         }
-        const adminDoc = adminFallbackQuery.docs[0];
-        const userRole = adminDoc.data().role;
-        console.log(`[DEBUG] User ${userId} role from 'admins' collection: ${userRole}`);
-        if (userRole !== 'admin') {
-          console.log(`[DEBUG] User ${userId} role (${userRole}) from 'admins' collection is not 'admin'`);
-          return res.status(403).json({ success: false, message: 'Only admins can fetch invalid prescriptions', userRole });
-        }
-      } else {
-        const userDoc = adminQuery.docs[0];
+
+        const userDoc = userQuery.docs[0];
         const userRole = userDoc.data().role;
         console.log(`[DEBUG] User ${userId} role from 'users' collection: ${userRole}`);
         if (userRole !== 'admin') {
           console.log(`[DEBUG] User ${userId} role (${userRole}) from 'users' collection is not 'admin'`);
+          return res.status(403).json({ success: false, message: 'Only admins can fetch invalid prescriptions', userRole });
+        }
+      } else {
+        const adminDoc = adminQuery.docs[0];
+        const userRole = adminDoc.data().role;
+        console.log(`[DEBUG] User ${userId} role from 'admins' collection: ${userRole}`);
+        if (userRole !== 'admin') {
+          console.log(`[DEBUG] User ${userId} role (${userRole}) from 'admins' collection is not 'admin'`);
           return res.status(403).json({ success: false, message: 'Only admins can fetch invalid prescriptions', userRole });
         }
       }
@@ -691,6 +698,7 @@ const handleInvalidPrescriptionsRequest = async (req, res, userId) => {
 // Main handler
 export default async function handler(req, res) {
   console.log(`[DEBUG] Main handler called with method: ${req.method}, URL: ${req.url}`);
+  console.log(`[DEBUG] Request headers: ${JSON.stringify(req.headers)}`);
   res.setHeader('Access-Control-Allow-Origin', process.env.FRONTEND_URL || '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Authorization, x-user-uid, Content-Type, Accept');
@@ -711,6 +719,7 @@ export default async function handler(req, res) {
   try {
     const token = authHeader.replace('Bearer ', '');
     const decodedToken = await admin.auth().verifyIdToken(token);
+    console.log(`[DEBUG] Decoded token UID: ${decodedToken.uid}, x-user-uid header: ${userId}`);
     if (decodedToken.uid !== userId) {
       console.error('User ID mismatch:', { tokenUid: decodedToken.uid, headerUid: userId });
       return res.status(403).json({ success: false, message: 'Unauthorized: Token does not match user' });
