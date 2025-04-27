@@ -648,35 +648,23 @@ function DoctorChat({ user, role, handleLogout, setError }) {
       return;
     }
 
-    setLoadingAudio(true);
-    let translatedText = null;
-    let audioUrlEn;
-    let audioUrlKn = null;
+    setLoadingAudio(false); // Disable audio processing as per request
+    const message = {
+      sender: 'doctor',
+      text: newMessage,
+      translatedText: null,
+      language: 'en',
+      recordingLanguage: 'en',
+      audioUrl: null,
+      audioUrlEn: null,
+      audioUrlKn: null,
+      timestamp: new Date().toISOString(),
+      doctorId,
+      patientId: selectedPatientId,
+    };
 
     try {
       const idToken = await getIdToken();
-      console.log('Converting text to speech in English');
-      audioUrlEn = await textToSpeechConvert(newMessage, 'en-US', user.uid, idToken);
-      if (languagePreference === 'kn') {
-        translatedText = await translateText(newMessage, 'en', 'kn', user.uid, idToken);
-        audioUrlKn = await textToSpeechConvert(translatedText, 'kn-IN', user.uid, idToken);
-        console.log('Translated text to Kannada:', translatedText);
-      }
-
-      const message = {
-        sender: 'doctor',
-        text: newMessage,
-        translatedText,
-        language: 'en',
-        recordingLanguage: 'en',
-        audioUrl: null,
-        audioUrlEn,
-        audioUrlKn,
-        timestamp: new Date().toISOString(),
-        doctorId,
-        patientId: selectedPatientId,
-      };
-
       const response = await fetch(`${apiBaseUrl}/chats/${selectedPatientId}/${doctorId}`, {
         method: 'POST',
         headers: {
@@ -704,7 +692,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
       setLoadingAudio(false);
       console.log('Finished sending message');
     }
-  }, [newMessage, selectedPatientId, user?.uid, doctorId, languagePreference, apiBaseUrl, setError]);
+  }, [newMessage, selectedPatientId, user?.uid, doctorId, apiBaseUrl, setError]);
 
   const sendAction = useCallback(
     async () => {
