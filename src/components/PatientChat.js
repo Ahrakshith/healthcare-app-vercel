@@ -9,7 +9,7 @@ import {
   playAudio,
 } from '../services/speech.js';
 import { verifyMedicine, notifyAdmin } from '../services/medicineVerify.js';
-import { doc, getDoc, collection, addDoc, getDocs, updateDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, collection, addDoc, getDocs, updateDoc, setDoc, getDoc } from 'firebase/firestore';
 import { db, auth } from '../services/firebase.js';
 import { signOut } from 'firebase/auth';
 
@@ -410,9 +410,14 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     let currentDate = new Date(startDate);
 
     while (currentDate <= endDate) {
+      const dateStr = currentDate.toISOString().split('T')[0]; // e.g., '2025-04-27'
+
+      // Reminder 1
       const scheduledDate1 = new Date(currentDate);
       scheduledDate1.setHours(time1.hours, time1.minutes, 0, 0);
       if (scheduledDate1 > new Date()) {
+        const reminder1Id = `${medicine}_${dateStr}_${time1Str.replace(/[:.\s]/g, '-')}`; // Deterministic ID
+        const reminder1Ref = doc(db, `patients/${effectivePatientId}/reminders`, reminder1Id);
         const reminder1 = {
           medicine,
           dosage,
@@ -422,19 +427,30 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           createdAt: new Date().toISOString(),
           patientId: effectivePatientId,
         };
+
         try {
-          const remindersRef = collection(db, `patients/${effectivePatientId}/reminders`);
-          const docRef = await addDoc(remindersRef, reminder1);
-          newReminders.push({ id: docRef.id, ...reminder1 });
+          // Check if reminder exists
+          const reminder1Snap = await getDoc(reminder1Ref);
+          if (reminder1Snap.exists()) {
+            console.log(`setupMedicationSchedule: Reminder ${reminder1Id} exists, updating`);
+            await setDoc(reminder1Ref, reminder1, { merge: true });
+          } else {
+            console.log(`setupMedicationSchedule: Creating reminder ${reminder1Id}`);
+            await setDoc(reminder1Ref, reminder1);
+          }
+          newReminders.push({ id: reminder1Id, ...reminder1 });
         } catch (err) {
-          console.error('setupMedicationSchedule: Failed to add reminder1:', err);
+          console.error('setupMedicationSchedule: Failed to add reminder1:', err.message);
           setError(`Failed to add reminder: ${err.message}`);
         }
       }
 
+      // Reminder 2
       const scheduledDate2 = new Date(currentDate);
       scheduledDate2.setHours(time2.hours, time2.minutes, 0, 0);
       if (scheduledDate2 > new Date()) {
+        const reminder2Id = `${medicine}_${dateStr}_${time2Str.replace(/[:.\s]/g, '-')}`; // Deterministic ID
+        const reminder2Ref = doc(db, `patients/${effectivePatientId}/reminders`, reminder2Id);
         const reminder2 = {
           medicine,
           dosage,
@@ -444,12 +460,20 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           createdAt: new Date().toISOString(),
           patientId: effectivePatientId,
         };
+
         try {
-          const remindersRef = collection(db, `patients/${effectivePatientId}/reminders`);
-          const docRef = await addDoc(remindersRef, reminder2);
-          newReminders.push({ id: docRef.id, ...reminder2 });
+          // Check if reminder exists
+          const reminder2Snap = await getDoc(reminder2Ref);
+          if (reminder2Snap.exists()) {
+            console.log(`setupMedicationSchedule: Reminder ${reminder2Id} exists, updating`);
+            await setDoc(reminder2Ref, reminder2, { merge: true });
+          } else {
+            console.log(`setupMedicationSchedule: Creating reminder ${reminder2Id}`);
+            await setDoc(reminder2Ref, reminder2);
+          }
+          newReminders.push({ id: reminder2Id, ...reminder2 });
         } catch (err) {
-          console.error('setupMedicationSchedule: Failed to add reminder2:', err);
+          console.error('setupMedicationSchedule: Failed to add reminder2:', err.message);
           setError(`Failed to add reminder: ${err.message}`);
         }
       }
@@ -457,9 +481,14 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       currentDate.setDate(currentDate.getDate() + 1);
     }
 
-    setReminders((prev) => [...prev, ...newReminders]);
-    scheduleReminders(newReminders);
-    console.log('setupMedicationSchedule: Added reminders:', newReminders);
+    if (newReminders.length > 0) {
+      setReminders((prev) => [...prev, ...newReminders]);
+      scheduleReminders(newReminders);
+      console.log('setupMedicationSchedule: Added reminders:', newReminders);
+    } else {
+      console.warn('setupMedicationSchedule: No new reminders added (all scheduled times in the past)');
+      setError('No future reminders scheduled. All times are in the past.');
+    }
   };
 
   const scheduleReminders = useCallback((remindersToSchedule) => {
@@ -525,45 +554,66 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     }
   }, []);
 
-  const sendMissedDoseAlert = async () => {
+  const sendMissedDoseAlert = async (retries = 3) => {
     if (!firebaseUser) {
       setError('User authentication failed. Cannot send missed dose alert.');
       return;
     }
 
-    try {
-      const idToken = await firebaseUser.getIdToken(true);
-      const alertData = {
-        patientId: effectivePatientId,
-        doctorId,
-        message: `Patient has missed 3 consecutive doses on ${new Date().toLocaleString()}.`,
-        timestamp: new Date().toISOString(),
-        userId: effectiveUserId,
-      };
+    const alertData = {
+      patientId: effectivePatientId,
+      doctorId,
+      message: `Patient has missed 3 consecutive doses on ${new Date().toLocaleString()}.`,
+      timestamp: new Date().toISOString(),
+      userId: effectiveUserId,
+    };
 
-      const alertRef = doc(collection(db, 'missed_dose_alerts'));
-      await setDoc(alertRef, alertData);
-
-      const notificationResponse = await notifyAdmin(
-        profileData?.name || 'Unknown Patient',
-        doctorName,
-        alertData.message,
-        effectivePatientId,
-        doctorId,
-        effectiveUserId,
-        idToken
-      );
-      if (!notificationResponse.success) {
-        throw new Error(notificationResponse.message || 'Failed to notify admin.');
-      }
-
-      setMissedDoseAlerts((prev) => [...prev, { id: alertRef.id, ...alertData }]);
-      console.log('Missed dose alert sent successfully:', alertData);
-    } catch (err) {
-      console.error('Failed to send missed dose alert:', err.message);
-      setError(`Failed to send missed dose alert: ${err.message}. Retrying in 5 seconds...`);
-      setTimeout(sendMissedDoseAlert, 5000);
+    // Validate alertData
+    if (!alertData.patientId || !alertData.doctorId || !alertData.message || !alertData.timestamp || !alertData.userId) {
+      console.error('sendMissedDoseAlert: Invalid alert data:', alertData);
+      setError('Failed to send missed dose alert: Invalid data provided.');
+      return;
     }
+
+    const attemptWrite = async (attempt) => {
+      try {
+        const alertRef = doc(collection(db, 'missed_dose_alerts'));
+        console.log(`sendMissedDoseAlert: Attempt ${attempt} - Writing to ${alertRef.path}`);
+        await setDoc(alertRef, alertData);
+        console.log(`sendMissedDoseAlert: Successfully wrote alert ${alertRef.id}`);
+
+        const idToken = await firebaseUser.getIdToken(true);
+        const notificationResponse = await notifyAdmin(
+          profileData?.name || 'Unknown Patient',
+          doctorName,
+          alertData.message,
+          effectivePatientId,
+          doctorId,
+          effectiveUserId,
+          idToken
+        );
+        if (!notificationResponse.success) {
+          throw new Error(notificationResponse.message || 'Failed to notify admin.');
+        }
+
+        setMissedDoseAlerts((prev) => [...prev, { id: alertRef.id, ...alertData }]);
+        console.log('Missed dose alert sent successfully:', alertData);
+      } catch (err) {
+        console.error(`sendMissedDoseAlert: Attempt ${attempt} failed:`, err.message);
+        if (attempt < retries) {
+          const delay = 1000 * Math.pow(2, attempt);
+          console.log(`sendMissedDoseAlert: Retrying in ${delay}ms...`);
+          setError(`Failed to send missed dose alert: ${err.message}. Retrying in ${delay / 1000} seconds...`);
+          await new Promise((resolve) => setTimeout(resolve, delay));
+          return attemptWrite(attempt + 1);
+        } else {
+          console.error('sendMissedDoseAlert: All retries failed:', err.message);
+          setError(`Failed to send missed dose alert after ${retries} attempts: ${err.message}`);
+        }
+      }
+    };
+
+    await attemptWrite(1);
   };
 
   const handleConfirmReminder = async (id) => {
@@ -1770,6 +1820,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           align-items: center;
           margin-bottom: 20px;
         }
+
 
         .sidebar-header h3 {
           font-size: 1.5rem;
