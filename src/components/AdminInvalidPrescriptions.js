@@ -7,73 +7,103 @@ function AdminInvalidPrescriptions() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  // Utility function to format prescription object into a string
+  const formatPrescription = (prescription) => {
+    if (!prescription || typeof prescription !== 'object') {
+      return 'N/A';
+    }
+    const { medicine, dosage, frequency, duration } = prescription;
+    return [
+      medicine ? `Medicine: ${medicine}` : '',
+      dosage ? `Dosage: ${dosage}` : '',
+      frequency ? `Frequency: ${frequency}` : '',
+      duration ? `Duration: ${duration}` : '',
+    ]
+      .filter(Boolean)
+      .join(', ');
+  };
+
   useEffect(() => {
     const adminId = localStorage.getItem('userId');
     if (!adminId) {
-      console.error('Admin ID not found in local storage');
+      console.error('AdminInvalidPrescriptions: Admin ID not found in local storage');
       setError('Admin ID not found. Please log in again.');
       return;
     }
 
+    const fetchInvalidPrescriptions = async (retries = 3, backoff = 1000) => {
+      setLoading(true);
+      setError('');
+      for (let attempt = 1; attempt <= retries; attempt++) {
+        try {
+          const baseApiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app';
+          const apiUrl = baseApiUrl.endsWith('/api') ? baseApiUrl.replace(/\/api$/, '') : baseApiUrl;
+          const idToken = await auth.currentUser?.getIdToken(true);
+          if (!idToken) throw new Error('Authentication token not available');
+
+          const response = await fetch(`${apiUrl}/api/admin/invalid-prescriptions`, {
+            headers: {
+              'Authorization': `Bearer ${idToken}`,
+              'x-user-uid': adminId,
+            },
+          });
+
+          const contentType = response.headers.get('content-type');
+          if (!contentType || !contentType.includes('application/json')) {
+            const text = await response.text();
+            console.error('AdminInvalidPrescriptions: Non-JSON response received:', {
+              status: response.status,
+              statusText: response.statusText,
+              contentType,
+              body: text.slice(0, 100),
+            });
+            throw new Error('Invalid response format: Expected JSON');
+          }
+
+          if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(`Failed to fetch invalid prescriptions: ${errorData.message || response.statusText}`);
+          }
+
+          const data = await response.json();
+          setInvalidPrescriptions(data.invalidPrescriptions || []);
+          break; // Success, exit retry loop
+        } catch (err) {
+          console.error(`AdminInvalidPrescriptions: Error fetching invalid prescriptions (attempt ${attempt}/${retries}):`, err);
+          if (attempt === retries) {
+            setError(`Error fetching invalid prescriptions: ${err.message}`);
+            setInvalidPrescriptions([]);
+          } else {
+            const delay = backoff * Math.pow(2, attempt - 1);
+            await new Promise((resolve) => setTimeout(resolve, delay));
+          }
+        } finally {
+          if (attempt === retries || !error) setLoading(false);
+        }
+      }
+    };
+
     const fetchPatients = async () => {
       try {
-        const baseApiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app';
-        const apiUrl = baseApiUrl.endsWith('/api') ? baseApiUrl.replace(/\/api$/, '') : baseApiUrl;
-        const idToken = await auth.currentUser?.getIdToken(true);
-        const response = await fetch(`${apiUrl}/api/patients`, {
-          headers: {
-            'Authorization': `Bearer ${idToken}`,
-            'x-user-uid': adminId,
-          },
-        });
-        if (!response.ok) throw new Error('Failed to fetch patients');
-        const patientList = await response.json();
-        // Create a map of patientId to patient data for quick lookup
-        const patientMap = patientList.reduce((map, patient) => {
-          map[patient.patientId] = patient;
+        const patientsSnapshot = await getDocs(collection(db, 'patients'));
+        const patientMap = patientsSnapshot.docs.reduce((map, doc) => {
+          const data = doc.data();
+          map[data.patientId] = data;
           return map;
         }, {});
         setPatients(patientMap);
       } catch (err) {
-        console.error('AdminInvalidPrescriptions: Error fetching patients:', err);
-        setError(`Error fetching patients: ${err.message}`);
+        console.error('AdminInvalidPrescriptions: Error fetching patients from Firestore:', err);
+        setError((prev) => prev || `Error fetching patient data: ${err.message}`);
       }
     };
 
-    const fetchInvalidPrescriptions = async () => {
-      setLoading(true);
-      setError('');
-      try {
-        const baseApiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app';
-        const apiUrl = baseApiUrl.endsWith('/api') ? baseApiUrl.replace(/\/api$/, '') : baseApiUrl;
-        const idToken = await auth.currentUser?.getIdToken(true);
-        const response = await fetch(`${apiUrl}/api/admin/invalid-prescriptions`, {
-          headers: {
-            'Authorization': `Bearer ${idToken}`,
-            'x-user-uid': adminId,
-          },
-        });
-        if (!response.ok) throw new Error('Failed to fetch invalid prescriptions');
-        const { invalidPrescriptions } = await response.json();
-        setInvalidPrescriptions(invalidPrescriptions);
-      } catch (err) {
-        console.error('AdminInvalidPrescriptions: Error fetching invalid prescriptions:', err);
-        setError(`Error fetching invalid prescriptions: ${err.message}`);
-        setInvalidPrescriptions([]);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    // Fetch patients first, then invalid prescriptions
     const initializeData = async () => {
       await fetchPatients();
       await fetchInvalidPrescriptions();
     };
 
     initializeData();
-    const interval = setInterval(fetchInvalidPrescriptions, 5000); // Poll every 5 seconds
-    return () => clearInterval(interval);
   }, []);
 
   return (
@@ -88,29 +118,27 @@ function AdminInvalidPrescriptions() {
               <th>Doctor ID</th>
               <th>Patient ID</th>
               <th>Patient Name</th>
-              <th>Age</th>
-              <th>Sex</th>
               <th>Diagnosis</th>
-              <th>Invalid Prescription</th>
+              <th>Prescription</th>
+              <th>Timestamp</th>
             </tr>
           </thead>
           <tbody>
             {invalidPrescriptions.length === 0 ? (
               <tr>
-                <td colSpan="7">No invalid prescriptions found.</td>
+                <td colSpan="6">No invalid prescriptions found.</td>
               </tr>
             ) : (
-              invalidPrescriptions.map((prescription, index) => {
-                const patient = patients[prescription.patientId] || {};
+              invalidPrescriptions.map((record, index) => {
+                const patient = patients[record.patientId] || {};
                 return (
-                  <tr key={`${prescription.doctorId}-${prescription.patientId}-${prescription.timestamp}-${index}`}>
-                    <td>{prescription.doctorId}</td>
-                    <td>{prescription.patientId}</td>
-                    <td>{patient.name || 'N/A'}</td>
-                    <td>{patient.age || 'N/A'}</td>
-                    <td>{patient.sex || 'N/A'}</td>
-                    <td>{prescription.diagnosis}</td>
-                    <td className="invalid-prescription">{prescription.prescription}</td>
+                  <tr key={`${record.doctorId}-${record.patientId}-${record.timestamp}-${index}`}>
+                    <td>{record.doctorId || 'N/A'}</td>
+                    <td>{record.patientId || 'N/A'}</td>
+                    <td>{patient.name || 'Unknown'}</td>
+                    <td>{record.diagnosis || 'N/A'}</td>
+                    <td className="invalid-prescription">{formatPrescription(record.prescription)}</td>
+                    <td>{new Date(record.timestamp).toLocaleString() || 'N/A'}</td>
                   </tr>
                 );
               })
