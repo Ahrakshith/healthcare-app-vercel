@@ -83,7 +83,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           name: doctorData.name || 'N/A',
           doctorId: doctorData.doctorId || 'N/A',
           email: doctorData.email || 'N/A',
-          avatar: doctorData.avatar || 'https://via.placeholder.com/100?text=Doctor', // Added avatar field
+          avatar: doctorData.avatar || 'https://via.placeholder.com/100?text=Doctor',
         });
         console.log('Doctor profile fetched successfully:', doctorData);
       } catch (err) {
@@ -650,7 +650,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
       return;
     }
 
-    setLoadingAudio(false); // Disable audio processing as per request
+    setLoadingAudio(false);
     const message = {
       sender: 'doctor',
       text: newMessage,
@@ -1018,6 +1018,14 @@ function DoctorChat({ user, role, handleLogout, setError }) {
                             <div className="message-block">
                               {languagePreference === 'en' ? (
                                 <>
+                                  {msg.imageUrl && (
+                                    <img
+                                      src={msg.imageUrl}
+                                      alt="Patient upload"
+                                      className="chat-image"
+                                      onError={() => console.error(`Failed to load image: ${msg.imageUrl}`)}
+                                    />
+                                  )}
                                   <p className="primary-text">{msg.text || 'No transcription'}</p>
                                   {msg.audioUrl && (
                                     <div className="audio-container">
@@ -1046,6 +1054,14 @@ function DoctorChat({ user, role, handleLogout, setError }) {
                                 </>
                               ) : (
                                 <>
+                                  {msg.imageUrl && (
+                                    <img
+                                      src={msg.imageUrl}
+                                      alt="Patient upload"
+                                      className="chat-image"
+                                      onError={() => console.error(`Failed to load image: ${msg.imageUrl}`)}
+                                    />
+                                  )}
                                   <p className="primary-text">{msg.text || 'No transcription'}</p>
                                   {msg.translatedText && (
                                     <p className="translated-text">English: {msg.translatedText}</p>
@@ -1773,6 +1789,13 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           gap: 8px;
         }
 
+        .chat-image {
+          max-width: 100%;
+          border-radius: 10px;
+          margin-bottom: 10px;
+          display: block;
+        }
+
         .primary-text {
           margin: 0;
           font-size: 1rem;
@@ -2142,6 +2165,8 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           cursor: pointer;
           transition: background 0.3s ease, transform 0.3s ease;
         }
+
+
 
         .submit-button:hover {
           background: #219653;
