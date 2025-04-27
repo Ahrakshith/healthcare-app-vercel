@@ -47,7 +47,7 @@ async function operationWithRetry(operation, retries = 3, backoff = 1000) {
 
 // Handler for storing doctor-patient records
 const handleRecordsRequest = async (req, res, userId) => {
-  if (req.method === 'POST') {
+  if (req.method === 'POST' || req.method === 'PUT') {
     try {
       const { doctorId, patientId, diagnosis, prescription } = req.body;
 
@@ -114,7 +114,10 @@ const handleRecordsRequest = async (req, res, userId) => {
       }
 
       console.log(`Record stored successfully for doctor ${doctorId} and patient ${patientId}`);
-      return res.status(200).json({ success: true, message: 'Record stored successfully' });
+      return res.status(req.method === 'POST' ? 201 : 200).json({
+        success: true,
+        message: `Record ${req.method === 'POST' ? 'created' : 'updated'} successfully`,
+      });
     } catch (error) {
       console.error(`Error storing record for user ${userId}:`, error.message);
       return res.status(500).json({
@@ -122,7 +125,7 @@ const handleRecordsRequest = async (req, res, userId) => {
       });
     }
   } else {
-    res.setHeader('Allow', ['POST']);
+    res.setHeader('Allow', ['POST', 'PUT']);
     return res.status(405).json({
       error: { code: 405, message: `Method ${req.method} Not Allowed for /doctors/records` }
     });
@@ -132,7 +135,7 @@ const handleRecordsRequest = async (req, res, userId) => {
 // Main handler
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', process.env.FRONTEND_URL || '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'x-user-uid, Content-Type, Authorization, Accept');
 
   if (req.method === 'OPTIONS') {
