@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { SPECIALTIES } from '../constants/specialties.js';
 
@@ -9,14 +9,13 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
   const [authLoading, setAuthLoading] = useState(true);
   const [loadingDoctorId, setLoadingDoctorId] = useState(null);
   const [error, setError] = useState('');
+  const [isLoggingOut, setIsLoggingOut] = useState(false); // New state to track logout
   const navigate = useNavigate();
 
   const baseApiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app';
-  // Ensure no double /api in the URL
   const apiBaseUrl = baseApiUrl.endsWith('/api') ? baseApiUrl.replace(/\/api$/, '') : baseApiUrl;
 
   useEffect(() => {
-    // Wait for auth state to stabilize
     const authTimeout = setTimeout(() => {
       if (!firebaseUser || !user || role !== 'patient' || !patientId) {
         console.log('SelectDoctor: Invalid auth state, redirecting to /login', {
@@ -30,64 +29,77 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
       } else {
         setAuthLoading(false);
       }
-    }, 500); // Delay to allow App.js to set auth state
+    }, 500);
 
     return () => clearTimeout(authTimeout);
   }, [firebaseUser, user, role, patientId, navigate]);
 
-  useEffect(() => {
-    if (authLoading) return; // Skip fetching until auth is confirmed
+  const fetchDoctors = useCallback(async () => {
+    if (isLoggingOut) {
+      console.log('SelectDoctor: Skipping fetchDoctors due to logout in progress');
+      return;
+    }
 
-    console.log('SelectDoctor: Fetching doctors for patient:', { patientId, uid: user.uid });
+    setLoading(true);
+    try {
+      const idToken = await firebaseUser.getIdToken(true);
+      const url = `${apiBaseUrl}/api/doctors?specialty=${encodeURIComponent(specialty)}`;
+      const response = await fetch(url, {
+        headers: {
+          'x-user-uid': user.uid,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'Authorization': `Bearer ${idToken}`,
+        },
+        credentials: 'include',
+      });
 
-    const fetchDoctors = async () => {
-      setLoading(true);
-      try {
-        const idToken = await firebaseUser.getIdToken(true);
-        const url = `${apiBaseUrl}/api/doctors?specialty=${encodeURIComponent(specialty)}`;
-        const response = await fetch(url, {
-          headers: {
-            'x-user-uid': user.uid,
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-            'Authorization': `Bearer ${idToken}`,
-          },
-          credentials: 'include',
-        });
-
-        if (!response.ok) {
-          const errorData = await response.text();
-          let errorMessage;
-          try {
-            const parsedError = JSON.parse(errorData);
-            errorMessage = parsedError.error?.message || response.statusText;
-          } catch (jsonError) {
-            errorMessage = `HTTP error! status: ${response.status}, response: ${errorData}`;
-          }
-          throw new Error(`Failed to fetch doctors: ${errorMessage}`);
+      if (!response.ok) {
+        const errorData = await response.text();
+        let errorMessage;
+        try {
+          const parsedError = JSON.parse(errorData);
+          errorMessage = parsedError.error?.message || response.statusText;
+        } catch (jsonError) {
+          errorMessage = `HTTP error! status: ${response.status}, response: ${errorData}`;
         }
+        throw new Error(`Failed to fetch doctors: ${errorMessage}`);
+      }
 
-        const data = await response.json();
-        console.log('SelectDoctor: Doctors fetched:', data.doctors);
-        setDoctors(data.doctors || []);
-        setError(
-          data.doctors.length === 0
-            ? specialty === 'All'
-              ? 'No doctors available at this time.'
-              : `No doctors found for specialty: ${specialty}.`
-            : ''
-        );
-      } catch (err) {
-        console.error('SelectDoctor: Fetch error:', err.message);
+      const data = await response.json();
+      console.log('SelectDoctor: Doctors fetched:', data.doctors);
+      setDoctors(data.doctors || []);
+      setError(
+        data.doctors.length === 0
+          ? specialty === 'All'
+            ? 'No doctors available at this time.'
+            : `No doctors found for specialty: ${specialty}.`
+          : ''
+      );
+    } catch (err) {
+      console.error('SelectDoctor: Fetch error:', err.message);
+      if (err.message.includes('auth/user-token-expired')) {
+        setError('Session expired. Please log in again.');
+        navigate('/login', { replace: true });
+      } else {
         setError(`Failed to load doctors: ${err.message}`);
         setDoctors([]);
-      } finally {
-        setLoading(false);
       }
-    };
+    } finally {
+      setLoading(false);
+    }
+  }, [specialty, user, firebaseUser, apiBaseUrl, isLoggingOut, navigate]);
 
+  useEffect(() => {
+    if (authLoading || isLoggingOut) return;
+
+    console.log('SelectDoctor: Fetching doctors for patient:', { patientId, uid: user.uid });
     fetchDoctors();
-  }, [specialty, user, firebaseUser, role, patientId, apiBaseUrl, authLoading]);
+
+    return () => {
+      console.log('SelectDoctor: Cleaning up fetchDoctors effect');
+    };
+  }, [fetchDoctors, authLoading, isLoggingOut, patientId, user.uid]);
 
   async function fetchWithRetry(url, options, retries = 3, backoff = 1000) {
     for (let attempt = 1; attempt <= retries; attempt++) {
@@ -141,37 +153,45 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
       navigate(`/patient/language-preference/${patientId}/${doctorId}`);
     } catch (err) {
       console.error('SelectDoctor: Error assigning doctor:', err.message);
-      setError(
-        `Error assigning doctor: ${
-          err.message.includes('404')
-            ? 'Doctor assignment endpoint not found. Please contact support.'
-            : err.message.includes('403')
-            ? 'Access denied. Please verify your role or log in again.'
-            : err.message.includes('400')
-            ? 'Invalid request. Please ensure all data is correct.'
-            : err.message
-        }`
-      );
+      if (err.message.includes('auth/user-token-expired')) {
+        setError('Session expired. Please log in again.');
+        navigate('/login', { replace: true });
+      } else {
+        setError(
+          `Error assigning doctor: ${
+            err.message.includes('404')
+              ? 'Doctor assignment endpoint not found. Please contact support.'
+              : err.message.includes('403')
+              ? 'Access denied. Please verify your role or log in again.'
+              : err.message.includes('400')
+              ? 'Invalid request. Please ensure all data is correct.'
+              : err.message
+          }`
+        );
+      }
     } finally {
       setLoadingDoctorId(null);
     }
   };
 
   const handleLogoutClick = async () => {
+    setIsLoggingOut(true); // Set flag to prevent further API calls
     try {
       await handleLogout();
       console.log('SelectDoctor: Logged out successfully');
+      navigate('/login', { replace: true }); // Ensure immediate redirect
     } catch (err) {
       console.error('SelectDoctor: Logout error:', err.message);
       setError('Failed to log out. Please try again.');
+      setIsLoggingOut(false);
     }
   };
 
-  if (authLoading) {
+  if (authLoading || isLoggingOut) {
     return (
       <div className="select-doctor-container">
         <p className="loading-message" role="status">
-          Loading authentication...
+          {isLoggingOut ? 'Logging out...' : 'Loading authentication...'}
         </p>
         <style>{`
           .select-doctor-container {
