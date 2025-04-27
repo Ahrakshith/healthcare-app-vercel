@@ -1,9 +1,5 @@
-// src/components/Register.js
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { createUserWithEmailAndPassword } from 'firebase/auth';
-import { doc, setDoc, getDocs, query, collection, where } from 'firebase/firestore';
-import { auth, db } from '../services/firebase.js';
 
 function Register({ setUser, setRole, user }) {
   const [email, setEmail] = useState('');
@@ -12,6 +8,7 @@ function Register({ setUser, setRole, user }) {
   const [sex, setSex] = useState('');
   const [age, setAge] = useState('');
   const [address, setAddress] = useState('');
+  const [languagePreference, setLanguagePreference] = useState('');
   const [patientId, setPatientId] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -21,41 +18,10 @@ function Register({ setUser, setRole, user }) {
 
   const { username: initialEmail, password: initialPassword } = location.state || {};
 
-  // Generate a unique 6-character alphanumeric patientId
-  const generatePatientId = async () => {
-    const characters = 'abcdefghijklmnopqrstuvwxyz0123456789';
-    let generatedId = '';
-    const patientIdsRef = collection(db, 'patients');
-
-    while (true) {
-      generatedId = '';
-      for (let i = 0; i < 6; i++) {
-        const randomIndex = Math.floor(Math.random() * characters.length);
-        generatedId += characters[randomIndex];
-      }
-
-      const q = query(patientIdsRef, where('patientId', '==', generatedId));
-      const querySnapshot = await getDocs(q);
-      if (querySnapshot.empty) break;
-      console.log(`Register.js: Generated patientId ${generatedId} already exists, regenerating...`);
-    }
-
-    return generatedId;
-  };
-
-  useEffect(() => {
+  // Set initial email and password if passed via location state
+  React.useEffect(() => {
     if (initialEmail) setEmail(initialEmail);
     if (initialPassword) setPassword(initialPassword);
-
-    generatePatientId()
-      .then((uniqueId) => {
-        setPatientId(uniqueId);
-        console.log('Register.js: Generated unique patientId:', uniqueId);
-      })
-      .catch((err) => {
-        console.error('Register.js: Error generating patientId:', err);
-        setError('Failed to generate patient ID. Please try again.');
-      });
   }, [initialEmail, initialPassword]);
 
   const handleRegister = async (e) => {
@@ -63,12 +29,12 @@ function Register({ setUser, setRole, user }) {
     setError('');
     setIsLoading(true);
 
+    // Frontend validation
     if (!termsAccepted) {
       setError('You must accept the terms and conditions.');
       setIsLoading(false);
       return;
     }
-
     if (!email.trim()) {
       setError('Email is required.');
       setIsLoading(false);
@@ -81,6 +47,11 @@ function Register({ setUser, setRole, user }) {
     }
     if (!password) {
       setError('Password is required.');
+      setIsLoading(false);
+      return;
+    }
+    if (password.length < 6) {
+      setError('Password should be at least 6 characters long.');
       setIsLoading(false);
       return;
     }
@@ -104,8 +75,8 @@ function Register({ setUser, setRole, user }) {
       setIsLoading(false);
       return;
     }
-    if (!patientId) {
-      setError('Patient ID generation failed. Please try again.');
+    if (!languagePreference) {
+      setError('Please select a language preference.');
       setIsLoading(false);
       return;
     }
@@ -113,86 +84,68 @@ function Register({ setUser, setRole, user }) {
     console.log('Register.js: Attempting registration with:', { email, password, role: 'patient' });
 
     try {
-      // Step 1: Register user with Firebase Authentication
-      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-      const firebaseUser = userCredential.user;
-      console.log('Register.js: User registered in Firebase Auth:', firebaseUser.uid);
-
-      // Step 2: Store user data in Firestore (users collection)
-      const userDocRef = doc(db, 'users', firebaseUser.uid);
+      // Prepare data for the API
       const userData = {
-        uid: firebaseUser.uid,
-        email,
         role: 'patient',
-        createdAt: new Date().toISOString(),
+        email,
+        password,
         name,
+        age,
         sex,
-        age: parseInt(age),
         address,
-        patientId,
+        languagePreference: languagePreference === 'Kannada' ? 'kn' : 'en',
       };
-      await setDoc(userDocRef, userData);
-      console.log('Register.js: User data stored in Firestore (users):', firebaseUser.uid);
 
-      // Step 3: Store patient data in Firestore (patients collection)
-      const patientDocRef = doc(db, 'patients', patientId);
-      const patientData = {
-        uid: firebaseUser.uid,
-        patientId,
-        name,
-        sex,
-        age: parseInt(age),
-        address,
-        createdAt: new Date().toISOString(),
-      };
-      await setDoc(patientDocRef, patientData);
-      console.log('Register.js: Patient data stored in Firestore (patients):', patientId);
+      // Call the backend API to register the user
+      const apiBaseUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
+      const response = await fetch(`${apiBaseUrl}/users`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          // Note: In a production environment, we might need an admin token here.
+          // For now, assuming the endpoint allows self-registration.
+        },
+        body: JSON.stringify(userData),
+        credentials: 'include',
+      });
 
-      // Step 4: Store patient profile in backend (assumed GCS or similar)
-      try {
-        const patientProfile = {
-          patientId,
-          name,
-          sex,
-          age: parseInt(age),
-          address,
-          uid: firebaseUser.uid,
-          createdAt: new Date().toISOString(),
-        };
+      const data = await response.json();
 
-        const response = await fetch('http://localhost:5005/store-patient-profile', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(patientProfile),
-          credentials: 'include', // Include credentials for session management
-        });
-
-        if (!response.ok) {
-          const errorText = await response.text();
-          throw new Error(`Failed to store patient profile: ${response.statusText} - ${errorText}`);
-        }
-
-        console.log('Register.js: Patient profile stored in backend:', patientId);
-      } catch (backendError) {
-        console.error('Register.js: Backend storage error:', backendError.message);
-        setError(`Registration successful, but failed to store patient profile in backend: ${backendError.message}`);
+      if (!response.ok) {
+        throw new Error(data.error.message || 'Registration failed');
       }
 
-      // Step 5: Update application state and redirect
-      const updatedUser = { uid: firebaseUser.uid, email, role: 'patient', patientId, name, sex, age, address };
+      console.log('Register.js: Registration successful:', data);
+
+      // Update patientId from the API response
+      setPatientId(data.patientId);
+
+      // Update application state
+      const updatedUser = {
+        uid: data.uid,
+        email,
+        role: 'patient',
+        patientId: data.patientId,
+        name,
+        sex,
+        age: parseInt(age),
+        address,
+        languagePreference: languagePreference === 'Kannada' ? 'kn' : 'en',
+      };
       setUser(updatedUser);
       setRole('patient');
-      localStorage.setItem('userId', firebaseUser.uid);
-      localStorage.setItem('patientId', patientId);
+      localStorage.setItem('userId', data.uid);
+      localStorage.setItem('patientId', data.patientId);
 
+      // Redirect to the homepage
       navigate('/');
     } catch (error) {
       console.error('Register.js: Registration error:', error.message);
-      if (error.code === 'auth/email-already-in-use') {
+      if (error.message.includes('already registered')) {
         setError('This email is already registered. Please login instead.');
-      } else if (error.code === 'auth/invalid-email') {
+      } else if (error.message.includes('Invalid email')) {
         setError('Please enter a valid Gmail address (e.g., example@gmail.com).');
-      } else if (error.code === 'auth/weak-password') {
+      } else if (error.message.includes('Password should be')) {
         setError('Password should be at least 6 characters long.');
       } else {
         setError(`Registration failed: ${error.message}`);
@@ -296,13 +249,26 @@ function Register({ setUser, setRole, user }) {
             />
           </div>
           <div className="form-group">
+            <label htmlFor="languagePreference">Language Preference</label>
+            <select
+              id="languagePreference"
+              value={languagePreference}
+              onChange={(e) => setLanguagePreference(e.target.value)}
+              required
+            >
+              <option value="" disabled>Select language</option>
+              <option value="English">English</option>
+              <option value="Kannada">Kannada</option>
+            </select>
+          </div>
+          <div className="form-group">
             <label htmlFor="patientId">Patient ID</label>
             <input
               type="text"
               id="patientId"
-              value={patientId}
+              value={patientId || (isLoading ? 'Generating...' : '')}
               readOnly
-              placeholder="Auto-generated Patient ID"
+              placeholder="Auto-generated after registration"
             />
           </div>
           {error && <p className="error-message">{error}</p>}
@@ -514,7 +480,7 @@ function Register({ setUser, setRole, user }) {
 
         .register-button {
           width: 150px;
-          height: 50px; /* Adjusted from circular to rectangular */
+          height: 50px;
           background: #ffffff;
           color: #6e48aa;
           border: none;
