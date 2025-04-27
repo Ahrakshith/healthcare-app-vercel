@@ -629,17 +629,29 @@ const handleInvalidPrescriptionsRequest = async (req, res, userId) => {
     try {
       // Verify the user is an admin
       const adminQuery = await db.collection('users').where('uid', '==', userId).get();
-      console.log(`[DEBUG] Admin check for user ${userId}: Query result count = ${adminQuery.size}`);
+      console.log(`[DEBUG] Admin check for user ${userId}: Query result count = ${adminQuery.size}, UID queried: ${userId}`);
       if (adminQuery.empty) {
-        console.log(`[DEBUG] No user document found for UID ${userId}`);
-        return res.status(403).json({ success: false, message: 'Only admins can fetch invalid prescriptions', userFound: false });
-      }
-      const userDoc = adminQuery.docs[0];
-      const userRole = userDoc.data().role;
-      console.log(`[DEBUG] User ${userId} role: ${userRole}`);
-      if (userRole !== 'admin') {
-        console.log(`[DEBUG] User ${userId} role (${userRole}) is not 'admin'`);
-        return res.status(403).json({ success: false, message: 'Only admins can fetch invalid prescriptions', userRole });
+        console.log(`[DEBUG] No user document found for UID ${userId} in 'users' collection, checking 'admins' collection`);
+        const adminFallbackQuery = await db.collection('admins').where('uid', '==', userId).get();
+        if (adminFallbackQuery.empty) {
+          console.log(`[DEBUG] No admin document found for UID ${userId} in 'admins' collection`);
+          return res.status(403).json({ success: false, message: 'Only admins can fetch invalid prescriptions', userFound: false });
+        }
+        const adminDoc = adminFallbackQuery.docs[0];
+        const userRole = adminDoc.data().role;
+        console.log(`[DEBUG] User ${userId} role from 'admins' collection: ${userRole}`);
+        if (userRole !== 'admin') {
+          console.log(`[DEBUG] User ${userId} role (${userRole}) from 'admins' collection is not 'admin'`);
+          return res.status(403).json({ success: false, message: 'Only admins can fetch invalid prescriptions', userRole });
+        }
+      } else {
+        const userDoc = adminQuery.docs[0];
+        const userRole = userDoc.data().role;
+        console.log(`[DEBUG] User ${userId} role from 'users' collection: ${userRole}`);
+        if (userRole !== 'admin') {
+          console.log(`[DEBUG] User ${userId} role (${userRole}) from 'users' collection is not 'admin'`);
+          return res.status(403).json({ success: false, message: 'Only admins can fetch invalid prescriptions', userRole });
+        }
       }
 
       // Fetch all doctor_patient_records
