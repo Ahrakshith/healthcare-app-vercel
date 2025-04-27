@@ -713,25 +713,6 @@ function DoctorChat({ user, role, handleLogout, setError }) {
         return;
       }
 
-      if (actionType === 'Prescription') {
-        const { medicine, dosage, frequency, duration } = prescription;
-        if (!medicine.trim() || !dosage.trim() || !frequency.trim() || !duration.trim()) {
-          const errorMsg = 'Please fill all prescription fields.';
-          setError(errorMsg);
-          console.error(errorMsg);
-          return;
-        }
-        const latestDiagnosisMessage = messages
-          .filter((msg) => msg.sender === 'doctor' && msg.diagnosis)
-          .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0];
-        if (!latestDiagnosisMessage) {
-          const errorMsg = 'Please provide a diagnosis first.';
-          setError(errorMsg);
-          console.error(errorMsg);
-          return;
-        }
-      }
-
       if (actionType === 'Combined' && (!diagnosis.trim() || !Object.values(prescription).every((v) => v.trim()))) {
         const errorMsg = 'Please fill all diagnosis and prescription fields.';
         setError(errorMsg);
@@ -740,14 +721,14 @@ function DoctorChat({ user, role, handleLogout, setError }) {
       }
 
       const prescriptionString =
-        actionType === 'Prescription' || actionType === 'Combined'
+        actionType === 'Combined'
           ? `${prescription.medicine}, ${prescription.dosage}, ${prescription.frequency}, ${prescription.duration} days`
           : undefined;
 
       const message = {
         sender: 'doctor',
         ...(actionType === 'Diagnosis' || actionType === 'Combined' ? { diagnosis } : {}),
-        ...(actionType === 'Prescription' || actionType === 'Combined' ? { prescription: { ...prescription } } : {}),
+        ...(actionType === 'Combined' ? { prescription: { ...prescription } } : {}),
         timestamp: new Date().toISOString(),
         doctorId,
         patientId: selectedPatientId,
@@ -781,7 +762,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           doctorId,
           patientId: selectedPatientId,
           ...(actionType === 'Diagnosis' || actionType === 'Combined' ? { diagnosis } : { diagnosis: null }),
-          ...(actionType === 'Prescription' || actionType === 'Combined' ? { prescription } : { prescription: null }),
+          ...(actionType === 'Combined' ? { prescription } : { prescription: null }),
         };
         const recordResponse = await fetch(`${apiBaseUrl}/doctors/records`, {
           method: 'POST',
@@ -800,9 +781,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
         console.log('Record stored successfully:', recordData);
 
         const selectedPatient = patients.find((p) => p.patientId === selectedPatientId);
-        const disease = actionType === 'Prescription' ? messages
-          .filter((msg) => msg.sender === 'doctor' && msg.diagnosis)
-          .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0]?.diagnosis : diagnosis;
+        const disease = actionType === 'Combined' ? diagnosis : null;
 
         console.log('Sending admin notification');
         const adminResponse = await fetch(`${apiBaseUrl}/admin/notify`, {
@@ -819,7 +798,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
             sex: selectedPatient?.sex || 'N/A',
             description: 'N/A',
             disease: disease || 'N/A',
-            medicine: (actionType === 'Prescription' || actionType === 'Combined') ? prescriptionString : undefined,
+            medicine: actionType === 'Combined' ? prescriptionString : undefined,
             doctorId,
           }),
           credentials: 'include',
@@ -837,7 +816,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
         console.error('Send action error:', err);
       }
     },
-    [actionType, diagnosis, prescription, selectedPatientId, doctorId, user?.uid, selectedPatientName, patients, messages, apiBaseUrl, setError]
+    [actionType, diagnosis, prescription, selectedPatientId, doctorId, user?.uid, selectedPatientName, patients, apiBaseUrl, setError]
   );
 
   const readAloud = useCallback(
@@ -882,13 +861,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
 
   const isValidPrescription = useCallback((prescription) => {
     console.log('Validating prescription:', prescription);
-    return (
-      prescription &&
-      prescription.medicine &&
-      prescription.dosage &&
-      prescription.frequency &&
-      prescription.duration
-    );
+    return false;
   }, []);
 
   const onLogout = useCallback(async () => {
@@ -1168,7 +1141,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
                                   ) : (
                                     <p className="missing-field">Diagnosis not provided.</p>
                                   )}
-                                  {msg.prescription && isValidPrescription(msg.prescription) ? (
+                                  {msg.prescription ? (
                                     <div>
                                       <strong>Prescription:</strong>{' '}
                                       {`${msg.prescription.medicine}, ${msg.prescription.dosage}, ${msg.prescription.frequency}, ${msg.prescription.duration}`}
