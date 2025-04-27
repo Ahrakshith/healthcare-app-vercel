@@ -101,9 +101,6 @@ function App() {
                 setPatientId(pid);
                 sessionStorage.setItem('patientId', pid);
                 console.log(`App: Set patientId=${pid} for patient role`);
-                // Clear any stored lastPath to prevent incorrect redirects
-                sessionStorage.removeItem('lastPath');
-                navigate('/patient/select-doctor', { replace: true });
               } else {
                 setPatientId(null);
                 sessionStorage.removeItem('patientId');
@@ -136,7 +133,7 @@ function App() {
       unsubscribeFirestoreRef.current();
       console.log('App: Cleaned up auth and Firestore listeners');
     };
-  }, [isLoggingOut, navigate]);
+  }, [isLoggingOut]);
 
   // Clear error on route change
   useEffect(() => {
@@ -160,7 +157,6 @@ function App() {
     setIsLoggingOut(false);
     sessionStorage.removeItem('userId');
     sessionStorage.removeItem('patientId');
-    sessionStorage.removeItem('lastPath');
     localStorage.removeItem('userId');
     localStorage.removeItem('patientId');
     navigate('/login', { replace: true });
