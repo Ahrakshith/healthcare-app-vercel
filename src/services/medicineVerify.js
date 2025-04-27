@@ -9,6 +9,9 @@ let cachedCsvData = null;
  * @returns {Promise<Array<Array<string>>>} The parsed CSV rows.
  */
 const fetchMedicineValidationCsv = async () => {
+  // Reset cache for debugging purposes (remove in production if not needed)
+  // cachedCsvData = null;
+
   if (cachedCsvData) {
     console.log('medicineVerify.js: Using cached CSV data');
     return cachedCsvData;
@@ -20,11 +23,15 @@ const fetchMedicineValidationCsv = async () => {
   try {
     const response = await fetch(csvPath);
     if (!response.ok) {
-      throw new Error(`Failed to fetch CSV: ${response.statusText}`);
+      throw new Error(`Failed to fetch CSV: ${response.status} ${response.statusText}`);
     }
 
     const csvText = await response.text();
-    console.log('medicineVerify.js: Successfully fetched medicine_validation.csv, parsing content...');
+    console.log('medicineVerify.js: Successfully fetched medicine_validation.csv, content length:', csvText.length);
+
+    if (!csvText.trim()) {
+      throw new Error('CSV file is empty');
+    }
 
     return new Promise((resolve, reject) => {
       Papa.parse(csvText, {
@@ -67,15 +74,24 @@ const fetchMedicineValidationCsv = async () => {
  * Verifies if a medicine is valid for a given disease based on the CSV data.
  * @param {string} disease - The disease to verify.
  * @param {string} medicine - The medicine to verify.
+ * @param {string} userId - The user's Firebase UID.
+ * @param {string} idToken - The Firebase ID token for authentication.
  * @returns {Promise<{ success: boolean, message: string }>} The verification result.
  */
-async function verifyMedicine(disease, medicine) {
+async function verifyMedicine(disease, medicine, userId, idToken) {
   try {
     // Input validation
     if (!disease || !medicine) {
       return {
         success: false,
         message: 'Both disease and medicine must be provided.',
+      };
+    }
+
+    if (!userId || !idToken) {
+      return {
+        success: false,
+        message: 'User authentication details (userId and idToken) are required.',
       };
     }
 
@@ -127,19 +143,24 @@ async function verifyMedicine(disease, medicine) {
  * @param {string} medicine - The prescribed medicine.
  * @param {string} patientId - The patient's ID.
  * @param {string} doctorId - The doctor's ID.
+ * @param {string} userId - The user's Firebase UID.
+ * @param {string} idToken - The Firebase ID token for authentication.
  * @returns {Promise<{ success: boolean, message: string }>} The notification result.
  */
-async function notifyAdmin(patientName, doctorName, disease, medicine, patientId, doctorId) {
+async function notifyAdmin(patientName, doctorName, disease, medicine, patientId, doctorId, userId, idToken) {
   try {
     // Input validation
-    if (!patientName || !doctorName || !disease || !medicine || !patientId || !doctorId) {
-      throw new Error('All fields (patientName, doctorName, disease, medicine, patientId, doctorId) are required to notify admin.');
+    if (!patientName || !doctorName || !disease || !medicine || !patientId || !doctorId || !userId || !idToken) {
+      throw new Error('All fields (patientName, doctorName, disease, medicine, patientId, doctorId, userId, idToken) are required to notify admin.');
     }
 
-    const response = await fetch('http://localhost:5005/notify-missed-dose', {
+    const apiBaseUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
+    const response = await fetch(`${apiBaseUrl}/admin/notify`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'x-user-uid': userId,
+        Authorization: `Bearer ${idToken}`,
       },
       body: JSON.stringify({
         patientId,
@@ -149,7 +170,7 @@ async function notifyAdmin(patientName, doctorName, disease, medicine, patientId
     });
 
     if (!response.ok) {
-      throw new Error(`Failed to notify admin: ${response.statusText}`);
+      throw new Error(`Failed to notify admin: ${response.status} ${response.statusText}`);
     }
 
     console.log('medicineVerify.js: Admin notified of invalid prescription.');

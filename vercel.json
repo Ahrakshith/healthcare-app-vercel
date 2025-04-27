@@ -9,6 +9,13 @@
         { "key": "Access-Control-Allow-Headers", "value": "Authorization, x-user-uid, Content-Type, Accept" },
         { "key": "Access-Control-Max-Age", "value": "86400" }
       ]
+    },
+    {
+      "source": "/data/(.*)",
+      "headers": [
+        { "key": "Access-Control-Allow-Origin", "value": "*" },
+        { "key": "Content-Type", "value": "text/csv" }
+      ]
     }
   ],
   "rewrites": [
@@ -57,8 +64,12 @@
       "destination": "/index.html"
     },
     {
+      "source": "/data/:path*",
+      "destination": "/data/:path*"
+    },
+    {
       "source": "/(.*)",
-      "destination": "/"
+      "destination": "/index.html"
     }
   ],
   "cleanUrls": true,

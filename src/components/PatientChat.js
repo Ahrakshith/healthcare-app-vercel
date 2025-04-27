@@ -547,6 +547,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       setError(`Failed to send missed dose alert: ${err.message}`);
     }
   };
+
   const handleConfirmReminder = async (id) => {
     try {
       const updatedReminders = reminders.map((reminder) =>
@@ -614,59 +615,53 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     }
   };
 
- const validatePrescription = async (diagnosis, prescription, timestamp) => {
-  if (!diagnosis || !prescription) {
-    setValidationResult((prev) => ({
-      ...prev,
-      [timestamp]: 'Diagnosis or prescription is missing.',
-    }));
-    return;
-  }
+  // ... (previous code remains unchanged)
 
-  const medicine = typeof prescription === 'object' ? prescription.medicine : prescription;
+  const validatePrescription = async (diagnosis, prescription, timestamp) => {
+    console.log('Validating prescription:', { diagnosis, prescription, timestamp });
 
-  try {
-    const isValid = await verifyMedicine(diagnosis, medicine);
-    if (isValid.success) {
+    if (!diagnosis || !prescription) {
+      console.warn('Diagnosis or prescription missing:', { diagnosis, prescription });
       setValidationResult((prev) => ({
         ...prev,
-        [timestamp]: `Prescription "${medicine}" is valid for diagnosis "${diagnosis}".`,
+        [timestamp]: 'Diagnosis or prescription is missing.',
       }));
-    } else {
-      setValidationResult((prev) => ({
-        ...prev,
-        [timestamp]: `Invalid prescription "${medicine}" for diagnosis "${diagnosis}".`,
-      }));
-      const idToken = await firebaseUser.getIdToken(true);
-      await notifyAdmin(
-        `Patient_${effectivePatientId}`,
-        'Doctor',
-        diagnosis,
-        medicine,
-        effectivePatientId,
-        doctorId,
-        effectiveUserId,
-        idToken
-      );
+      return;
     }
-  } catch (error) {
-    setValidationResult((prev) => ({
-      ...prev,
-      [timestamp]: `Error validating prescription: ${error.message}`,
-    }));
-    const idToken = await firebaseUser.getIdToken(true);
-    await notifyAdmin(
-      `Patient_${effectivePatientId}`,
-      'Doctor',
-      diagnosis,
-      medicine,
-      effectivePatientId,
-      doctorId,
-      effectiveUserId,
-      idToken
-    );
-  }
-};
+
+    const medicine = typeof prescription === 'object' ? prescription.medicine : prescription;
+    console.log('Extracted medicine:', medicine);
+
+    try {
+      const idToken = await firebaseUser.getIdToken(true);
+      const isValid = await verifyMedicine(diagnosis, medicine, effectiveUserId, idToken);
+      console.log('verifyMedicine response:', isValid);
+
+      if (isValid.success) {
+        setValidationResult((prev) => ({
+          ...prev,
+          [timestamp]: `Prescription "${medicine}" is valid for diagnosis "${diagnosis}".`,
+        }));
+      } else {
+        setValidationResult((prev) => ({
+          ...prev,
+          [timestamp]: `Invalid prescription "${medicine}" for diagnosis "${diagnosis}".`,
+        }));
+        const notificationMessage = `Invalid prescription: "${medicine}" for diagnosis "${diagnosis}" (Patient: ${effectivePatientId}, Doctor: ${doctorId})`;
+        await notifyAdmin(effectivePatientId, doctorId, notificationMessage, effectiveUserId, idToken);
+      }
+    } catch (error) {
+      console.error('Error in validatePrescription:', error.message);
+      setValidationResult((prev) => ({
+        ...prev,
+        [timestamp]: `Error validating prescription: ${error.message}`,
+      }));
+      const notificationMessage = `Error validating prescription: ${error.message} (Diagnosis: ${diagnosis}, Medicine: ${medicine}, Patient: ${effectivePatientId}, Doctor: ${doctorId})`;
+      await notifyAdmin(effectivePatientId, doctorId, notificationMessage, effectiveUserId, idToken);
+    }
+  };
+
+  // ... (rest of the code remains unchanged
   const retryUpload = async (audioBlob, language) => {
     if (!firebaseUser || !audioBlob || !language) {
       setError('Invalid retry data or user session. Please log in again.');
@@ -2040,7 +2035,6 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           transform: translateY(-2px);
           box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
         }
-
         .message-block {
           display: flex;
           flex-direction: column;
