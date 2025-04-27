@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Pusher from 'pusher-js';
@@ -10,7 +9,7 @@ import {
   playAudio,
 } from '../services/speech.js';
 import { verifyMedicine, notifyAdmin } from '../services/medicineVerify.js';
-import { doc, getDoc, collection, addDoc, getDocs, updateDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, collection, getDocs, updateDoc, setDoc, getDoc } from 'firebase/firestore';
 import { db, auth } from '../services/firebase.js';
 import { signOut } from 'firebase/auth';
 
@@ -97,7 +96,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     return () => timers.forEach(clearTimeout);
   }, [missedDoseAlerts]);
 
-  // Validate user state and fetch patient and doctor's data
+  // Validate user state and fetch patient and doctor data
   useEffect(() => {
     if (!firebaseUser || !effectiveUserId || !effectivePatientId || !doctorId || role !== 'patient') {
       console.log('PatientChat: Invalid user state or missing params, redirecting to /login', {
@@ -411,13 +410,13 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     let currentDate = new Date(startDate);
 
     while (currentDate <= endDate) {
-      const dateStr = currentDate.toISOString().split('T')[0];
+      const dateStr = currentDate.toISOString().split('T')[0]; // e.g., '2025-04-27'
 
       // Reminder 1
       const scheduledDate1 = new Date(currentDate);
       scheduledDate1.setHours(time1.hours, time1.minutes, 0, 0);
       if (scheduledDate1 > new Date()) {
-        const reminder1Id = `${medicine}_${dateStr}_${time1Str.replace(/[:.\s]/g, '-')}`;
+        const reminder1Id = `${medicine}_${dateStr}_${time1Str.replace(/[:.\s]/g, '-')}`; // Deterministic ID
         const reminder1Ref = doc(db, `patients/${effectivePatientId}/reminders`, reminder1Id);
         const reminder1 = {
           medicine,
@@ -449,7 +448,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       const scheduledDate2 = new Date(currentDate);
       scheduledDate2.setHours(time2.hours, time2.minutes, 0, 0);
       if (scheduledDate2 > new Date()) {
-        const reminder2Id = `${medicine}_${dateStr}_${time2Str.replace(/[:.\s]/g, '-')}`;
+        const reminder2Id = `${medicine}_${dateStr}_${time2Str.replace(/[:.\s]/g, '-')}`; // Deterministic ID
         const reminder2Ref = doc(db, `patients/${effectivePatientId}/reminders`, reminder2Id);
         const reminder2 = {
           medicine,
@@ -553,65 +552,66 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     }
   }, []);
 
-  const sendMissedDoseAlert = async (retries = 3) => {
+  const writeWithRetry = async (ref, data, options, retries = 3) => {
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        await setDoc(ref, data, options);
+        console.log(`Firestore write successful for ${ref.path} on attempt ${attempt}`);
+        return;
+      } catch (error) {
+        console.warn(`Retry ${attempt}/${retries} failed for ${ref.path}: ${error.message}`);
+        if (attempt === retries) throw error;
+        await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+      }
+    }
+  };
+
+  const sendMissedDoseAlert = async () => {
     if (!firebaseUser) {
       setError('User authentication failed. Cannot send missed dose alert.');
       return;
     }
 
-    const alertData = {
-      patientId: effectivePatientId,
-      doctorId,
-      message: `Patient has missed 3 consecutive doses on ${new Date().toLocaleString()}.`,
-      timestamp: new Date().toISOString(),
-      userId: effectiveUserId,
-    };
-
-    if (!alertData.patientId || !alertData.doctorId || !alertData.message || !alertData.timestamp || !alertData.userId) {
-      console.error('sendMissedDoseAlert: Invalid alert data:', alertData);
-      setError('Failed to send missed dose alert: Invalid data provided.');
+    if (!effectivePatientId || !doctorId) {
+      setError('Invalid patient or doctor ID. Cannot send missed dose alert.');
+      console.error('sendMissedDoseAlert: Invalid IDs', { effectivePatientId, doctorId });
       return;
     }
 
-    const attemptWrite = async (attempt) => {
-      try {
-        const alertRef = doc(collection(db, 'missed_dose_alerts'));
-        console.log(`sendMissedDoseAlert: Attempt ${attempt} - Writing to ${alertRef.path}`);
-        await setDoc(alertRef, alertData);
-        console.log(`sendMissedDoseAlert: Successfully wrote alert ${alertRef.id}`);
+    try {
+      const idToken = await firebaseUser.getIdToken(true);
+      const alertData = {
+        patientId: effectivePatientId,
+        doctorId,
+        message: `Patient has missed 3 consecutive doses on ${new Date().toLocaleString()}.`,
+        timestamp: new Date().toISOString(),
+        userId: effectiveUserId,
+      };
 
-        const idToken = await firebaseUser.getIdToken(true);
-        const notificationResponse = await notifyAdmin(
-          profileData?.name || 'Unknown Patient',
-          doctorName,
-          alertData.message,
-          effectivePatientId,
-          doctorId,
-          effectiveUserId,
-          idToken
-        );
-        if (!notificationResponse.success) {
-          throw new Error(notificationResponse.message || 'Failed to notify admin.');
-        }
+      console.log('sendMissedDoseAlert: Preparing to write alert:', alertData);
+      const alertRef = doc(collection(db, 'missed_dose_alerts'));
+      await writeWithRetry(alertRef, alertData, {});
 
-        setMissedDoseAlerts((prev) => [...prev, { id: alertRef.id, ...alertData }]);
-        console.log('Missed dose alert sent successfully:', alertData);
-      } catch (err) {
-        console.error(`sendMissedDoseAlert: Attempt ${attempt} failed:`, err.message);
-        if (attempt < retries) {
-          const delay = 1000 * Math.pow(2, attempt);
-          console.log(`sendMissedDoseAlert: Retrying in ${delay}ms...`);
-          setError(`Failed to send missed dose alert: ${err.message}. Retrying in ${delay / 1000} seconds...`);
-          await new Promise((resolve) => setTimeout(resolve, delay));
-          return attemptWrite(attempt + 1);
-        } else {
-          console.error('sendMissedDoseAlert: All retries failed:', err.message);
-          setError(`Failed to send missed dose alert after ${retries} attempts: ${err.message}`);
-        }
+      const notificationResponse = await notifyAdmin(
+        profileData?.name || 'Unknown Patient',
+        doctorName,
+        alertData.message,
+        effectivePatientId,
+        doctorId,
+        effectiveUserId,
+        idToken
+      );
+      if (!notificationResponse.success) {
+        throw new Error(notificationResponse.message || 'Failed to notify admin.');
       }
-    };
 
-    await attemptWrite(1);
+      setMissedDoseAlerts((prev) => [...prev, { id: alertRef.id, ...alertData }]);
+      console.log('Missed dose alert sent successfully:', alertData);
+    } catch (err) {
+      console.error('Failed to send missed dose alert:', err.message);
+      setError(`Failed to send missed dose alert: ${err.message}. Retrying in 5 seconds...`);
+      setTimeout(sendMissedDoseAlert, 5000);
+    }
   };
 
   const handleConfirmReminder = async (id) => {
@@ -1830,23 +1830,30 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           color: #FFFFFF;
           font-size: 1.5rem;
           cursor: pointer;
+          transition: transform 0.3s ease;
+        }
+
+        .close-menu:hover {
+          transform: scale(1.1);
         }
 
         .menu-list {
           list-style: none;
+          padding: 0;
         }
 
         .menu-list li {
-          padding: 10px;
-          color: #E0E0E0;
-          font-size: 1.1rem;
+          padding: 15px;
+          background: rgba(255, 255, 255, 0.1);
+          border-radius: 10px;
+          margin-bottom: 10px;
           cursor: pointer;
-          border-radius: 5px;
-          transition: background 0.3s ease;
+          transition: background 0.3s ease, transform 0.3s ease;
         }
 
         .menu-list li:hover {
-          background: rgba(255, 255, 255, 0.1);
+          background: rgba(255, 255, 255, 0.2);
+          transform: translateX(5px);
         }
 
         .menu-list li.active {
@@ -1858,21 +1865,16 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           flex: 1;
           display: flex;
           flex-direction: column;
-          padding: 20px;
+          padding: 20px 30px;
           overflow-y: auto;
         }
 
         .doctor-prompt {
-          background: rgba(255, 255, 255, 0.1);
+          background: rgba(255, 255, 255, 0.05);
           padding: 15px;
           border-radius: 10px;
           margin-bottom: 20px;
           text-align: center;
-        }
-
-        .doctor-prompt p {
-          margin-bottom: 10px;
-          font-size: 1.1rem;
         }
 
         .doctor-prompt button {
@@ -1881,34 +1883,56 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           background: #6E48AA;
           color: #FFFFFF;
           border: none;
-          border-radius: 25px;
+          border-radius: 20px;
           cursor: pointer;
           transition: background 0.3s ease;
         }
 
         .doctor-prompt button:hover {
-          background: #54378A;
+          background: #5A3E8B;
         }
 
         .profile-section,
         .reminders-section,
         .recommendations-section {
           background: rgba(255, 255, 255, 0.05);
+          backdrop-filter: blur(10px);
+          border-radius: 15px;
           padding: 20px;
-          border-radius: 10px;
           margin-bottom: 20px;
+          border: 1px solid rgba(255, 255, 255, 0.1);
         }
 
         .profile-section h3,
         .reminders-section h3,
         .recommendations-section h3 {
-          font-size: 1.5rem;
-          margin-bottom: 15px;
+          font-size: 1.4rem;
+          font-weight: 600;
           color: #FFFFFF;
+          margin-bottom: 15px;
+          display: flex;
+          align-items: center;
+          gap: 10px;
+        }
+
+        .profile-section h3::before {
+          content: '👤';
+          font-size: 1.4rem;
+        }
+
+        .reminders-section h3::before {
+          content: '⏰';
+          font-size: 1.4rem;
+        }
+
+        .recommendations-section h3::before {
+          content: '⚕️';
+          font-size: 1.4rem;
         }
 
         .profile-section p,
-        .reminders-section p {
+        .reminders-section p,
+        .recommendations-section p {
           font-size: 1rem;
           margin-bottom: 10px;
         }
@@ -1918,19 +1942,90 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           background: #6E48AA;
           color: #FFFFFF;
           border: none;
-          border-radius: 25px;
+          border-radius: 20px;
+          font-size: 1rem;
+          font-weight: 500;
           cursor: pointer;
-          margin-top: 15px;
-          transition: background 0.3s ease;
+          transition: background 0.3s ease, transform 0.3s ease;
+          margin-top: 10px;
         }
 
         .close-section-button:hover {
-          background: #54378A;
+          background: #5A3E8B;
+          transform: scale(1.05);
+        }
+
+        .reminders-table {
+          width: 100%;
+          border-collapse: collapse;
+        }
+
+        .table-header,
+        .table-row {
+          display: flex;
+          justify-content: space-between;
+          padding: 10px;
+          border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .table-header {
+          font-weight: 600;
+          color: #FFFFFF;
+          background: rgba(255, 255, 255, 0.1);
+          border-radius: 10px 10px 0 0;
+        }
+
+        .table-row {
+          background: rgba(255, 255, 255, 0.05);
+        }
+
+        .table-header span,
+        .table-row span {
+          flex: 1;
+          text-align: center;
+        }
+
+        .table-row span:last-child {
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          gap: 10px;
+        }
+
+        .confirm-button {
+          padding: 5px 10px;
+          background: #27AE60;
+          color: #FFFFFF;
+          border: none;
+          border-radius: 10px;
+          cursor: pointer;
+        }
+
+        .confirm-button:hover {
+          background: #219653;
+        }
+
+        .snooze-button {
+          padding: 5px 10px;
+          background: #F39C12;
+          color: #FFFFFF;
+          border: none;
+          border-radius: 10px;
+          cursor: pointer;
+        }
+
+        .snooze-button:hover {
+          background: #E67E22;
         }
 
         .missed-dose-alerts {
+          background: rgba(231, 76, 60, 0.1);
+          border-radius: 10px;
+          padding: 15px;
           margin-bottom: 20px;
+          border: 1px solid rgba(231, 76, 60, 0.3);
         }
+
         .alert-item {
           background: rgba(231, 76, 60, 0.2);
           border-radius: 8px;
