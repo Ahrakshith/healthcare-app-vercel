@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom';
 import { collection, query, where, onSnapshot, getDocs, doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../services/firebase.js';
-import { getAuth } from 'firebase/auth';
+import { getAuth, signOut } from 'firebase/auth';
 import Pusher from 'pusher-js';
 import { transcribeAudio, translateText, textToSpeechConvert, playAudio } from '../services/speech.js';
 
@@ -887,7 +887,16 @@ function DoctorChat({ user, role, handleLogout, setError }) {
   const onLogout = useCallback(async () => {
     console.log('Logging out user:', user?.uid);
     try {
-      await handleLogout();
+      await signOut(auth);
+      await fetch(`${apiBaseUrl}/misc/logout`, {
+        method: 'POST',
+        headers: {
+          'x-user-uid': user?.uid,
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+      });
+      if (handleLogout) handleLogout();
       navigate('/login', { replace: true });
       console.log('Logout successful');
     } catch (err) {
@@ -895,7 +904,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
       setError(errorMsg);
       console.error('Logout error:', err);
     }
-  }, [handleLogout, navigate, setError]);
+  }, [auth, apiBaseUrl, user?.uid, handleLogout, navigate, setError]);
 
   const patientList = useMemo(() => (
     <ul className="patient-list">
