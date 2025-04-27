@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { auth } from '../services/firebase.js';
+import { auth, db } from '../services/firebase.js';
+import { collection, getDocs } from 'firebase/firestore';
 
 function AdminCases() {
   const [cases, setCases] = useState([]);
@@ -33,45 +34,19 @@ function AdminCases() {
 
     const fetchPatients = async () => {
       try {
-        const baseApiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app';
-        const apiUrl = baseApiUrl.endsWith('/api') ? baseApiUrl.replace(/\/api$/, '') : baseApiUrl;
-        const idToken = await auth.currentUser?.getIdToken(true);
-        if (!idToken) throw new Error('Authentication token not available');
-
-        const response = await fetch(`${apiUrl}/api/patients`, {
-          headers: {
-            'Authorization': `Bearer ${idToken}`,
-            'x-user-uid': adminId,
-          },
-        });
-
-        // Check if response is JSON
-        const contentType = response.headers.get('content-type');
-        if (!contentType || !contentType.includes('application/json')) {
-          const text = await response.text();
-          console.error('AdminCases: Non-JSON response received from /api/patients:', {
-            status: response.status,
-            statusText: response.statusText,
-            contentType,
-            body: text.slice(0, 100), // Log first 100 chars of body
-          });
-          throw new Error('Invalid response format: Expected JSON');
-        }
-
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(`Failed to fetch patients: ${errorData.message || response.statusText}`);
-        }
-
-        const patientList = await response.json();
-        // Create a map of patientId to patient data for quick lookup
-        const patientMap = patientList.reduce((map, patient) => {
-          map[patient.patientId] = patient;
+        const patientsSnapshot = await getDocs(collection(db, 'patients'));
+        const patientMap = patientsSnapshot.docs.reduce((map, doc) => {
+          const data = doc.data();
+          map[data.patientId] = {
+            name: data.name || 'Unknown',
+            age: data.age || 'N/A',
+            sex: data.sex || 'N/A',
+          };
           return map;
         }, {});
         setPatients(patientMap);
       } catch (err) {
-        console.error('AdminCases: Error fetching patients:', err);
+        console.error('AdminCases: Error fetching patients from Firestore:', err);
         setError(`Error fetching patient data: ${err.message}`);
       }
     };
@@ -92,7 +67,6 @@ function AdminCases() {
           },
         });
 
-        // Check if response is JSON
         const contentType = response.headers.get('content-type');
         if (!contentType || !contentType.includes('application/json')) {
           const text = await response.text();
@@ -100,7 +74,7 @@ function AdminCases() {
             status: response.status,
             statusText: response.statusText,
             contentType,
-            body: text.slice(0, 100), // Log first 100 chars of body
+            body: text.slice(0, 100),
           });
           throw new Error('Invalid response format: Expected JSON');
         }
@@ -121,15 +95,12 @@ function AdminCases() {
       }
     };
 
-    // Fetch patients first, then cases
     const initializeData = async () => {
       await fetchPatients();
       await fetchCases();
     };
 
     initializeData();
-    const interval = setInterval(fetchCases, 5000); // Poll every 5 seconds
-    return () => clearInterval(interval);
   }, []);
 
   return (
