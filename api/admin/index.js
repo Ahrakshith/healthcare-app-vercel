@@ -651,29 +651,43 @@ const handleInvalidPrescriptionsRequest = async (req, res, userId) => {
         return res.status(403).json({ success: false, message: 'Only admins can fetch invalid prescriptions', userRole });
       }
 
-      // Fetch all doctor_patient_records
-      const recordsSnapshot = await db.collection('doctor_patient_records').get();
+      // Fetch all notifications
+      const notificationsSnapshot = await db.collection('notifications').get();
       const invalidRecords = [];
 
-      for (const doc of recordsSnapshot.docs) {
+      for (const doc of notificationsSnapshot.docs) {
         const data = doc.data();
-        const { doctorId, patientId, records } = data;
+        const { message, patientId, doctorId, timestamp } = data;
 
-        // Filter records where valid is false
-        const invalidEntries = records
-          .filter((record) => record.valid === false && record.prescription)
-          .map((record) => ({
-            doctorId,
-            patientId,
-            diagnosis: record.diagnosis || 'N/A',
-            prescription: record.prescription,
-            timestamp: record.timestamp,
-          }));
+        // Check if the message indicates an invalid prescription
+        if (message && message.startsWith('Invalid prescription:')) {
+          // Parse the message to extract prescription and diagnosis
+          // Expected format: "Invalid prescription: \"{prescription}\" for diagnosis \"{diagnosis}\" (Patient: {patientId}, Doctor: {doctorId})"
+          const prescriptionMatch = message.match(/Invalid prescription: "([^"]+)" for diagnosis "([^"]+)"/);
+          if (prescriptionMatch) {
+            const prescriptionText = prescriptionMatch[1]; // e.g., "Acne cream"
+            const diagnosis = prescriptionMatch[2]; // e.g., "Acne"
 
-        invalidRecords.push(...invalidEntries);
+            // Create a prescription object compatible with the frontend
+            const prescription = {
+              medicine: prescriptionText,
+              dosage: 'N/A', // Not provided in the notification
+              frequency: 'N/A',
+              duration: 'N/A',
+            };
+
+            invalidRecords.push({
+              doctorId: doctorId || 'N/A',
+              patientId: patientId || 'N/A',
+              diagnosis: diagnosis || 'N/A',
+              prescription: prescription,
+              timestamp: timestamp || new Date().toISOString(),
+            });
+          }
+        }
       }
 
-      console.log(`Fetched ${invalidRecords.length} invalid prescriptions for admin ${userId}`);
+      console.log(`Fetched ${invalidRecords.length} invalid prescriptions for admin ${userId} from notifications`);
       return res.status(200).json({ success: true, invalidPrescriptions: invalidRecords });
     } catch (error) {
       console.error(`Error fetching invalid prescriptions for user ${userId}:`, error.message);
