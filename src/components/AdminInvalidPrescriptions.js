@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { auth } from '../services/firebase.js';
+import { auth, db } from '../services/firebase.js';
+import { collection, getDocs } from 'firebase/firestore';
 
 function AdminInvalidPrescriptions() {
   const [invalidPrescriptions, setInvalidPrescriptions] = useState([]);
