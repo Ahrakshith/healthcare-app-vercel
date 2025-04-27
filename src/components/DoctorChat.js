@@ -281,49 +281,54 @@ function DoctorChat({ user, role, handleLogout, setError }) {
       }
     };
 
-    const fetchMissedDoseAlerts = async () => {
-      console.log('Fetching missed dose alerts for patient:', selectedPatientId, 'and doctor:', doctorId);
-      try {
-        const idToken = await getIdToken();
-        const response = await fetch(`${apiBaseUrl}/admin`, {
-          method: 'POST',
-          headers: {
-            'x-user-uid': user.uid,
-            'Authorization': `Bearer ${idToken}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ patientId: selectedPatientId, doctorId }),
-          credentials: 'include',
-        });
+   const fetchMissedDoseAlerts = async () => {
+  console.log('Fetching missed dose alerts for patient:', selectedPatientId, 'and doctor:', doctorId);
+  if (!selectedPatientId || !doctorId) {
+    const errorMsg = 'Cannot fetch alerts: patientId or doctorId is missing.';
+    setError(errorMsg);
+    console.error(errorMsg);
+    return;
+  }
 
-        console.log('Fetch alerts response status:', response.status);
-        console.log('Fetch alerts response headers:', response.headers);
-        if (!response.ok) {
-          const errorText = await response.text();
-          console.error('Fetch alerts response error:', errorText);
-          throw new Error(`HTTP ${response.status}: ${errorText || 'Failed to fetch alerts'}`);
-        }
+  try {
+    const idToken = await getIdToken();
+    const response = await fetch(`${apiBaseUrl}/admin/missed-doses/${selectedPatientId}/${doctorId}`, {
+      method: 'GET', // Use GET instead of POST
+      headers: {
+        'x-user-uid': user.uid,
+        'Authorization': `Bearer ${idToken}`,
+        'Content-Type': 'application/json',
+      },
+      credentials: 'include',
+    });
 
-        const data = await response.json();
-        console.log('Fetched alerts data:', data);
-        const notifications = data.alerts || [];
-        if (!Array.isArray(notifications)) {
-          throw new Error('Invalid response format: Expected an array of notifications');
-        }
+    console.log('Fetch alerts response status:', response.status);
+    console.log('Fetch alerts response headers:', response.headers);
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('Fetch alerts response error:', errorText);
+      throw new Error(`HTTP ${response.status}: ${errorText || 'Failed to fetch alerts'}`);
+    }
 
-        setMissedDoseAlerts(
-          notifications
-            .filter((n) => n.patientId === selectedPatientId)
-            .map((n) => ({ ...n, id: n.id || Date.now().toString() }))
-        );
-        console.log('Updated missed dose alerts:', notifications);
-      } catch (err) {
-        const errorMsg = `Failed to fetch alerts: ${err.message}`;
-        setError(errorMsg);
-        console.error('Fetch alerts error:', err);
-      }
-    };
+    const data = await response.json();
+    console.log('Fetched alerts data:', data);
+    const notifications = data.alerts || [];
+    if (!Array.isArray(notifications)) {
+      throw new Error('Invalid response format: Expected an array of notifications');
+    }
 
+    setMissedDoseAlerts(
+      notifications
+        .filter((n) => n.patientId === selectedPatientId)
+        .map((n) => ({ ...n, id: n.id || Date.now().toString() }))
+    );
+    console.log('Updated missed dose alerts:', notifications);
+  } catch (err) {
+    const errorMsg = `Failed to fetch alerts: ${err.message}`;
+    setError(errorMsg);
+    console.error('Fetch alerts error:', err);
+  }
+};
     fetchMessages();
     fetchLanguagePreference();
     fetchMissedDoseAlerts();
