@@ -127,34 +127,29 @@ async function verifyMedicine(disease, medicine) {
  * @param {string} medicine - The prescribed medicine.
  * @param {string} patientId - The patient's ID.
  * @param {string} doctorId - The doctor's ID.
- * @param {string} userId - The user's ID for authentication.
- * @param {string} idToken - The Firebase ID token for authentication.
  * @returns {Promise<{ success: boolean, message: string }>} The notification result.
  */
-async function notifyAdmin(patientName, doctorName, disease, medicine, patientId, doctorId, userId, idToken) {
+async function notifyAdmin(patientName, doctorName, disease, medicine, patientId, doctorId) {
   try {
     // Input validation
-    if (!patientName || !doctorName || !disease || !medicine || !patientId || !doctorId || !userId || !idToken) {
-      throw new Error('All fields (patientName, doctorName, disease, medicine, patientId, doctorId, userId, idToken) are required to notify admin.');
+    if (!patientName || !doctorName || !disease || !medicine || !patientId || !doctorId) {
+      throw new Error('All fields (patientName, doctorName, disease, medicine, patientId, doctorId) are required to notify admin.');
     }
 
-    const apiBaseUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
-    const response = await fetch(`${apiBaseUrl}/admin?patientId=${encodeURIComponent(patientId)}&doctorId=${encodeURIComponent(doctorId)}`, {
+    const response = await fetch('http://localhost:5005/notify-missed-dose', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-user-uid': userId,
-        Authorization: `Bearer ${idToken}`,
       },
       body: JSON.stringify({
+        patientId,
+        doctorId,
         message: `Invalid prescription: ${medicine} for ${disease} (Patient: ${patientName}, Doctor: ${doctorName})`,
       }),
-      credentials: 'include',
     });
 
     if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(`Failed to notify admin: ${response.status} - ${errorData.error?.message || 'Unknown error'}`);
+      throw new Error(`Failed to notify admin: ${response.statusText}`);
     }
 
     console.log('medicineVerify.js: Admin notified of invalid prescription.');

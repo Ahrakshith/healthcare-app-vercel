@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Pusher from 'pusher-js';
@@ -10,7 +9,7 @@ import {
   playAudio,
 } from '../services/speech.js';
 import { verifyMedicine, notifyAdmin } from '../services/medicineVerify.js';
-import { doc, getDoc, collection, addDoc, getDocs, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, collection, addDoc, getDocs, updateDoc, setDoc } from 'firebase/firestore';
 import { db, auth } from '../services/firebase.js';
 import { signOut } from 'firebase/auth';
 
@@ -513,26 +512,41 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   }, []);
 
   const sendMissedDoseAlert = async () => {
-  try {
-    const idToken = await firebaseUser.getIdToken(true);
-    await notifyAdmin(
-      `Patient_${effectivePatientId}`,
-      'Doctor',
-      'Missed Doses Alert',
-      `Patient has missed 3 consecutive doses.`,
-      effectivePatientId, // patientId
-      doctorId, // doctorId
-      effectiveUserId, // userId
-      idToken // idToken
-    );
-    setMissedDoseAlerts((prev) => [
-      ...prev,
-      { id: Date.now().toString(), message: 'Alert: You have missed 3 consecutive doses. Notified your doctor.' },
-    ]);
-  } catch (err) {
-    setError(`Failed to send missed dose alert: ${err.message}`);
-  }
-};
+    try {
+      const idToken = await firebaseUser.getIdToken(true);
+      const alertData = {
+        patientId: effectivePatientId,
+        doctorId,
+        message: `Patient has missed 3 consecutive doses.`,
+        timestamp: new Date().toISOString(),
+        userId: effectiveUserId,
+      };
+
+      // Store in Firestore
+      const alertRef = doc(collection(db, 'missed_dose_alerts'));
+      await setDoc(alertRef, alertData);
+
+      // Notify admin via API
+      await notifyAdmin(
+        `Patient_${effectivePatientId}`,
+        'Doctor',
+        'Missed Doses Alert',
+        `Patient has missed 3 consecutive doses.`,
+        effectivePatientId,
+        doctorId,
+        effectiveUserId,
+        idToken
+      );
+
+      // Update state for UI
+      setMissedDoseAlerts((prev) => [
+        ...prev,
+        { id: alertRef.id, ...alertData },
+      ]);
+    } catch (err) {
+      setError(`Failed to send missed dose alert: ${err.message}`);
+    }
+  };
   const handleConfirmReminder = async (id) => {
     try {
       const updatedReminders = reminders.map((reminder) =>
