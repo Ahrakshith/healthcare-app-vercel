@@ -290,7 +290,7 @@ export default async function handler(req, res) {
               recordingLanguage: message.recordingLanguage || 'en',
               translatedText: message.translatedText || '',
               doctorId,
-              userId: patientId,
+              patientId: patientId, // Changed from userId to patientId to match front-end
               messageType: message.messageType || 'text',
             };
 
@@ -313,8 +313,10 @@ export default async function handler(req, res) {
             chatData.messages.push(newMessage);
             await uploadWithRetry(chatFile, JSON.stringify(chatData), { contentType: 'application/json' });
 
-            await pusher.trigger(`chat-${chatId}`, 'newMessage', newMessage);
-            console.log(`Pusher event 'newMessage' triggered on channel chat-${chatId}`);
+            // Trigger Pusher event with the correct event name and channel name
+            const channelName = `chat-${patientId}-${doctorId}`;
+            await pusher.trigger(channelName, 'new-message', newMessage);
+            console.log(`Pusher event 'new-message' triggered on channel ${channelName}`);
 
             return res.status(200).json({ message: 'Message saved successfully', newMessage });
           } catch (error) {
@@ -350,13 +352,16 @@ export default async function handler(req, res) {
           ...message,
           timestamp: new Date().toISOString(),
           senderId: userId,
+          patientId: patientId, // Ensure patientId is included in the message
         };
 
         chatData.messages.push(newMessage);
         await uploadWithRetry(chatFile, JSON.stringify(chatData), { contentType: 'application/json' });
 
-        await pusher.trigger(`chat-${chatId}`, 'newMessage', newMessage);
-        console.log(`Pusher event 'newMessage' triggered on channel chat-${chatId}`);
+        // Trigger Pusher event with the correct event name and channel name
+        const channelName = `chat-${patientId}-${doctorId}`;
+        await pusher.trigger(channelName, 'new-message', newMessage);
+        console.log(`Pusher event 'new-message' triggered on channel ${channelName}`);
 
         return res.status(200).json({ message: 'Message saved successfully', newMessage });
       }
