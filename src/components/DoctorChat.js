@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { collection, query, where, onSnapshot, getDocs, doc, getDoc, setDoc } from 'firebase/firestore';
@@ -31,7 +30,6 @@ function DoctorChat({ user, role, handleLogout, setError }) {
   const [mediaRecorder, setMediaRecorder] = useState(null);
   const [languagePreference, setLanguagePreference] = useState('en');
   const [menuOpen, setMenuOpen] = useState(false);
-  const [doctorProfile, setDoctorProfile] = useState(null);
   const [showActionModal, setShowActionModal] = useState(false);
   const [actionType, setActionType] = useState('');
   const [patientMessageTimestamps, setPatientMessageTimestamps] = useState({});
@@ -79,13 +77,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
         const doctorDoc = querySnapshot.docs[0];
         const doctorData = doctorDoc.data();
         setDoctorId(doctorData.doctorId);
-        setDoctorProfile({
-          name: doctorData.name || 'N/A',
-          doctorId: doctorData.doctorId || 'N/A',
-          email: doctorData.email || 'N/A',
-          avatar: doctorData.avatar || 'https://via.placeholder.com/100?text=Doctor',
-        });
-        console.log('Doctor profile fetched successfully:', doctorData);
+        console.log('Doctor ID fetched successfully:', doctorData.doctorId);
       } catch (err) {
         const errorMsg = `Failed to fetch doctor profile: ${err.message}`;
         setError(errorMsg);
@@ -944,9 +936,6 @@ function DoctorChat({ user, role, handleLogout, setError }) {
         </button>
         <h2>{selectedPatientId ? `Chat with ${selectedPatientName}` : 'Doctor Dashboard'}</h2>
         <div className="header-actions">
-          <button onClick={() => setDoctorProfile(doctorProfile)} className="profile-button" aria-label="View doctor profile">
-            Profile
-          </button>
           <button onClick={onLogout} className="logout-button" aria-label="Log out">
             Logout
           </button>
@@ -969,28 +958,6 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           )}
         </div>
         <div className="chat-content">
-          {doctorProfile && (
-            <div className="doctor-profile">
-              <h3>Doctor Profile</h3>
-              <div className="doctor-avatar-container">
-                <img
-                  src={doctorProfile.avatar}
-                  alt="Doctor avatar"
-                  className="doctor-avatar"
-                  onError={(e) => {
-                    e.target.src = 'https://via.placeholder.com/100?text=Doctor';
-                    console.log('Failed to load doctor avatar, using fallback');
-                  }}
-                />
-              </div>
-              <p><strong>Name:</strong> {doctorProfile.name}</p>
-              <p><strong>Doctor ID:</strong> {doctorProfile.doctorId}</p>
-              <p><strong>Email:</strong> {doctorProfile.email}</p>
-              <button onClick={() => setDoctorProfile(null)} className="close-section-button" aria-label="Close profile">
-                Close
-              </button>
-            </div>
-          )}
           {selectedPatientId ? (
             diagnosisPrompt === selectedPatientId ? (
               <div className="diagnosis-prompt">
@@ -1426,23 +1393,6 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           gap: 15px;
         }
 
-        .profile-button {
-          padding: 8px 20px;
-          background: #6E48AA;
-          color: #FFFFFF;
-          border: none;
-          border-radius: 25px;
-          font-size: 1rem;
-          font-weight: 500;
-          cursor: pointer;
-          transition: background 0.3s ease, transform 0.3s ease;
-        }
-
-        .profile-button:hover {
-          background: #5A3E8B;
-          transform: scale(1.05);
-        }
-
         .logout-button {
           padding: 8px 20px;
           background: #E74C3C;
@@ -1558,72 +1508,6 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           overflow-y: auto;
         }
 
-        .doctor-profile {
-          background: rgba(255, 255, 255, 0.05);
-          backdrop-filter: blur(10px);
-          border-radius: 15px;
-          padding: 20px;
-          margin-bottom: 20px;
-          border: 1px solid rgba(255, 255, 255, 0.1);
-          text-align: center;
-        }
-
-        .doctor-avatar-container {
-          margin-bottom: 15px;
-        }
-
-        .doctor-avatar {
-          width: 100px;
-          height: 100px;
-          border-radius: 50%;
-          object-fit: cover;
-          border: 2px solid #6E48AA;
-          transition: transform 0.3s ease;
-        }
-
-        .doctor-avatar:hover {
-          transform: scale(1.05);
-        }
-
-        .doctor-profile h3 {
-          font-size: 1.4rem;
-          font-weight: 600;
-          color: #FFFFFF;
-          margin-bottom: 15px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          gap: 10px;
-        }
-
-        .doctor-profile h3::before {
-          content: '👨‍⚕️';
-          font-size: 1.4rem;
-        }
-
-        .doctor-profile p {
-          font-size: 1rem;
-          margin-bottom: 10px;
-        }
-
-        .close-section-button {
-          padding: 8px 20px;
-          background: #6E48AA;
-          color: #FFFFFF;
-          border: none;
-          border-radius: 20px;
-          font-size: 1rem;
-          font-weight: 500;
-          cursor: pointer;
-          transition: background 0.3s ease, transform 0.3s ease;
-          margin-top: 10px;
-        }
-
-        .close-section-button:hover {
-          background: #5A3E8B;
-          transform: scale(1.05);
-        }
-
         .diagnosis-prompt {
           flex: 1;
           display: flex;
@@ -1715,7 +1599,6 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           align-items: center;
           gap: 10px;
         }
-
 
         .missed-dose-alerts h3::before {
           content: '⚠️';
@@ -2154,7 +2037,6 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           gap: 15px;
         }
 
-
         .modal-content select,
         .modal-content input,
         .modal-content textarea {
@@ -2198,8 +2080,6 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           cursor: pointer;
           transition: background 0.3s ease, transform 0.3s ease;
         }
-
-
 
         .submit-button:hover {
           background: #219653;
