@@ -629,8 +629,17 @@ const handleInvalidPrescriptionsRequest = async (req, res, userId) => {
     try {
       // Verify the user is an admin
       const adminQuery = await db.collection('users').where('uid', '==', userId).get();
-      if (adminQuery.empty || adminQuery.docs[0].data().role !== 'admin') {
-        return res.status(403).json({ success: false, message: 'Only admins can fetch invalid prescriptions' });
+      console.log(`[DEBUG] Admin check for user ${userId}: Query result count = ${adminQuery.size}`);
+      if (adminQuery.empty) {
+        console.log(`[DEBUG] No user document found for UID ${userId}`);
+        return res.status(403).json({ success: false, message: 'Only admins can fetch invalid prescriptions', userFound: false });
+      }
+      const userDoc = adminQuery.docs[0];
+      const userRole = userDoc.data().role;
+      console.log(`[DEBUG] User ${userId} role: ${userRole}`);
+      if (userRole !== 'admin') {
+        console.log(`[DEBUG] User ${userId} role (${userRole}) is not 'admin'`);
+        return res.status(403).json({ success: false, message: 'Only admins can fetch invalid prescriptions', userRole });
       }
 
       // Fetch all doctor_patient_records

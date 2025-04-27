@@ -63,7 +63,7 @@ function AdminInvalidPrescriptions() {
 
           if (!response.ok) {
             const errorData = await response.json();
-            throw new Error(`Failed to fetch invalid prescriptions: ${errorData.message || response.statusText}`);
+            throw new Error(`Failed to fetch invalid prescriptions: ${errorData.message || response.statusText} (Status: ${response.status})`);
           }
 
           const data = await response.json();
@@ -89,7 +89,9 @@ function AdminInvalidPrescriptions() {
         const patientsSnapshot = await getDocs(collection(db, 'patients'));
         const patientMap = patientsSnapshot.docs.reduce((map, doc) => {
           const data = doc.data();
-          map[data.patientId] = data;
+          map[data.patientId] = {
+            name: data.name || 'Unknown',
+          };
           return map;
         }, {});
         setPatients(patientMap);
@@ -161,6 +163,9 @@ function AdminInvalidPrescriptions() {
           font-size: 1rem;
           margin-bottom: 20px;
           text-align: center;
+          padding: 10px;
+          background-color: #ffebee;
+          border-radius: 4px;
         }
 
         .loading-message {
