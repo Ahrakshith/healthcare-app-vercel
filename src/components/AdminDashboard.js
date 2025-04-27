@@ -30,6 +30,7 @@ function AdminDashboard({ user, role, handleLogout, setUser }) {
   const [addAdminError, setAddAdminError] = useState('');
   const [addAdminSuccess, setAddAdminSuccess] = useState('');
   const [isAddingAdmin, setIsAddingAdmin] = useState(false);
+  const [refreshTrigger, setRefreshTrigger] = useState(0); // For triggering list refresh
   const navigate = useNavigate();
   const isMounted = useRef(true); // Track component mount state
   const auth = getAuth();
@@ -225,6 +226,7 @@ function AdminDashboard({ user, role, handleLogout, setUser }) {
           contactNumber: '',
         });
         setShowAddForm(false);
+        setRefreshTrigger((prev) => prev + 1); // Trigger refresh of doctors list
       }
     } catch (err) {
       console.error('AdminDashboard: Error adding doctor - Details:', err);
@@ -346,6 +348,13 @@ function AdminDashboard({ user, role, handleLogout, setUser }) {
       if (isMounted.current) setAddDoctorError('Failed to log out. Please try again.');
     }
   }, [navigate, handleLogout]);
+
+  // Callback to trigger list refresh after deletion
+  const refreshList = useCallback(() => {
+    if (isMounted.current) {
+      setRefreshTrigger((prev) => prev + 1);
+    }
+  }, []);
 
   return (
     <div className="admin-dashboard">
@@ -590,14 +599,14 @@ function AdminDashboard({ user, role, handleLogout, setUser }) {
         {currentView === 'doctors' && (
           <div className="section">
             <h3>Doctors List</h3>
-            <AdminDoctors />
+            <AdminDoctors refreshTrigger={refreshTrigger} refreshList={refreshList} />
           </div>
         )}
 
         {currentView === 'patients' && (
           <div className="section">
             <h3>Patients List</h3>
-            <AdminPatients />
+            <AdminPatients refreshTrigger={refreshTrigger} refreshList={refreshList} />
           </div>
         )}
 

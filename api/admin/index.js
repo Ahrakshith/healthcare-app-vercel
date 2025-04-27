@@ -74,6 +74,22 @@ const uploadWithRetry = async (file, buffer, metadata, retries = 3, backoff = 10
   }
 };
 
+// Utility function for GCS delete with retry logic
+const deleteWithRetry = async (fileOrDir, retries = 3, backoff = 1000) => {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      await fileOrDir.delete();
+      console.log(`Successfully deleted ${fileOrDir.name} from GCS on attempt ${attempt}`);
+      return true;
+    } catch (error) {
+      console.error(`Delete attempt ${attempt} failed for ${fileOrDir.name}:`, error.message);
+      if (attempt === retries) throw error;
+      const delay = backoff * Math.pow(2, attempt - 1);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+};
+
 // Validate message sender
 const validateSender = (sender) => {
   const validSenders = ['patient', 'doctor'];
@@ -501,6 +517,106 @@ const handleAcceptPatientRequest = async (req, res, userId) => {
   }
 };
 
+// Handler for deleting a doctor
+const handleDeleteDoctorRequest = async (req, res, userId) => {
+  if (req.method === 'POST') {
+    try {
+      const { doctorId } = req.body;
+
+      if (!doctorId) {
+        return res.status(400).json({ success: false, message: 'doctorId is required' });
+      }
+
+      // Verify the user is an admin
+      const adminQuery = await db.collection('users').where('uid', '==', userId).get();
+      if (adminQuery.empty || adminQuery.docs[0].data().role !== 'admin') {
+        return res.status(403).json({ success: false, message: 'Only admins can delete doctors' });
+      }
+
+      // Check if the doctor exists
+      const doctorQuery = await db.collection('doctors').where('doctorId', '==', doctorId).get();
+      if (doctorQuery.empty) {
+        return res.status(404).json({ success: false, message: 'Doctor not found' });
+      }
+
+      const doctorDoc = doctorQuery.docs[0];
+      const doctorData = doctorDoc.data();
+
+      // Delete doctor from Firestore
+      await doctorDoc.ref.delete();
+      console.log(`Doctor ${doctorId} deleted from Firestore`);
+
+      // Clean up associated GCS data (e.g., chat files)
+      const chatFiles = await bucket.getFiles({ prefix: `chats/-${doctorId}` });
+      for (const [files] of chatFiles) {
+        await Promise.all(files.map((file) => deleteWithRetry(file)));
+      }
+      console.log(`Deleted GCS chat files for doctor ${doctorId}`);
+
+      return res.status(200).json({ success: true, message: 'Doctor deleted successfully' });
+    } catch (error) {
+      console.error(`Error deleting doctor ${doctorId} for user ${userId}:`, error.message);
+      return res.status(500).json({ success: false, message: 'Failed to delete doctor', details: error.message });
+    }
+  } else {
+    res.setHeader('Allow', ['POST']);
+    return res.status(405).json({ success: false, message: `Method ${req.method} Not Allowed for /admin/delete-doctor` });
+  }
+};
+
+// Handler for deleting a patient
+const handleDeletePatientRequest = async (req, res, userId) => {
+  if (req.method === 'POST') {
+    try {
+      const { patientId } = req.body;
+
+      if (!patientId) {
+        return res.status(400).json({ success: false, message: 'patientId is required' });
+      }
+
+      // Verify the user is an admin
+      const adminQuery = await db.collection('users').where('uid', '==', userId).get();
+      if (adminQuery.empty || adminQuery.docs[0].data().role !== 'admin') {
+        return res.status(403).json({ success: false, message: 'Only admins can delete patients' });
+      }
+
+      // Check if the patient exists
+      const patientQuery = await db.collection('patients').where('patientId', '==', patientId).get();
+      if (patientQuery.empty) {
+        return res.status(404).json({ success: false, message: 'Patient not found' });
+      }
+
+      const patientDoc = patientQuery.docs[0];
+
+      // Delete patient from Firestore
+      await patientDoc.ref.delete();
+      console.log(`Patient ${patientId} deleted from Firestore`);
+
+      // Clean up associated GCS data (e.g., chat files)
+      const chatFiles = await bucket.getFiles({ prefix: `chats/${patientId}-` });
+      for (const [files] of chatFiles) {
+        await Promise.all(files.map((file) => deleteWithRetry(file)));
+      }
+      console.log(`Deleted GCS chat files for patient ${patientId}`);
+
+      // Remove any assignments related to this patient
+      const assignmentsQuery = await db.collection('doctor_assignments')
+        .where('patientId', '==', patientId)
+        .get();
+      await Promise.all(assignmentsQuery.docs.map((doc) => doc.ref.delete()));
+      console.log(`Deleted assignments for patient ${patientId}`);
+
+      return res.status(200).json({ success: true, message: 'Patient deleted successfully' });
+    } catch (error) {
+      console.error(`Error deleting patient ${patientId} for user ${userId}:`, error.message);
+      return res.status(500).json({ success: false, message: 'Failed to delete patient', details: error.message });
+    }
+  } else {
+    res.setHeader('Allow', ['POST']);
+    return res.status(405).json({ success: false, message: `Method ${req.method} Not Allowed for /admin/delete-patient` });
+  }
+};
+
 // Main handler
 export default async function handler(req, res) {
   console.log(`[DEBUG] Main handler called with method: ${req.method}, URL: ${req.url}`);
@@ -543,6 +659,12 @@ export default async function handler(req, res) {
     } else if (req.url.includes('/accept-patient')) {
       console.log('[DEBUG] Routing to handleAcceptPatientRequest');
       return handleAcceptPatientRequest(req, res, userId);
+    } else if (req.url.includes('/delete-doctor')) {
+      console.log('[DEBUG] Routing to handleDeleteDoctorRequest');
+      return handleDeleteDoctorRequest(req, res, userId);
+    } else if (req.url.includes('/delete-patient')) {
+      console.log('[DEBUG] Routing to handleDeletePatientRequest');
+      return handleDeletePatientRequest(req, res, userId);
     } else {
       console.log('[DEBUG] Routing to handleChatRequest');
       if (!patientId || !doctorId) {
