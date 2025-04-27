@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Pusher from 'pusher-js';
@@ -9,7 +10,7 @@ import {
   playAudio,
 } from '../services/speech.js';
 import { verifyMedicine, notifyAdmin } from '../services/medicineVerify.js';
-import { doc, getDoc, collection, addDoc, getDocs, updateDoc, setDoc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, collection, addDoc, getDocs, updateDoc, setDoc } from 'firebase/firestore'; // Removed duplicate getDoc
 import { db, auth } from '../services/firebase.js';
 import { signOut } from 'firebase/auth';
 
@@ -96,7 +97,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     return () => timers.forEach(clearTimeout);
   }, [missedDoseAlerts]);
 
-  // Validate user state and fetch patient and doctor data
+  // Validate user state and fetch patient and doctor's data
   useEffect(() => {
     if (!firebaseUser || !effectiveUserId || !effectivePatientId || !doctorId || role !== 'patient') {
       console.log('PatientChat: Invalid user state or missing params, redirecting to /login', {
@@ -525,7 +526,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     });
   }, []);
 
-  const calculateAdherenceRate = useCallback((remindersList) => {
+  const calculateAdherence mairie = useCallback((remindersList) => {
     if (remindersList.length === 0) {
       setAdherenceRate(0);
       return;
@@ -1821,7 +1822,6 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           margin-bottom: 20px;
         }
 
-
         .sidebar-header h3 {
           font-size: 1.5rem;
           color: #FFFFFF;
@@ -1833,30 +1833,23 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           color: #FFFFFF;
           font-size: 1.5rem;
           cursor: pointer;
-          transition: transform 0.3s ease;
-        }
-
-        .close-menu:hover {
-          transform: scale(1.1);
         }
 
         .menu-list {
           list-style: none;
-          padding: 0;
         }
 
         .menu-list li {
-          padding: 15px;
-          background: rgba(255, 255, 255, 0.1);
-          border-radius: 10px;
-          margin-bottom: 10px;
+          padding: 10px;
+          color: #E0E0E0;
+          font-size: 1.1rem;
           cursor: pointer;
-          transition: background 0.3s ease, transform 0.3s ease;
+          border-radius: 5px;
+          transition: background 0.3s ease;
         }
 
         .menu-list li:hover {
-          background: rgba(255, 255, 255, 0.2);
-          transform: translateX(5px);
+          background: rgba(255, 255, 255, 0.1);
         }
 
         .menu-list li.active {
@@ -1868,16 +1861,21 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           flex: 1;
           display: flex;
           flex-direction: column;
-          padding: 20px 30px;
+          padding: 20px;
           overflow-y: auto;
         }
 
         .doctor-prompt {
-          background: rgba(255, 255, 255, 0.05);
+          background: rgba(255, 255, 255, 0.1);
           padding: 15px;
           border-radius: 10px;
           margin-bottom: 20px;
           text-align: center;
+        }
+
+        .doctor-prompt p {
+          margin-bottom: 10px;
+          font-size: 1.1rem;
         }
 
         .doctor-prompt button {
@@ -1886,56 +1884,34 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           background: #6E48AA;
           color: #FFFFFF;
           border: none;
-          border-radius: 20px;
+          border-radius: 25px;
           cursor: pointer;
           transition: background 0.3s ease;
         }
 
         .doctor-prompt button:hover {
-          background: #5A3E8B;
+          background: #54378A;
         }
 
         .profile-section,
         .reminders-section,
         .recommendations-section {
           background: rgba(255, 255, 255, 0.05);
-          backdrop-filter: blur(10px);
-          border-radius: 15px;
           padding: 20px;
+          border-radius: 10px;
           margin-bottom: 20px;
-          border: 1px solid rgba(255, 255, 255, 0.1);
         }
 
         .profile-section h3,
         .reminders-section h3,
         .recommendations-section h3 {
-          font-size: 1.4rem;
-          font-weight: 600;
-          color: #FFFFFF;
+          font-size: 1.5rem;
           margin-bottom: 15px;
-          display: flex;
-          align-items: center;
-          gap: 10px;
-        }
-
-        .profile-section h3::before {
-          content: '👤';
-          font-size: 1.4rem;
-        }
-
-        .reminders-section h3::before {
-          content: '⏰';
-          font-size: 1.4rem;
-        }
-
-        .recommendations-section h3::before {
-          content: '⚕️';
-          font-size: 1.4rem;
+          color: #FFFFFF;
         }
 
         .profile-section p,
-        .reminders-section p,
-        .recommendations-section p {
+        .reminders-section p {
           font-size: 1rem;
           margin-bottom: 10px;
         }
@@ -1945,90 +1921,19 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           background: #6E48AA;
           color: #FFFFFF;
           border: none;
-          border-radius: 20px;
-          font-size: 1rem;
-          font-weight: 500;
+          border-radius: 25px;
           cursor: pointer;
-          transition: background 0.3s ease, transform 0.3s ease;
-          margin-top: 10px;
+          margin-top: 15px;
+          transition: background 0.3s ease;
         }
 
         .close-section-button:hover {
-          background: #5A3E8B;
-          transform: scale(1.05);
-        }
-
-        .reminders-table {
-          width: 100%;
-          border-collapse: collapse;
-        }
-
-        .table-header,
-        .table-row {
-          display: flex;
-          justify-content: space-between;
-          padding: 10px;
-          border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-        }
-
-        .table-header {
-          font-weight: 600;
-          color: #FFFFFF;
-          background: rgba(255, 255, 255, 0.1);
-          border-radius: 10px 10px 0 0;
-        }
-
-        .table-row {
-          background: rgba(255, 255, 255, 0.05);
-        }
-
-        .table-header span,
-        .table-row span {
-          flex: 1;
-          text-align: center;
-        }
-
-        .table-row span:last-child {
-          display: flex;
-          justify-content: center;
-          align-items: center;
-          gap: 10px;
-        }
-
-        .confirm-button {
-          padding: 5px 10px;
-          background: #27AE60;
-          color: #FFFFFF;
-          border: none;
-          border-radius: 10px;
-          cursor: pointer;
-        }
-
-        .confirm-button:hover {
-          background: #219653;
-        }
-
-        .snooze-button {
-          padding: 5px 10px;
-          background: #F39C12;
-          color: #FFFFFF;
-          border: none;
-          border-radius: 10px;
-          cursor: pointer;
-        }
-
-        .snooze-button:hover {
-          background: #E67E22;
+          background: #54378A;
         }
 
         .missed-dose-alerts {
-          background: rgba(231, 76, 60, 0.1);
-          border-radius: 10px;
-          padding: 15px;
           margin-bottom: 20px;
-          border: 1px solid rgba(231, 76, 60, 0.3);
         }
-
         .alert-item {
           background: rgba(231, 76, 60, 0.2);
           border-radius: 8px;
