@@ -1,7 +1,7 @@
 // src/components/AdminPatients.js
 import React, { useState, useEffect } from 'react';
 import { collection, onSnapshot, doc, deleteDoc } from 'firebase/firestore';
-import { db } from '../services/firebase.js';
+import { db, auth } from '../services/firebase.js';
 
 function AdminPatients({ refreshTrigger, refreshList }) {
   const [patients, setPatients] = useState([]);
@@ -52,20 +52,38 @@ function AdminPatients({ refreshTrigger, refreshList }) {
       await deleteDoc(userRef);
       console.log(`AdminPatients: Patient ${patientId} deleted from Firestore (users)`);
 
-      // Step 3: Attempt to delete from backend (optional, non-critical step)
-      const response = await fetch(`http://localhost:5005/delete-patient/${patientId}`, {
-        method: 'DELETE',
-        credentials: 'include', // Include credentials if your backend requires authentication
-      }).catch((err) => {
-        console.warn(`AdminPatients: Failed to delete patient from backend: ${err.message}`);
-        return { ok: false, statusText: err.message };
-      });
+      // Step 3: Attempt to delete from backend (POST request to /admin/delete-patient)
+      const adminId = localStorage.getItem('userId');
+      if (adminId) {
+        const baseApiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app';
+        const apiUrl = baseApiUrl.endsWith('/api') ? baseApiUrl.replace(/\/api$/, '') : baseApiUrl;
+        const idToken = await auth.currentUser?.getIdToken(true); // Ensure fresh token
+        const response = await fetch(`${apiUrl}/api/admin/delete-patient`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-user-uid': adminId,
+            'Authorization': `Bearer ${idToken}`,
+          },
+          body: JSON.stringify({ patientId }),
+          credentials: 'include',
+        }).catch((err) => {
+          console.warn(`AdminPatients: Failed to delete patient from backend: ${err.message}`);
+          return { ok: false, statusText: err.message };
+        });
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        console.warn(`AdminPatients: Failed to delete patient from backend: ${errorData.error || response.statusText}`);
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          if (response.status === 403) {
+            console.warn(`AdminPatients: Forbidden error from backend: ${errorData.error || 'Access denied'}`);
+          } else {
+            console.warn(`AdminPatients: Failed to delete patient from backend: ${errorData.error || response.statusText}`);
+          }
+        } else {
+          console.log(`AdminPatients: Patient ${patientId} deleted from backend successfully`);
+        }
       } else {
-        console.log(`AdminPatients: Patient ${patientId} deleted from backend successfully`);
+        console.warn('Admin ID not found, skipping backend deletion');
       }
 
       // No need to manually update state here; onSnapshot will handle it
