@@ -7,10 +7,26 @@ function AdminCases() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  // Utility function to format prescription object into a string
+  const formatPrescription = (prescription) => {
+    if (!prescription || typeof prescription !== 'object') {
+      return 'N/A';
+    }
+    const { medicine, dosage, frequency, duration } = prescription;
+    return [
+      medicine ? `Medicine: ${medicine}` : '',
+      dosage ? `Dosage: ${dosage}` : '',
+      frequency ? `Frequency: ${frequency}` : '',
+      duration ? `Duration: ${duration}` : '',
+    ]
+      .filter(Boolean)
+      .join(', ');
+  };
+
   useEffect(() => {
     const adminId = localStorage.getItem('userId');
     if (!adminId) {
-      console.error('Admin ID not found in local storage');
+      console.error('AdminCases: Admin ID not found in local storage');
       setError('Admin ID not found. Please log in again.');
       return;
     }
@@ -20,13 +36,33 @@ function AdminCases() {
         const baseApiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app';
         const apiUrl = baseApiUrl.endsWith('/api') ? baseApiUrl.replace(/\/api$/, '') : baseApiUrl;
         const idToken = await auth.currentUser?.getIdToken(true);
+        if (!idToken) throw new Error('Authentication token not available');
+
         const response = await fetch(`${apiUrl}/api/patients`, {
           headers: {
             'Authorization': `Bearer ${idToken}`,
             'x-user-uid': adminId,
           },
         });
-        if (!response.ok) throw new Error('Failed to fetch patients');
+
+        // Check if response is JSON
+        const contentType = response.headers.get('content-type');
+        if (!contentType || !contentType.includes('application/json')) {
+          const text = await response.text();
+          console.error('AdminCases: Non-JSON response received from /api/patients:', {
+            status: response.status,
+            statusText: response.statusText,
+            contentType,
+            body: text.slice(0, 100), // Log first 100 chars of body
+          });
+          throw new Error('Invalid response format: Expected JSON');
+        }
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(`Failed to fetch patients: ${errorData.message || response.statusText}`);
+        }
+
         const patientList = await response.json();
         // Create a map of patientId to patient data for quick lookup
         const patientMap = patientList.reduce((map, patient) => {
@@ -36,7 +72,7 @@ function AdminCases() {
         setPatients(patientMap);
       } catch (err) {
         console.error('AdminCases: Error fetching patients:', err);
-        setError(`Error fetching patients: ${err.message}`);
+        setError(`Error fetching patient data: ${err.message}`);
       }
     };
 
@@ -47,15 +83,35 @@ function AdminCases() {
         const baseApiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app';
         const apiUrl = baseApiUrl.endsWith('/api') ? baseApiUrl.replace(/\/api$/, '') : baseApiUrl;
         const idToken = await auth.currentUser?.getIdToken(true);
+        if (!idToken) throw new Error('Authentication token not available');
+
         const response = await fetch(`${apiUrl}/api/doctors/records`, {
           headers: {
             'Authorization': `Bearer ${idToken}`,
             'x-user-uid': adminId,
           },
         });
-        if (!response.ok) throw new Error('Failed to fetch cases');
+
+        // Check if response is JSON
+        const contentType = response.headers.get('content-type');
+        if (!contentType || !contentType.includes('application/json')) {
+          const text = await response.text();
+          console.error('AdminCases: Non-JSON response received from /api/doctors/records:', {
+            status: response.status,
+            statusText: response.statusText,
+            contentType,
+            body: text.slice(0, 100), // Log first 100 chars of body
+          });
+          throw new Error('Invalid response format: Expected JSON');
+        }
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(`Failed to fetch cases: ${errorData.message || response.statusText}`);
+        }
+
         const { records } = await response.json();
-        setCases(records);
+        setCases(records || []);
       } catch (err) {
         console.error('AdminCases: Error fetching cases:', err);
         setError(`Error fetching cases: ${err.message}`);
@@ -105,14 +161,14 @@ function AdminCases() {
                 const patient = patients[caseItem.patientId] || {};
                 return (
                   <tr key={`${caseItem.doctorId}-${caseItem.patientId}-${caseItem.timestamp}-${index}`}>
-                    <td>{caseItem.doctorId}</td>
-                    <td>{caseItem.patientId}</td>
-                    <td>{patient.name || 'N/A'}</td>
+                    <td>{caseItem.doctorId || 'N/A'}</td>
+                    <td>{caseItem.patientId || 'N/A'}</td>
+                    <td>{patient.name || 'Unknown'}</td>
                     <td>{patient.age || 'N/A'}</td>
                     <td>{patient.sex || 'N/A'}</td>
-                    <td>{caseItem.diagnosis}</td>
+                    <td>{caseItem.diagnosis || 'N/A'}</td>
                     <td className={caseItem.valid ? '' : 'invalid-prescription'}>
-                      {caseItem.prescription}
+                      {formatPrescription(caseItem.prescription)}
                     </td>
                     <td>{caseItem.valid ? 'Yes' : 'No'}</td>
                   </tr>
