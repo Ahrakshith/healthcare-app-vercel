@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { collection, query, where, onSnapshot, getDocs, doc, getDoc, setDoc } from 'firebase/firestore';
@@ -82,6 +83,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           name: doctorData.name || 'N/A',
           doctorId: doctorData.doctorId || 'N/A',
           email: doctorData.email || 'N/A',
+          avatar: doctorData.avatar || 'https://via.placeholder.com/100?text=Doctor', // Added avatar field
         });
         console.log('Doctor profile fetched successfully:', doctorData);
       } catch (err) {
@@ -939,6 +941,17 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           {doctorProfile && (
             <div className="doctor-profile">
               <h3>Doctor Profile</h3>
+              <div className="doctor-avatar-container">
+                <img
+                  src={doctorProfile.avatar}
+                  alt="Doctor avatar"
+                  className="doctor-avatar"
+                  onError={(e) => {
+                    e.target.src = 'https://via.placeholder.com/100?text=Doctor';
+                    console.log('Failed to load doctor avatar, using fallback');
+                  }}
+                />
+              </div>
               <p><strong>Name:</strong> {doctorProfile.name}</p>
               <p><strong>Doctor ID:</strong> {doctorProfile.doctorId}</p>
               <p><strong>Email:</strong> {doctorProfile.email}</p>
@@ -1505,6 +1518,24 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           padding: 20px;
           margin-bottom: 20px;
           border: 1px solid rgba(255, 255, 255, 0.1);
+          text-align: center;
+        }
+
+        .doctor-avatar-container {
+          margin-bottom: 15px;
+        }
+
+        .doctor-avatar {
+          width: 100px;
+          height: 100px;
+          border-radius: 50%;
+          object-fit: cover;
+          border: 2px solid #6E48AA;
+          transition: transform 0.3s ease;
+        }
+
+        .doctor-avatar:hover {
+          transform: scale(1.05);
         }
 
         .doctor-profile h3 {
@@ -1514,6 +1545,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           margin-bottom: 15px;
           display: flex;
           align-items: center;
+          justify-content: center;
           gap: 10px;
         }
 
