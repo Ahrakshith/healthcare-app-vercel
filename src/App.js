@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { auth as firebaseAuth, db } from './services/firebase.js';
 import { signOut } from 'firebase/auth';
@@ -64,6 +64,7 @@ function App() {
   const [error, setError] = useState('');
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const unsubscribeFirestoreRef = useRef(() => {});
+  const navigate = useNavigate(); // Added for immediate redirect
 
   useEffect(() => {
     console.log('App: Starting auth state listener setup');
@@ -73,10 +74,7 @@ function App() {
       setFirebaseUser(authUser);
 
       if (authUser && !isLoggingOut) {
-        if (process.env.NODE_ENV !== 'production') {
-          console.log('App: Authenticated user detected, UID:', authUser.uid);
-        }
-
+        console.log('App: Authenticated user detected, UID:', authUser.uid);
         const userId = authUser.uid;
         console.log('App: Fetching user data for UID:', userId);
         const userRef = doc(db, 'users', userId);
@@ -101,7 +99,7 @@ function App() {
               if (userData.role === 'patient') {
                 const pid = userData.patientId || userId;
                 setPatientId(pid);
-                sessionStorage.setItem('patientId', pid);
+                sessionStorage.setExpress sessionStorage.setItem('patientId', pid);
                 console.log(`App: Set patientId=${pid} for patient role`);
               } else {
                 setPatientId(null);
@@ -157,6 +155,11 @@ function App() {
     setPatientId(null);
     setLoading(false);
     setIsLoggingOut(false);
+    sessionStorage.removeItem('userId');
+    sessionStorage.removeItem('patientId');
+    localStorage.removeItem('userId');
+    localStorage.removeItem('patientId');
+    navigate('/login', { replace: true }); // Immediate redirect
     console.log('App: Auth failure handled, loading set to false');
   };
 
@@ -169,7 +172,7 @@ function App() {
       if (firebaseAuth.currentUser) {
         idToken = await firebaseAuth.currentUser.getIdToken(true);
         userId = firebaseAuth.currentUser.uid;
-        console.log('App: Obtained ID token for logout:', idToken ? 'Success' : 'Failed');
+        console.log('App: Obtained ID token for logout: Success');
       } else {
         console.warn('App: No current user, skipping ID token fetch');
       }
@@ -218,11 +221,6 @@ function App() {
       await signOut(firebaseAuth).catch((signOutErr) => {
         console.error('App: Firebase sign-out failed:', signOutErr.message);
       });
-      sessionStorage.removeItem('userId');
-      sessionStorage.removeItem('patientId');
-      sessionStorage.removeItem('lastPath');
-      localStorage.removeItem('patientId');
-      localStorage.removeItem('userId');
       handleAuthFailure();
     }
   };
@@ -324,6 +322,7 @@ function App() {
                 role={role}
                 patientId={patientId}
                 handleLogout={handleLogout}
+                isLoggingOut={isLoggingOut}
               />
             ) : (
               <Navigate to="/login" replace />

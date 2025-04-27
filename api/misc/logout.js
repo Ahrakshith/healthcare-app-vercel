@@ -27,11 +27,12 @@ const db = getFirestore();
 
 export default async function handler(req, res) {
   // CORS headers
-  res.setHeader('Access-Control-Allow-Origin', 'https://healthcare-app-vercel.vercel.app');
+  res.setHeader('Access-Control-Allow-Origin', process.env.FRONTEND_URL || 'https://healthcare-app-vercel.vercel.app');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Authorization, x-user-uid, Content-Type, Accept');
 
   if (req.method === 'OPTIONS') {
+    console.log('Handling OPTIONS request for /api/misc/logout');
     return res.status(200).end();
   }
 
@@ -40,7 +41,7 @@ export default async function handler(req, res) {
   const authHeader = req.headers.authorization;
 
   if (!userId) {
-    console.error('Missing x-user-uid header');
+    console.error('Missing x-user-uid header in request');
     return res.status(401).json({ error: 'Missing user ID header' });
   }
 
@@ -56,12 +57,12 @@ export default async function handler(req, res) {
     if (authHeader) {
       const token = authHeader.replace('Bearer ', '');
       try {
-        const decodedToken = await auth.verifyIdToken(token);
+        const decodedToken = await auth.verifyIdToken(token, true); // Check for revoked tokens
         if (decodedToken.uid !== userId) {
           console.error('User ID mismatch:', { tokenUid: decodedToken.uid, headerUid: userId });
           return res.status(403).json({ error: 'Unauthorized user' });
         }
-        // Revoke refresh tokens if token is valid
+        // Revoke refresh tokens
         await auth.revokeRefreshTokens(userId);
         console.log(`Revoked refresh tokens for user ${userId}`);
       } catch (error) {
@@ -69,7 +70,7 @@ export default async function handler(req, res) {
         // Continue with logout even if token verification fails
       }
     } else {
-      console.warn('No Authorization header provided, skipping token verification');
+      console.warn('No Authorization header provided for user', userId, 'skipping token verification');
     }
 
     // Update Firestore with last logout timestamp

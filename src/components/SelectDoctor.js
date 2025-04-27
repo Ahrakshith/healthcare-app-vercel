@@ -2,14 +2,13 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { SPECIALTIES } from '../constants/specialties.js';
 
-function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
+function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout, isLoggingOut }) {
   const [specialty, setSpecialty] = useState('All');
   const [doctors, setDoctors] = useState([]);
   const [loading, setLoading] = useState(true);
   const [authLoading, setAuthLoading] = useState(true);
   const [loadingDoctorId, setLoadingDoctorId] = useState(null);
   const [error, setError] = useState('');
-  const [isLoggingOut, setIsLoggingOut] = useState(false); // New state to track logout
   const navigate = useNavigate();
 
   const baseApiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app';
@@ -17,14 +16,15 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
 
   useEffect(() => {
     const authTimeout = setTimeout(() => {
-      if (!firebaseUser || !user || role !== 'patient' || !patientId) {
-        console.log('SelectDoctor: Invalid auth state, redirecting to /login', {
+      if (!firebaseUser || !user || role !== 'patient' || !patientId || isLoggingOut) {
+        console.log('SelectDoctor: Invalid auth state or logging out, redirecting to /login', {
           firebaseUser: !!firebaseUser,
           user: !!user,
           role,
           patientId,
+          isLoggingOut,
         });
-        setError('Invalid session. Please log in again.');
+        setError('Invalid session or logging out. Please log in again.');
         navigate('/login', { replace: true });
       } else {
         setAuthLoading(false);
@@ -32,7 +32,7 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
     }, 500);
 
     return () => clearTimeout(authTimeout);
-  }, [firebaseUser, user, role, patientId, navigate]);
+  }, [firebaseUser, user, role, patientId, isLoggingOut, navigate]);
 
   const fetchDoctors = useCallback(async () => {
     if (isLoggingOut) {
@@ -99,7 +99,7 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
     return () => {
       console.log('SelectDoctor: Cleaning up fetchDoctors effect');
     };
-  }, [fetchDoctors, authLoading, isLoggingOut, patientId, user.uid]);
+  }, [fetchDoctors, authLoading, isLoggingOut]);
 
   async function fetchWithRetry(url, options, retries = 3, backoff = 1000) {
     for (let attempt = 1; attempt <= retries; attempt++) {
@@ -118,7 +118,9 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
         }
         return response;
       } catch (error) {
-        if (attempt === retries) throw error;
+        if (attempt === retries || error.message.includes('auth/user-token-expired')) {
+          throw error;
+        }
         console.warn(`Retry ${attempt}/${retries} failed for ${url}: ${error.message}`);
         await new Promise((resolve) => setTimeout(resolve, backoff * attempt));
       }
@@ -126,8 +128,8 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
   }
 
   const handleDoctorSelect = async (doctorId) => {
-    if (!patientId || !doctorId) {
-      setError('Patient ID or Doctor ID not found. Please try again.');
+    if (!patientId || !doctorId || isLoggingOut) {
+      setError('Patient ID or Doctor ID not found, or logout in progress.');
       return;
     }
 
@@ -175,15 +177,13 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout }) {
   };
 
   const handleLogoutClick = async () => {
-    setIsLoggingOut(true); // Set flag to prevent further API calls
+    console.log('SelectDoctor: Initiating logout');
     try {
       await handleLogout();
       console.log('SelectDoctor: Logged out successfully');
-      navigate('/login', { replace: true }); // Ensure immediate redirect
     } catch (err) {
       console.error('SelectDoctor: Logout error:', err.message);
       setError('Failed to log out. Please try again.');
-      setIsLoggingOut(false);
     }
   };
 
