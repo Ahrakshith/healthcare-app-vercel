@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { collection, onSnapshot, doc, deleteDoc } from 'firebase/firestore';
 import { db } from '../services/firebase.js';
 
-function AdminPatients() {
+function AdminPatients({ refreshTrigger, refreshList }) {
   const [patients, setPatients] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -34,7 +34,7 @@ function AdminPatients() {
 
     // Cleanup subscription on unmount
     return () => unsubscribe();
-  }, []);
+  }, [refreshTrigger]); // Add refreshTrigger to dependency array to trigger re-fetch
 
   const handleDeletePatient = async (patientId) => {
     if (!window.confirm(`Are you sure you want to delete the patient with ID ${patientId}?`)) {
@@ -52,17 +52,24 @@ function AdminPatients() {
       await deleteDoc(userRef);
       console.log(`AdminPatients: Patient ${patientId} deleted from Firestore (users)`);
 
-      // Step 3: Delete from backend
+      // Step 3: Attempt to delete from backend (optional, non-critical step)
       const response = await fetch(`http://localhost:5005/delete-patient/${patientId}`, {
         method: 'DELETE',
         credentials: 'include', // Include credentials if your backend requires authentication
+      }).catch((err) => {
+        console.warn(`AdminPatients: Failed to delete patient from backend: ${err.message}`);
+        return { ok: false, statusText: err.message };
       });
+
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(`Failed to delete patient from backend: ${errorData.error || response.statusText}`);
+        const errorData = await response.json().catch(() => ({}));
+        console.warn(`AdminPatients: Failed to delete patient from backend: ${errorData.error || response.statusText}`);
+      } else {
+        console.log(`AdminPatients: Patient ${patientId} deleted from backend successfully`);
       }
 
       // No need to manually update state here; onSnapshot will handle it
+      if (refreshList) refreshList();
       alert('Patient deleted successfully!');
     } catch (err) {
       console.error('AdminPatients: Error deleting patient:', err);

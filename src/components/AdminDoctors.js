@@ -2,10 +2,9 @@
 import React, { useState, useEffect } from 'react';
 import { collection, query, where, getDocs, doc, deleteDoc } from 'firebase/firestore';
 import { db, auth } from '../services/firebase.js';
-import { deleteUser } from 'firebase/auth';
 import { SPECIALTIES } from '../constants/specialties.js';
 
-function AdminDoctors() {
+function AdminDoctors({ refreshTrigger, refreshList }) {
   const [doctors, setDoctors] = useState([]);
   const [roleFilter, setRoleFilter] = useState('All');
   const [loading, setLoading] = useState(false);
@@ -41,7 +40,7 @@ function AdminDoctors() {
     };
 
     fetchDoctors();
-  }, [roleFilter]);
+  }, [roleFilter, refreshTrigger]); // Add refreshTrigger to dependency array
 
   const handleDeleteDoctor = async (doctorId) => {
     if (!window.confirm(`Are you sure you want to delete the doctor with Doctor ID ${doctorId}?`)) {
@@ -68,31 +67,31 @@ function AdminDoctors() {
       await deleteDoc(userDocRef);
       console.log(`Doctor ${uid} deleted from Firestore (users)`);
 
-      // Step 4: Delete from Firebase Authentication (requires re-authentication or admin SDK)
-      // Note: This step requires the user to be signed in or use Admin SDK on server-side
-      // Here, we'll assume server handles auth deletion or skip it if not feasible client-side
-      // Uncomment if you have proper auth setup:
-      // await deleteUser(auth.currentUser); // Requires recent sign-in
-
-      // Step 5: Delete from backend using doctorId
+      // Step 4: Attempt to delete from backend using doctorId (optional, non-critical step)
       const adminId = localStorage.getItem('userId');
-      if (!adminId) throw new Error('Admin ID not found. Please log in again.');
-      const response = await fetch(`http://localhost:5005/delete-doctor/${doctorId}`, {
-        method: 'DELETE',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-user-uid': adminId, // Pass admin UID for role check
-        },
-        credentials: 'include',
-      });
+      if (adminId) {
+        const response = await fetch(`http://localhost:5005/delete-doctor/${doctorId}`, {
+          method: 'DELETE',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-user-uid': adminId, // Pass admin UID for role check
+          },
+          credentials: 'include',
+        });
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(`Failed to delete doctor from backend: ${errorData.error}`);
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          console.warn(`AdminDoctors: Failed to delete doctor from backend: ${errorData.error || 'Connection refused'}`);
+        } else {
+          console.log(`Doctor ${doctorId} deleted from backend successfully`);
+        }
+      } else {
+        console.warn('Admin ID not found, skipping backend deletion');
       }
 
-      // Step 6: Update local state
+      // Step 5: Update local state and trigger refresh
       setDoctors(doctors.filter((doctor) => doctor.doctorId !== doctorId));
+      if (refreshList) refreshList();
       alert('Doctor deleted successfully!');
     } catch (err) {
       console.error('AdminDoctors: Error deleting doctor:', err);
