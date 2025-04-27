@@ -1,11 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import AdminDoctors from './AdminDoctors.js';
 import AdminPatients from './AdminPatients.js';
 import AdminCases from './AdminCases.js';
 import { SPECIALTIES } from '../constants/specialties.js';
 import { doc, getDoc } from 'firebase/firestore';
-import { auth, db } from '../services/firebase.js';
+import { getAuth, signOut } from 'firebase/auth';
+import { db } from '../services/firebase.js';
 
 function AdminDashboard({ user, role, handleLogout, setUser }) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -25,55 +26,87 @@ function AdminDashboard({ user, role, handleLogout, setUser }) {
   });
   const [addDoctorError, setAddDoctorError] = useState('');
   const [addDoctorSuccess, setAddDoctorSuccess] = useState('');
-  const [newAdmin, setNewAdmin] = useState({
-    email: '',
-    password: '',
-  });
+  const [newAdmin, setNewAdmin] = useState({ email: '', password: '' });
   const [addAdminError, setAddAdminError] = useState('');
   const [addAdminSuccess, setAddAdminSuccess] = useState('');
   const [isAddingAdmin, setIsAddingAdmin] = useState(false);
   const navigate = useNavigate();
+  const isMounted = useRef(true); // Track component mount state
+  const auth = getAuth();
 
-  // Redirect if not an admin
+  // Cleanup on unmount
   useEffect(() => {
-    if (!user || role !== 'admin') {
-      navigate('/login');
-    }
+    return () => {
+      isMounted.current = false;
+      console.log('AdminDashboard: Component unmounted, cleanup complete');
+    };
+  }, []);
+
+  // Authentication and role check
+  useEffect(() => {
+    const checkAuth = async () => {
+      if (!user || role !== 'admin') {
+        if (isMounted.current) {
+          console.log('AdminDashboard: No user or not admin, redirecting to /login');
+          navigate('/login', { replace: true });
+        }
+        return;
+      }
+
+      // Verify admin role from Firestore
+      const adminId = localStorage.getItem('userId');
+      if (adminId) {
+        const userDocRef = doc(db, 'users', adminId);
+        const userDoc = await getDoc(userDocRef);
+        if (!userDoc.exists() || userDoc.data().role !== 'admin') {
+          if (isMounted.current) {
+            setAddDoctorError('Insufficient permissions. Only admins can access this dashboard.');
+            navigate('/login', { replace: true });
+          }
+        }
+      }
+    };
+
+    checkAuth();
   }, [user, role, navigate]);
 
-  const toggleMenu = () => {
-    setMenuOpen(!menuOpen);
-  };
+  const toggleMenu = useCallback(() => {
+    if (isMounted.current) setMenuOpen((prev) => !prev);
+  }, []);
 
-  const handleViewChange = (view) => {
-    setCurrentView(view);
-    setMenuOpen(false);
-    if (view === 'add-doctor') {
-      setShowAddForm(true);
-      setAddDoctorSuccess('');
-      setAddDoctorError('');
-      setNewDoctor({
-        name: '',
-        age: '',
-        sex: '',
-        experience: '',
-        specialty: SPECIALTIES[0],
-        email: '',
-        password: '',
-        qualification: '',
-        address: '',
-        contactNumber: '',
-      });
+  const handleViewChange = useCallback((view) => {
+    if (isMounted.current) {
+      setCurrentView(view);
+      setMenuOpen(false);
+      if (view === 'add-doctor') {
+        setShowAddForm(true);
+        setAddDoctorSuccess('');
+        setAddDoctorError('');
+        setNewDoctor({
+          name: '',
+          age: '',
+          sex: '',
+          experience: '',
+          specialty: SPECIALTIES[0],
+          email: '',
+          password: '',
+          qualification: '',
+          address: '',
+          contactNumber: '',
+        });
+      }
     }
-  };
+  }, []);
 
-  const handleDoctorInputChange = (e) => {
+  const handleDoctorInputChange = useCallback((e) => {
     const { name, value } = e.target;
-    setNewDoctor((prev) => ({ ...prev, [name]: value }));
-  };
+    if (isMounted.current) setNewDoctor((prev) => ({ ...prev, [name]: value }));
+  }, []);
 
-  const handleAddDoctor = async (e) => {
+  const handleAddDoctor = useCallback(async (e) => {
     e.preventDefault();
+    if (!isMounted.current) return;
+
     setAddDoctorError('');
     setAddDoctorSuccess('');
 
@@ -81,11 +114,10 @@ function AdminDashboard({ user, role, handleLogout, setUser }) {
     console.log('AdminDashboard: Admin UID from localStorage:', adminId);
     if (!adminId) {
       setAddDoctorError('Admin ID not found. Please log in again.');
-      navigate('/login');
+      navigate('/login', { replace: true });
       return;
     }
 
-    // Verify admin role
     const userDocRef = doc(db, 'users', adminId);
     const userDoc = await getDoc(userDocRef);
     if (!userDoc.exists() || userDoc.data().role !== 'admin') {
@@ -93,7 +125,6 @@ function AdminDashboard({ user, role, handleLogout, setUser }) {
       return;
     }
 
-    // Validate inputs
     const requiredFields = [
       'name',
       'age',
@@ -133,6 +164,9 @@ function AdminDashboard({ user, role, handleLogout, setUser }) {
     }
 
     try {
+      const idToken = await auth.currentUser?.getIdToken(true);
+      if (!idToken) throw new Error('Authentication token not available.');
+
       const doctorData = {
         role: 'doctor',
         email: newDoctor.email,
@@ -149,14 +183,13 @@ function AdminDashboard({ user, role, handleLogout, setUser }) {
 
       console.log('AdminDashboard: Sending request to /api/users with payload:', doctorData);
       const baseApiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app';
-      // Ensure no double /api in the URL
       const apiUrl = baseApiUrl.endsWith('/api') ? baseApiUrl.replace(/\/api$/, '') : baseApiUrl;
       const createResponse = await fetch(`${apiUrl}/api/users`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'x-user-uid': adminId,
-          'Authorization': `Bearer ${await auth.currentUser.getIdToken()}`,
+          'Authorization': `Bearer ${idToken}`,
         },
         body: JSON.stringify(doctorData),
         credentials: 'include',
@@ -172,50 +205,54 @@ function AdminDashboard({ user, role, handleLogout, setUser }) {
         throw new Error(`Failed to parse response as JSON: ${jsonError.message}. Raw response: ${responseText}`);
       }
 
-      if (!createResponse.ok) {
-        throw new Error(createData.error?.message || `Failed to create doctor: ${createResponse.statusText}`);
-      }
+      if (!createResponse.ok) throw new Error(createData.error?.message || `Failed to create doctor: ${createResponse.statusText}`);
 
       const { doctorId, uid } = createData;
       console.log('AdminDashboard: Doctor added with doctorId:', doctorId, 'and UID:', uid);
 
-      setAddDoctorSuccess('Doctor added successfully!');
-      setNewDoctor({
-        name: '',
-        age: '',
-        sex: '',
-        experience: '',
-        specialty: SPECIALTIES[0],
-        email: '',
-        password: '',
-        qualification: '',
-        address: '',
-        contactNumber: '',
-      });
-      setShowAddForm(false);
+      if (isMounted.current) {
+        setAddDoctorSuccess('Doctor added successfully!');
+        setNewDoctor({
+          name: '',
+          age: '',
+          sex: '',
+          experience: '',
+          specialty: SPECIALTIES[0],
+          email: '',
+          password: '',
+          qualification: '',
+          address: '',
+          contactNumber: '',
+        });
+        setShowAddForm(false);
+      }
     } catch (err) {
       console.error('AdminDashboard: Error adding doctor - Details:', err);
-      if (err.message.includes('email-already-in-use') || err.message.includes('This email is already registered')) {
-        setAddDoctorError('This email is already registered.');
-      } else if (err.message.includes('invalid-email')) {
-        setAddDoctorError('Please enter a valid Gmail address (e.g., example@gmail.com).');
-      } else if (err.message.includes('weak-password')) {
-        setAddDoctorError('Password should be at least 6 characters long.');
-      } else if (err.message.includes('Forbidden')) {
-        setAddDoctorError('Insufficient permissions to add doctor.');
-      } else {
-        setAddDoctorError(`Error adding doctor: ${err.message}`);
+      if (isMounted.current) {
+        if (err.message.includes('email-already-in-use') || err.message.includes('This email is already registered')) {
+          setAddDoctorError('This email is already registered.');
+        } else if (err.message.includes('invalid-email')) {
+          setAddDoctorError('Please enter a valid Gmail address (e.g., example@gmail.com).');
+        } else if (err.message.includes('weak-password')) {
+          setAddDoctorError('Password should be at least 6 characters long.');
+        } else if (err.message.includes('Forbidden')) {
+          setAddDoctorError('Insufficient permissions to add doctor.');
+        } else {
+          setAddDoctorError(`Error adding doctor: ${err.message}`);
+        }
       }
     }
-  };
+  }, [newDoctor, navigate]);
 
-  const handleAdminInputChange = (e) => {
+  const handleAdminInputChange = useCallback((e) => {
     const { name, value } = e.target;
-    setNewAdmin((prev) => ({ ...prev, [name]: value }));
-  };
+    if (isMounted.current) setNewAdmin((prev) => ({ ...prev, [name]: value }));
+  }, []);
 
-  const handleAddAdmin = async (e) => {
+  const handleAddAdmin = useCallback(async (e) => {
     e.preventDefault();
+    if (!isMounted.current) return;
+
     setAddAdminError('');
     setAddAdminSuccess('');
     setIsAddingAdmin(true);
@@ -233,6 +270,9 @@ function AdminDashboard({ user, role, handleLogout, setUser }) {
     }
 
     try {
+      const idToken = await auth.currentUser?.getIdToken(true);
+      if (!idToken) throw new Error('Authentication token not available.');
+
       const adminData = {
         role: 'admin',
         email: newAdmin.email,
@@ -240,46 +280,72 @@ function AdminDashboard({ user, role, handleLogout, setUser }) {
       };
 
       const baseApiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app';
-      // Ensure no double /api in the URL
       const apiUrl = baseApiUrl.endsWith('/api') ? baseApiUrl.replace(/\/api$/, '') : baseApiUrl;
       const response = await fetch(`${apiUrl}/api/users`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'x-user-uid': localStorage.getItem('userId'),
-          'Authorization': `Bearer ${await auth.currentUser.getIdToken()}`,
+          'Authorization': `Bearer ${idToken}`,
         },
         body: JSON.stringify(adminData),
         credentials: 'include',
       });
 
       const responseData = await response.json();
-      if (!response.ok) {
-        throw new Error(responseData.error?.message || `Failed to create admin: ${response.statusText}`);
-      }
+      if (!response.ok) throw new Error(responseData.error?.message || `Failed to create admin: ${response.statusText}`);
 
       const adminUid = responseData.uid;
       console.log('AdminDashboard: New admin created with UID:', adminUid);
 
-      setAddAdminSuccess('Admin added successfully!');
-      setNewAdmin({ email: '', password: '' });
+      if (isMounted.current) {
+        setAddAdminSuccess('Admin added successfully!');
+        setNewAdmin({ email: '', password: '' });
+      }
     } catch (error) {
       console.error('AdminDashboard: Add admin error - Details:', error);
-      if (error.message.includes('email-already-in-use') || error.message.includes('This email is already registered')) {
-        setAddAdminError('This email is already registered.');
-      } else if (error.message.includes('invalid-email')) {
-        setAddAdminError('Please enter a valid Gmail address (e.g., example@gmail.com).');
-      } else if (error.message.includes('weak-password')) {
-        setAddAdminError('Password should be at least 6 characters long.');
-      } else if (error.message.includes('Forbidden')) {
-        setAddAdminError('Insufficient permissions to add admin.');
-      } else {
-        setAddAdminError(`Failed to add admin: ${error.message}`);
+      if (isMounted.current) {
+        if (error.message.includes('email-already-in-use') || error.message.includes('This email is already registered')) {
+          setAddAdminError('This email is already registered.');
+        } else if (error.message.includes('invalid-email')) {
+          setAddAdminError('Please enter a valid Gmail address (e.g., example@gmail.com).');
+        } else if (error.message.includes('weak-password')) {
+          setAddAdminError('Password should be at least 6 characters long.');
+        } else if (error.message.includes('Forbidden')) {
+          setAddAdminError('Insufficient permissions to add admin.');
+        } else {
+          setAddAdminError(`Failed to add admin: ${error.message}`);
+        }
       }
     } finally {
-      setIsAddingAdmin(false);
+      if (isMounted.current) setIsAddingAdmin(false);
     }
-  };
+  }, [newAdmin]);
+
+  const handleLogoutClick = useCallback(async () => {
+    if (!isMounted.current) return;
+
+    console.log('AdminDashboard: Initiating logout');
+    try {
+      await signOut(auth);
+      await fetch(`${process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app'}/api/misc/logout`, {
+        method: 'POST',
+        headers: {
+          'x-user-uid': localStorage.getItem('userId'),
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+      });
+      if (handleLogout) await handleLogout();
+      if (isMounted.current) {
+        navigate('/login', { replace: true });
+        console.log('AdminDashboard: Logged out successfully');
+      }
+    } catch (err) {
+      console.error('AdminDashboard: Logout error:', err.message);
+      if (isMounted.current) setAddDoctorError('Failed to log out. Please try again.');
+    }
+  }, [navigate, handleLogout]);
 
   return (
     <div className="admin-dashboard">
@@ -308,7 +374,7 @@ function AdminDashboard({ user, role, handleLogout, setUser }) {
           <li className={currentView === 'cases' ? 'active' : ''} onClick={() => handleViewChange('cases')}>
             Cases List
           </li>
-          <li onClick={handleLogout}>Logout</li>
+          <li onClick={handleLogoutClick}>Logout</li>
         </ul>
       </div>
 
@@ -455,20 +521,22 @@ function AdminDashboard({ user, role, handleLogout, setUser }) {
                   <p className="success-message">{addDoctorSuccess}</p>
                   <button
                     onClick={() => {
-                      setShowAddForm(true);
-                      setAddDoctorSuccess('');
-                      setNewDoctor({
-                        name: '',
-                        age: '',
-                        sex: '',
-                        experience: '',
-                        specialty: SPECIALTIES[0],
-                        email: '',
-                        password: '',
-                        qualification: '',
-                        address: '',
-                        contactNumber: '',
-                      });
+                      if (isMounted.current) {
+                        setShowAddForm(true);
+                        setAddDoctorSuccess('');
+                        setNewDoctor({
+                          name: '',
+                          age: '',
+                          sex: '',
+                          experience: '',
+                          specialty: SPECIALTIES[0],
+                          email: '',
+                          password: '',
+                          qualification: '',
+                          address: '',
+                          contactNumber: '',
+                        });
+                      }
                     }}
                     className="submit-button"
                   >
@@ -796,4 +864,6 @@ function AdminDashboard({ user, role, handleLogout, setUser }) {
   );
 }
 
-export default React.memo(AdminDashboard);
+export default React.memo(AdminDashboard, (prevProps, nextProps) => {
+  return prevProps.user === nextProps.user && prevProps.role === nextProps.role;
+});
