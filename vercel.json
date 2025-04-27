@@ -32,6 +32,10 @@
       "destination": "/api/admin/index"
     },
     {
+      "source": "/api/admin/missed-doses/:patientId/:doctorId",
+      "destination": "/api/admin/index"
+    },
+    {
       "source": "/api/users/:uid",
       "destination": "/api/users/[uid]"
     },
