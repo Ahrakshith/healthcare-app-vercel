@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { collection, query, where, onSnapshot, getDocs, doc, getDoc, setDoc } from 'firebase/firestore';
@@ -2096,7 +2095,6 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           background: #C0392B;
           transform: scale(1.05);
         }
-
 
         @keyframes shake {
           0%,

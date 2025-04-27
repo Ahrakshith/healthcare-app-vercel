@@ -204,7 +204,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     };
   }, [firebaseUser, effectiveUserId, effectivePatientId, doctorId, role, navigate]);
 
-  // Handle Pusher and message fetching
+  // Handle Pusher and message fetching with session handling
   useEffect(() => {
     if (!firebaseUser || !languagePreference) return;
 
@@ -252,11 +252,24 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     };
 
     try {
-      pusherRef.current = new Pusher(pusherKey, {
+      // Ensure Pusher uses a unique connection per session
+      const pusherConfig = {
         cluster: pusherCluster,
         authEndpoint: `${apiBaseUrl}/pusher/auth`,
         auth: { headers: { 'x-user-uid': effectiveUserId } },
-      });
+        userAuthentication: {
+          endpoint: `${apiBaseUrl}/pusher/user-auth`,
+          transport: 'ajax',
+          headers: { 'x-user-uid': effectiveUserId },
+        },
+      };
+
+      if (pusherRef.current) {
+        pusherRef.current.disconnect();
+        pusherRef.current = null;
+      }
+
+      pusherRef.current = new Pusher(pusherKey, pusherConfig);
 
       pusherRef.current.connection.bind('error', (err) => {
         console.error('Pusher connection error:', err);
@@ -271,7 +284,9 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         setError('');
       });
 
-      const channel = pusherRef.current.subscribe(`chat-${effectivePatientId}-${doctorId}`);
+      const channelName = `chat-${effectivePatientId}-${doctorId}`;
+      const channel = pusherRef.current.subscribe(channelName);
+
       channel.bind('new-message', (message) => {
         console.log('PatientChat: Received new message:', {
           ...message,
@@ -304,7 +319,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       fetchMessages();
     } catch (err) {
       console.error('Pusher initialization failed:', err);
-      setError('Failed to initialize real-time messaging. Please refresh the page.');
+      setError('Failed to initialize real-time messaging. Please refresh the page or check your session.');
     }
 
     return () => {
@@ -594,7 +609,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
 
       const notificationResponse = await notifyAdmin(
         profileData?.name || 'Unknown Patient',
-        doctorName,
+        doctorId,
         alertData.message,
         effectivePatientId,
         doctorId,
