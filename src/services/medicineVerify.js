@@ -202,7 +202,7 @@ async function notifyAdmin(patientName, doctorName, message, patientId, doctorId
     // Use the production URL for the admin notification endpoint
     const apiBaseUrl = 'https://healthcare-app-vercel.vercel.app/api';
     const response = await fetch(`${apiBaseUrl}/admin/notify`, {
-      method: 'POST', // Switch to GET if POST continues to fail (405 error)
+      method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${idToken}`,
@@ -225,7 +225,7 @@ async function notifyAdmin(patientName, doctorName, message, patientId, doctorId
     console.log('medicineVerify.js: Admin notified successfully:', result);
     return {
       success: true,
-      message: 'Admin notified successfully.',
+      message: 'Notification sent successfully.',
     };
   } catch (error) {
     console.error('medicineVerify.js: Error notifying admin:', error.message);
