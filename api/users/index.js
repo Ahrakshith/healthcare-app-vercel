@@ -263,7 +263,7 @@ export default async function handler(req, res) {
     });
   } catch (error) {
     console.error(`Error in /api/users for admin ${adminId}:`, error.message, error.stack);
-    let errorResponse = { error: { code: 500, message: 'Server error', details: error.message } };
+    let errorResponse = { error: { code: 500, message: 'A server error has occurred' } };
     if (error.code === 'auth/email-already-in-use') {
       errorResponse = { error: { code: 409, message: 'This email is already registered' } };
     } else if (error.code === 'auth/invalid-email') {
