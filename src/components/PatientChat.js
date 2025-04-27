@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Pusher from 'pusher-js';
@@ -10,7 +9,7 @@ import {
   playAudio,
 } from '../services/speech.js';
 import { verifyMedicine, notifyAdmin } from '../services/medicineVerify.js';
-import { doc, getDoc, collection, addDoc, getDocs, updateDoc, setDoc } from 'firebase/firestore'; // Removed duplicate getDoc
+import { doc, getDoc, collection, addDoc, getDocs, updateDoc, setDoc } from 'firebase/firestore';
 import { db, auth } from '../services/firebase.js';
 import { signOut } from 'firebase/auth';
 
@@ -411,13 +410,12 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     let currentDate = new Date(startDate);
 
     while (currentDate <= endDate) {
-      const dateStr = currentDate.toISOString().split('T')[0]; // e.g., '2025-04-27'
+      const dateStr = currentDate.toISOString().split('T')[0];
 
-      // Reminder 1
       const scheduledDate1 = new Date(currentDate);
       scheduledDate1.setHours(time1.hours, time1.minutes, 0, 0);
       if (scheduledDate1 > new Date()) {
-        const reminder1Id = `${medicine}_${dateStr}_${time1Str.replace(/[:.\s]/g, '-')}`; // Deterministic ID
+        const reminder1Id = `${medicine}_${dateStr}_${time1Str.replace(/[:.\s]/g, '-')}`;
         const reminder1Ref = doc(db, `patients/${effectivePatientId}/reminders`, reminder1Id);
         const reminder1 = {
           medicine,
@@ -430,7 +428,6 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         };
 
         try {
-          // Check if reminder exists
           const reminder1Snap = await getDoc(reminder1Ref);
           if (reminder1Snap.exists()) {
             console.log(`setupMedicationSchedule: Reminder ${reminder1Id} exists, updating`);
@@ -446,11 +443,10 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         }
       }
 
-      // Reminder 2
       const scheduledDate2 = new Date(currentDate);
       scheduledDate2.setHours(time2.hours, time2.minutes, 0, 0);
       if (scheduledDate2 > new Date()) {
-        const reminder2Id = `${medicine}_${dateStr}_${time2Str.replace(/[:.\s]/g, '-')}`; // Deterministic ID
+        const reminder2Id = `${medicine}_${dateStr}_${time2Str.replace(/[:.\s]/g, '-')}`;
         const reminder2Ref = doc(db, `patients/${effectivePatientId}/reminders`, reminder2Id);
         const reminder2 = {
           medicine,
@@ -463,7 +459,6 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         };
 
         try {
-          // Check if reminder exists
           const reminder2Snap = await getDoc(reminder2Ref);
           if (reminder2Snap.exists()) {
             console.log(`setupMedicationSchedule: Reminder ${reminder2Id} exists, updating`);
@@ -526,7 +521,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     });
   }, []);
 
-  const calculateAdherence mairie = useCallback((remindersList) => {
+  const calculateAdherenceRate = useCallback((remindersList) => {
     if (remindersList.length === 0) {
       setAdherenceRate(0);
       return;
@@ -569,7 +564,6 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       userId: effectiveUserId,
     };
 
-    // Validate alertData
     if (!alertData.patientId || !alertData.doctorId || !alertData.message || !alertData.timestamp || !alertData.userId) {
       console.error('sendMissedDoseAlert: Invalid alert data:', alertData);
       setError('Failed to send missed dose alert: Invalid data provided.');
