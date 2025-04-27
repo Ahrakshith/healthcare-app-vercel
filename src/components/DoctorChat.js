@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { collection, query, where, onSnapshot, getDocs, doc, getDoc, setDoc } from 'firebase/firestore';
@@ -783,6 +782,28 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           }
           return prev;
         });
+
+        // Store the record in doctor_patient_records
+        const recordData = {
+          doctorId,
+          patientId: selectedPatientId,
+          ...(actionType === 'Diagnosis' || actionType === 'Combined' ? { diagnosis } : { diagnosis: null }),
+          ...(actionType === 'Prescription' || actionType === 'Combined' ? { prescription } : { prescription: null }),
+        };
+        const recordResponse = await fetch(`${apiBaseUrl}/doctors/records`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-user-uid': user.uid,
+            'Authorization': `Bearer ${idToken}`,
+          },
+          body: JSON.stringify(recordData),
+          credentials: 'include',
+        });
+        if (!recordResponse.ok) {
+          throw new Error(`HTTP ${recordResponse.status}: ${await recordResponse.text()}`);
+        }
+        console.log('Record stored successfully:', recordData);
 
         const selectedPatient = patients.find((p) => p.patientId === selectedPatientId);
         const disease = actionType === 'Prescription' ? messages

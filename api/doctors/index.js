@@ -45,29 +45,123 @@ async function operationWithRetry(operation, retries = 3, backoff = 1000) {
   }
 }
 
+// Handler for storing doctor-patient records
+const handleRecordsRequest = async (req, res, userId) => {
+  if (req.method === 'POST') {
+    try {
+      const { doctorId, patientId, diagnosis, prescription } = req.body;
+
+      // Validate request body
+      if (!doctorId || !patientId || (!diagnosis && !prescription)) {
+        return res.status(400).json({
+          error: { code: 400, message: 'doctorId, patientId, and at least one of diagnosis or prescription are required' }
+        });
+      }
+
+      // Verify user role and doctorId
+      const userDoc = await operationWithRetry(() => db.collection('users').doc(userId).get());
+      if (!userDoc.exists || userDoc.data().role !== 'doctor') {
+        return res.status(403).json({
+          error: { code: 403, message: 'Forbidden: Only doctors can store records' }
+        });
+      }
+
+      const doctorQuery = await operationWithRetry(() =>
+        db.collection('doctors').where('uid', '==', userId).get()
+      );
+      if (doctorQuery.empty || doctorQuery.docs[0].data().doctorId !== doctorId) {
+        return res.status(403).json({
+          error: { code: 403, message: 'Forbidden: doctorId does not match authenticated user' }
+        });
+      }
+
+      // Verify patient exists
+      const patientDoc = await operationWithRetry(() => db.collection('patients').doc(patientId).get());
+      if (!patientDoc.exists) {
+        return res.status(404).json({
+          error: { code: 404, message: 'Patient not found' }
+        });
+      }
+
+      // Prepare the record entry
+      const recordEntry = {
+        diagnosis: diagnosis || null,
+        prescription: prescription || null,
+        timestamp: new Date().toISOString(),
+      };
+
+      // Store or update the record in Firestore
+      const recordId = `${doctorId}_${patientId}`;
+      const recordRef = db.collection('doctor_patient_records').doc(recordId);
+      const recordDoc = await operationWithRetry(() => recordRef.get());
+
+      if (recordDoc.exists) {
+        // Append to existing records
+        await operationWithRetry(() =>
+          recordRef.update({
+            records: admin.firestore.FieldValue.arrayUnion(recordEntry),
+          })
+        );
+      } else {
+        // Create new document with the first record
+        await operationWithRetry(() =>
+          recordRef.set({
+            doctorId,
+            patientId,
+            records: [recordEntry],
+          })
+        );
+      }
+
+      console.log(`Record stored successfully for doctor ${doctorId} and patient ${patientId}`);
+      return res.status(200).json({ success: true, message: 'Record stored successfully' });
+    } catch (error) {
+      console.error(`Error storing record for user ${userId}:`, error.message);
+      return res.status(500).json({
+        error: { code: 500, message: 'Server error', details: error.message }
+      });
+    }
+  } else {
+    res.setHeader('Allow', ['POST']);
+    return res.status(405).json({
+      error: { code: 405, message: `Method ${req.method} Not Allowed for /doctors/records` }
+    });
+  }
+};
+
+// Main handler
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', process.env.FRONTEND_URL || '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'x-user-uid, Content-Type, Authorization, Accept');
 
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
 
-  if (req.method !== 'GET') {
-    return res.status(405).json({ error: { code: 405, message: 'Method not allowed' } });
-  }
-
   const userId = req.headers['x-user-uid'];
   if (!userId) {
-    return res.status(401).json({ error: { code: 401, message: 'Unauthorized: Missing x-user-uid header' } });
+    return res.status(401).json({
+      error: { code: 401, message: 'Unauthorized: Missing x-user-uid header' }
+    });
   }
 
   try {
+    if (req.url.includes('/records')) {
+      return handleRecordsRequest(req, res, userId);
+    }
+
+    // Existing GET endpoint for fetching doctors
+    if (req.method !== 'GET') {
+      return res.status(405).json({ error: { code: 405, message: 'Method not allowed' } });
+    }
+
     // Verify user role
     const userDoc = await operationWithRetry(() => db.collection('users').doc(userId).get());
     if (!userDoc.exists || userDoc.data().role !== 'patient') {
-      return res.status(403).json({ error: { code: 403, message: 'Forbidden: Only patients can fetch doctors' } });
+      return res.status(403).json({
+        error: { code: 403, message: 'Forbidden: Only patients can fetch doctors' }
+      });
     }
 
     // Get specialty from query parameter
@@ -88,6 +182,8 @@ export default async function handler(req, res) {
     return res.status(200).json({ doctors });
   } catch (error) {
     console.error(`Error in /api/doctors: ${error.message}`);
-    return res.status(500).json({ error: { code: 500, message: 'Server error', details: error.message } });
+    return res.status(500).json({
+      error: { code: 500, message: 'Server error', details: error.message }
+    });
   }
 }
