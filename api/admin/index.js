@@ -528,8 +528,10 @@ const handleDeleteDoctorRequest = async (req, res, userId) => {
       }
 
       // Verify the user is an admin
-      const adminQuery = await db.collection('admins').where('uid', '==', userId).get();
+      const adminQuery = await db.collection('admin').where('uid', '==', userId).get();
+      console.log(`[DEBUG] Admin check for delete-doctor, user ${userId}: Query result count = ${adminQuery.size}, UID queried: ${userId}`);
       if (adminQuery.empty || adminQuery.docs[0].data().role !== 'admin') {
+        console.log(`[DEBUG] User ${userId} not found in 'admin' collection or not an admin`);
         return res.status(403).json({ success: false, message: 'Only admins can delete doctors' });
       }
 
@@ -581,8 +583,10 @@ const handleDeletePatientRequest = async (req, res, userId) => {
       }
 
       // Verify the user is an admin
-      const adminQuery = await db.collection('admins').where('uid', '==', userId).get();
+      const adminQuery = await db.collection('admin').where('uid', '==', userId).get();
+      console.log(`[DEBUG] Admin check for delete-patient, user ${userId}: Query result count = ${adminQuery.size}, UID queried: ${userId}`);
       if (adminQuery.empty || adminQuery.docs[0].data().role !== 'admin') {
+        console.log(`[DEBUG] User ${userId} not found in 'admin' collection or not an admin`);
         return res.status(403).json({ success: false, message: 'Only admins can delete patients' });
       }
 
@@ -630,12 +634,12 @@ const handleInvalidPrescriptionsRequest = async (req, res, userId) => {
       // Log the userId being queried
       console.log(`[DEBUG] Verifying admin role for userId: ${userId}`);
 
-      // Verify the user is an admin by checking the 'admins' collection first
-      const adminQuery = await db.collection('admins').where('uid', '==', userId).get();
-      console.log(`[DEBUG] Admin query result in 'admins' collection: Query result count = ${adminQuery.size}, UID queried: ${userId}`);
+      // Verify the user is an admin by checking the 'admin' collection first
+      const adminQuery = await db.collection('admin').where('uid', '==', userId).get();
+      console.log(`[DEBUG] Admin query result in 'admin' collection: Query result count = ${adminQuery.size}, UID queried: ${userId}`);
 
       if (adminQuery.empty) {
-        console.log(`[DEBUG] No admin document found for UID ${userId} in 'admins' collection, falling back to 'users' collection`);
+        console.log(`[DEBUG] No admin document found for UID ${userId} in 'admin' collection, falling back to 'users' collection`);
         const userQuery = await db.collection('users').where('uid', '==', userId).get();
         console.log(`[DEBUG] User query result in 'users' collection: Query result count = ${userQuery.size}, UID queried: ${userId}`);
 
@@ -654,9 +658,9 @@ const handleInvalidPrescriptionsRequest = async (req, res, userId) => {
       } else {
         const adminDoc = adminQuery.docs[0];
         const userRole = adminDoc.data().role;
-        console.log(`[DEBUG] User ${userId} role from 'admins' collection: ${userRole}`);
+        console.log(`[DEBUG] User ${userId} role from 'admin' collection: ${userRole}`);
         if (userRole !== 'admin') {
-          console.log(`[DEBUG] User ${userId} role (${userRole}) from 'admins' collection is not 'admin'`);
+          console.log(`[DEBUG] User ${userId} role (${userRole}) from 'admin' collection is not 'admin'`);
           return res.status(403).json({ success: false, message: 'Only admins can fetch invalid prescriptions', userRole });
         }
       }
