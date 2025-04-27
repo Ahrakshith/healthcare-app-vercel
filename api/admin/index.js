@@ -22,7 +22,7 @@ if (!admin.apps.length) {
 
 const db = admin.firestore();
 
-// Initialize GCS
+// Initialize Google Cloud Storage (GCS)
 let storage;
 try {
   const gcsPrivateKey = process.env.GCS_PRIVATE_KEY?.replace(/\\n/g, '\n');
@@ -116,7 +116,7 @@ const handleChatRequest = async (req, res, patientId, doctorId, userId) => {
       }
 
       if (!isAuthorized) {
-        return res.status(403).json({ error: { code: 403, message: 'You are not authorized to access this chat' } });
+        return res.status(403).json({ success: false, message: 'You are not authorized to access this chat' });
       }
 
       const assignmentQuery = await db.collection('doctor_assignments')
@@ -124,14 +124,14 @@ const handleChatRequest = async (req, res, patientId, doctorId, userId) => {
         .where('doctorId', '==', doctorId)
         .get();
       if (assignmentQuery.empty) {
-        return res.status(404).json({ error: { code: 404, message: 'No chat assignment found' } });
+        return res.status(404).json({ success: false, message: 'No chat assignment found' });
       }
 
       const chatFile = bucket.file(`chats/${patientId}-${doctorId}/messages.json`);
       const [exists] = await chatFile.exists();
       if (!exists) {
         console.log(`No messages found for chat between patient ${patientId} and doctor ${doctorId}`);
-        return res.json({ messages: [], userRole });
+        return res.json({ success: true, messages: [], userRole });
       }
 
       const [contents] = await chatFile.download();
@@ -151,10 +151,10 @@ const handleChatRequest = async (req, res, patientId, doctorId, userId) => {
       );
 
       console.log(`Fetched ${messagesWithUrls.length} messages for chat between patient ${patientId} and doctor ${doctorId}`);
-      return res.json({ messages: messagesWithUrls, userRole });
+      return res.json({ success: true, messages: messagesWithUrls, userRole });
     } catch (error) {
       console.error(`Error fetching chat for patient ${patientId} and doctor ${doctorId}:`, error.message);
-      return res.status(500).json({ error: { code: 500, message: 'Failed to fetch messages', details: error.message } });
+      return res.status(500).json({ success: false, message: 'Failed to fetch messages', details: error.message });
     }
   } else if (req.method === 'POST') {
     const contentType = req.headers['content-type'];
@@ -197,19 +197,19 @@ const handleChatRequest = async (req, res, patientId, doctorId, userId) => {
           if (message.sender === 'doctor') {
             const doctorQuery = await db.collection('doctors').where('uid', '==', userId).get();
             if (doctorQuery.empty) {
-              return res.status(404).json({ error: { code: 404, message: 'Doctor profile not found for this user' } });
+              return res.status(404).json({ success: false, message: 'Doctor profile not found for this user' });
             }
             expectedId = doctorQuery.docs[0].data().doctorId;
           } else if (message.sender === 'patient') {
             const patientQuery = await db.collection('patients').where('uid', '==', userId).get();
             if (patientQuery.empty) {
-              return res.status(404).json({ error: { code: 404, message: 'Patient profile not found for this user' } });
+              return res.status(404).json({ success: false, message: 'Patient profile not found for this user' });
             }
             expectedId = patientQuery.docs[0].data().patientId;
           }
 
           if ((message.sender === 'doctor' && doctorId !== expectedId) || (message.sender === 'patient' && patientId !== expectedId)) {
-            return res.status(403).json({ error: { code: 403, message: `You are not authorized to send messages as this ${message.sender}` } });
+            return res.status(403).json({ success: false, message: `You are not authorized to send messages as this ${message.sender}` });
           }
 
           const assignmentQuery = await db.collection('doctor_assignments')
@@ -217,7 +217,7 @@ const handleChatRequest = async (req, res, patientId, doctorId, userId) => {
             .where('doctorId', '==', doctorId)
             .get();
           if (assignmentQuery.empty) {
-            return res.status(404).json({ error: { code: 404, message: 'No chat assignment found' } });
+            return res.status(404).json({ success: false, message: 'No chat assignment found' });
           }
 
           const chatDir = `chats/${patientId}-${doctorId}`;
@@ -254,10 +254,10 @@ const handleChatRequest = async (req, res, patientId, doctorId, userId) => {
           await pusher.trigger(`chat-${patientId}-${doctorId}`, 'new-message', newMessage);
           console.log(`Pusher event 'new-message' triggered on channel chat-${patientId}-${doctorId}`);
 
-          return res.status(200).json({ message: 'Message saved successfully', newMessage });
+          return res.status(200).json({ success: true, message: 'Message saved successfully', newMessage });
         } catch (error) {
           console.error(`Error processing file upload for chat between patient ${patientId} and doctor ${doctorId}:`, error.message);
-          return res.status(500).json({ error: { code: 500, message: 'Failed to process file upload', details: error.message } });
+          return res.status(500).json({ success: false, message: 'Failed to process file upload', details: error.message });
         }
       });
 
@@ -265,7 +265,7 @@ const handleChatRequest = async (req, res, patientId, doctorId, userId) => {
     } else {
       const { message, append } = req.body;
       if (!message || typeof message !== 'object') {
-        return res.status(400).json({ error: { code: 400, message: 'Message object is required' } });
+        return res.status(400).json({ success: false, message: 'Message object is required' });
       }
 
       try {
@@ -275,19 +275,19 @@ const handleChatRequest = async (req, res, patientId, doctorId, userId) => {
         if (message.sender === 'doctor') {
           const doctorQuery = await db.collection('doctors').where('uid', '==', userId).get();
           if (doctorQuery.empty) {
-            return res.status(404).json({ error: { code: 404, message: 'Doctor profile not found for this user' } });
+            return res.status(404).json({ success: false, message: 'Doctor profile not found for this user' });
           }
           expectedId = doctorQuery.docs[0].data().doctorId;
         } else if (message.sender === 'patient') {
           const patientQuery = await db.collection('patients').where('uid', '==', userId).get();
           if (patientQuery.empty) {
-            return res.status(404).json({ error: { code: 404, message: 'Patient profile not found for this user' } });
+            return res.status(404).json({ success: false, message: 'Patient profile not found for this user' });
           }
           expectedId = patientQuery.docs[0].data().patientId;
         }
 
         if ((message.sender === 'doctor' && doctorId !== expectedId) || (message.sender === 'patient' && patientId !== expectedId)) {
-          return res.status(403).json({ error: { code: 403, message: `You are not authorized to send messages as this ${message.sender}` } });
+          return res.status(403).json({ success: false, message: `You are not authorized to send messages as this ${message.sender}` });
         }
 
         const assignmentQuery = await db.collection('doctor_assignments')
@@ -295,7 +295,7 @@ const handleChatRequest = async (req, res, patientId, doctorId, userId) => {
           .where('doctorId', '==', doctorId)
           .get();
         if (assignmentQuery.empty) {
-          return res.status(404).json({ error: { code: 404, message: 'No chat assignment found' } });
+          return res.status(404).json({ success: false, message: 'No chat assignment found' });
         }
 
         const chatFile = bucket.file(`chats/${patientId}-${doctorId}/messages.json`);
@@ -323,15 +323,15 @@ const handleChatRequest = async (req, res, patientId, doctorId, userId) => {
         await pusher.trigger(`chat-${patientId}-${doctorId}`, 'new-message', newMessage);
         console.log(`Pusher event 'new-message' triggered on channel chat-${patientId}-${doctorId}`);
 
-        return res.status(200).json({ message: 'Message saved successfully', newMessage });
+        return res.status(200).json({ success: true, message: 'Message saved successfully', newMessage });
       } catch (error) {
         console.error(`Error saving message for chat between patient ${patientId} and doctor ${doctorId}:`, error.message);
-        return res.status(500).json({ error: { code: 500, message: 'Failed to save message', details: error.message } });
+        return res.status(500).json({ success: false, message: 'Failed to save message', details: error.message });
       }
     }
   } else {
     res.setHeader('Allow', ['GET', 'POST']);
-    return res.status(405).json({ error: { code: 405, message: `Method ${req.method} Not Allowed for /chats/${patientId}/${doctorId}` } });
+    return res.status(405).json({ success: false, message: `Method ${req.method} Not Allowed for /chats/${patientId}/${doctorId}` });
   }
 };
 
@@ -341,11 +341,11 @@ const handleMissedDoseAlertsRequest = async (req, res, patientId, doctorId, user
     try {
       const doctorQuery = await db.collection('doctors').where('uid', '==', userId).get();
       if (doctorQuery.empty) {
-        return res.status(404).json({ error: { code: 404, message: 'Doctor profile not found for this user' } });
+        return res.status(404).json({ success: false, message: 'Doctor profile not found for this user' });
       }
       const doctorData = doctorQuery.docs[0].data();
       if (doctorData.doctorId !== doctorId) {
-        return res.status(403).json({ error: { code: 403, message: 'You are not authorized to access alerts for this doctor' } });
+        return res.status(403).json({ success: false, message: 'You are not authorized to access alerts for this doctor' });
       }
 
       const assignmentQuery = await db.collection('doctor_assignments')
@@ -353,7 +353,7 @@ const handleMissedDoseAlertsRequest = async (req, res, patientId, doctorId, user
         .where('doctorId', '==', doctorId)
         .get();
       if (assignmentQuery.empty) {
-        return res.status(404).json({ error: { code: 404, message: 'No assignment found for this patient and doctor' } });
+        return res.status(404).json({ success: false, message: 'No assignment found for this patient and doctor' });
       }
 
       const alertsQuery = await db.collection('missed_dose_alerts')
@@ -361,20 +361,20 @@ const handleMissedDoseAlertsRequest = async (req, res, patientId, doctorId, user
         .where('doctorId', '==', doctorId)
         .get();
 
-      const alerts = alertsQuery.docs.map(doc => ({
+      const alerts = alertsQuery.docs.map((doc) => ({
         id: doc.id,
         ...doc.data(),
       }));
 
       console.log(`Fetched ${alerts.length} missed dose alerts for patient ${patientId} and doctor ${doctorId}`);
-      return res.status(200).json({ alerts });
+      return res.status(200).json({ success: true, alerts });
     } catch (error) {
       console.error(`Error fetching missed dose alerts for patient ${patientId} and doctor ${doctorId}:`, error.message);
-      return res.status(500).json({ error: { code: 500, message: 'Failed to fetch missed dose alerts', details: error.message } });
+      return res.status(500).json({ success: false, message: 'Failed to fetch missed dose alerts', details: error.message });
     }
   } else {
     res.setHeader('Allow', ['GET']);
-    return res.status(405).json({ error: { code: 405, message: `Method ${req.method} Not Allowed for /missed-doses/${patientId}/${doctorId}` } });
+    return res.status(405).json({ success: false, message: `Method ${req.method} Not Allowed for /missed-doses/${patientId}/${doctorId}` });
   }
 };
 
@@ -385,7 +385,7 @@ const handleAdminNotifyRequest = async (req, res, userId) => {
       const { patientId, doctorId, message } = req.body;
 
       if (!patientId || !doctorId || !message) {
-        return res.status(400).json({ error: { code: 400, message: 'patientId, doctorId, and message are required' } });
+        return res.status(400).json({ success: false, message: 'patientId, doctorId, and message are required' });
       }
 
       // Verify the user is authorized (either patient or doctor)
@@ -400,7 +400,7 @@ const handleAdminNotifyRequest = async (req, res, userId) => {
       }
 
       if (!isAuthorized) {
-        return res.status(403).json({ error: { code: 403, message: 'You are not authorized to send this notification' } });
+        return res.status(403).json({ success: false, message: 'You are not authorized to send this notification' });
       }
 
       // Store the notification in Firestore
@@ -423,35 +423,35 @@ const handleAdminNotifyRequest = async (req, res, userId) => {
       });
 
       console.log(`Admin notification sent for patient ${patientId} and doctor ${doctorId}`);
-      return res.status(200).json({ message: 'Notification sent successfully' });
+      return res.status(200).json({ success: true, message: 'Notification sent successfully' });
     } catch (error) {
       console.error(`Error sending admin notification for user ${userId}:`, error.message);
-      return res.status(500).json({ error: { code: 500, message: 'Failed to send notification', details: error.message } });
+      return res.status(500).json({ success: false, message: 'Failed to send notification', details: error.message });
     }
   } else {
     res.setHeader('Allow', ['POST']);
-    return res.status(405).json({ error: { code: 405, message: `Method ${req.method} Not Allowed for /admin/notify` } });
+    return res.status(405).json({ success: false, message: `Method ${req.method} Not Allowed for /admin/notify` });
   }
 };
 
-// New handler for accepting a patient
+// Handler for accepting a patient
 const handleAcceptPatientRequest = async (req, res, userId) => {
   if (req.method === 'POST') {
     try {
       const { doctorId, patientId, accept } = req.body;
 
       if (!doctorId || !patientId || typeof accept !== 'boolean') {
-        return res.status(400).json({ error: { code: 400, message: 'doctorId, patientId, and accept (boolean) are required' } });
+        return res.status(400).json({ success: false, message: 'doctorId, patientId, and accept (boolean) are required' });
       }
 
       // Verify the user is the doctor
       const doctorQuery = await db.collection('doctors').where('uid', '==', userId).get();
       if (doctorQuery.empty) {
-        return res.status(404).json({ error: { code: 404, message: 'Doctor profile not found for this user' } });
+        return res.status(404).json({ success: false, message: 'Doctor profile not found for this user' });
       }
       const doctorData = doctorQuery.docs[0].data();
       if (doctorData.doctorId !== doctorId) {
-        return res.status(403).json({ error: { code: 403, message: 'You are not authorized to perform this action as this doctor' } });
+        return res.status(403).json({ success: false, message: 'You are not authorized to perform this action as this doctor' });
       }
 
       // Check if the patient is assigned to this doctor
@@ -460,7 +460,7 @@ const handleAcceptPatientRequest = async (req, res, userId) => {
         .where('doctorId', '==', doctorId)
         .get();
       if (assignmentQuery.empty) {
-        return res.status(404).json({ error: { code: 404, message: 'No assignment found for this patient and doctor' } });
+        return res.status(404).json({ success: false, message: 'No assignment found for this patient and doctor' });
       }
 
       // Update the acceptance status in Firestore
@@ -479,14 +479,14 @@ const handleAcceptPatientRequest = async (req, res, userId) => {
       }, { merge: true });
 
       console.log(`Doctor ${doctorId} ${accept ? 'accepted' : 'rejected'} patient ${patientId}`);
-      return res.status(200).json({ message: `Patient ${accept ? 'accepted' : 'rejected'} successfully` });
+      return res.status(200).json({ success: true, message: `Patient ${accept ? 'accepted' : 'rejected'} successfully` });
     } catch (error) {
       console.error(`Error in /admin/accept-patient for user ${userId}:`, error.message);
-      return res.status(500).json({ error: { code: 500, message: 'Failed to process accept-patient request', details: error.message } });
+      return res.status(500).json({ success: false, message: 'Failed to process accept-patient request', details: error.message });
     }
   } else {
     res.setHeader('Allow', ['POST']);
-    return res.status(405).json({ error: { code: 405, message: `Method ${req.method} Not Allowed for /admin/accept-patient` } });
+    return res.status(405).json({ success: false, message: `Method ${req.method} Not Allowed for /admin/accept-patient` });
   }
 };
 
@@ -505,7 +505,7 @@ export default async function handler(req, res) {
 
   if (!userId || !authHeader) {
     console.error('Missing authentication headers:', { userId, authHeader });
-    return res.status(401).json({ error: { code: 401, message: 'Authentication headers missing' } });
+    return res.status(401).json({ success: false, message: 'Authentication headers missing' });
   }
 
   try {
@@ -513,14 +513,14 @@ export default async function handler(req, res) {
     const decodedToken = await admin.auth().verifyIdToken(token);
     if (decodedToken.uid !== userId) {
       console.error('User ID mismatch:', { tokenUid: decodedToken.uid, headerUid: userId });
-      return res.status(403).json({ error: { code: 403, message: 'Unauthorized: Token does not match user' } });
+      return res.status(403).json({ success: false, message: 'Unauthorized: Token does not match user' });
     }
 
     const { patientId, doctorId } = req.query;
 
     if (req.url.includes('/missed-doses')) {
       if (!patientId || !doctorId) {
-        return res.status(400).json({ error: { code: 400, message: 'patientId and doctorId are required' } });
+        return res.status(400).json({ success: false, message: 'patientId and doctorId are required' });
       }
       return handleMissedDoseAlertsRequest(req, res, patientId, doctorId, userId);
     } else if (req.url.includes('/notify')) {
@@ -529,15 +529,15 @@ export default async function handler(req, res) {
       return handleAcceptPatientRequest(req, res, userId);
     } else {
       if (!patientId || !doctorId) {
-        return res.status(400).json({ error: { code: 400, message: 'patientId and doctorId are required' } });
+        return res.status(400).json({ success: false, message: 'patientId and doctorId are required' });
       }
       return handleChatRequest(req, res, patientId, doctorId, userId);
     }
   } catch (error) {
     console.error(`Error in api/admin/index.js (${req.method}) for user ${userId}:`, error.message);
     if (error.message === 'Invalid sender type') {
-      return res.status(400).json({ error: { code: 400, message: error.message } });
+      return res.status(400).json({ success: false, message: error.message });
     }
-    return res.status(500).json({ error: { code: 500, message: 'Failed to process request', details: error.message } });
+    return res.status(500).json({ success: false, message: 'Failed to process request', details: error.message });
   }
 }

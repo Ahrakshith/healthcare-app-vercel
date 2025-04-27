@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Pusher from 'pusher-js';
@@ -32,6 +33,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   const [missedDoses, setMissedDoses] = useState(0);
   const [missedDoseAlerts, setMissedDoseAlerts] = useState([]);
   const [doctorPrompt, setDoctorPrompt] = useState(null);
+  const [doctorName, setDoctorName] = useState('Unknown Doctor'); // Added to fetch doctor's name
   const audioChunksRef = useRef([]);
   const streamRef = useRef(null);
   const pusherRef = useRef(null);
@@ -95,7 +97,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     return () => timers.forEach(clearTimeout);
   }, [missedDoseAlerts]);
 
-  // Validate user state and fetch patient data
+  // Validate user state and fetch patient and doctor data
   useEffect(() => {
     if (!firebaseUser || !effectiveUserId || !effectivePatientId || !doctorId || role !== 'patient') {
       console.log('PatientChat: Invalid user state or missing params, redirecting to /login', {
@@ -128,7 +130,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           setLanguagePreference(pref);
           setTranscriptionLanguage(pref);
           setProfileData({
-            name: data.name || 'N/A',
+            name: data.name || 'Unknown Patient',
             patientId: effectivePatientId,
             email: data.email || 'N/A',
             languagePreference: pref,
@@ -144,6 +146,21 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         console.error('PatientChat: Failed to fetch patient data:', err.message);
         setError(`Failed to fetch patient data: ${err.message}`);
         navigate('/login');
+      }
+    };
+
+    const fetchDoctorData = async () => {
+      try {
+        const doctorRef = doc(db, 'doctors', doctorId);
+        const doctorDoc = await getDoc(doctorRef);
+        if (doctorDoc.exists()) {
+          setDoctorName(doctorDoc.data().name || 'Unknown Doctor');
+        } else {
+          console.warn('Doctor not found, using default name:', doctorId);
+        }
+      } catch (err) {
+        console.error('PatientChat: Failed to fetch doctor data:', err.message);
+        setDoctorName('Unknown Doctor');
       }
     };
 
@@ -177,6 +194,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     };
 
     fetchPatientData();
+    fetchDoctorData();
     fetchReminders();
     checkDoctorPrompt();
 
@@ -194,10 +212,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     const fetchMessages = async () => {
       try {
         const fetchUrl = `${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`;
-        console.log('Fetching messages:', {
-          url: fetchUrl,
-          userId: effectiveUserId,
-        });
+        console.log('Fetching messages:', { url: fetchUrl, userId: effectiveUserId });
         const idToken = await firebaseUser.getIdToken(true);
         const response = await fetch(fetchUrl, {
           headers: { 'x-user-uid': effectiveUserId, Authorization: `Bearer ${idToken}` },
@@ -211,7 +226,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
             return;
           }
           const errorData = await response.json();
-          throw new Error(`Failed to fetch messages: ${response.status} - ${errorData.error?.message || 'Unknown error'}`);
+          throw new Error(`Failed to fetch messages: ${response.status} - ${errorData.message || 'Unknown error'}`);
         }
 
         const data = await response.json();
@@ -258,7 +273,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       });
 
       const channel = pusherRef.current.subscribe(`chat-${effectivePatientId}-${doctorId}`);
-      channel.bind('newMessage', (message) => {
+      channel.bind('new-message', (message) => {
         console.log('PatientChat: Received new message:', {
           ...message,
           audioUrl: message.audioUrl ? '[Audio URL]' : null,
@@ -283,7 +298,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         }
       });
 
-      channel.bind('missedDoseAlert', (alert) => {
+      channel.bind('admin-notification', (alert) => {
         setMissedDoseAlerts((prev) => [...prev, { ...alert, id: Date.now().toString() }]);
       });
 
@@ -527,15 +542,15 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         userId: effectiveUserId,
       };
 
-      // Store in Firestore
       const alertRef = doc(collection(db, 'missed_dose_alerts'));
       await setDoc(alertRef, alertData);
 
-      // Notify admin via API
       const notificationResponse = await notifyAdmin(
+        profileData?.name || 'Unknown Patient',
+        doctorName,
+        alertData.message,
         effectivePatientId,
         doctorId,
-        alertData.message,
         effectiveUserId,
         idToken
       );
@@ -543,16 +558,12 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         throw new Error(notificationResponse.message || 'Failed to notify admin.');
       }
 
-      // Update state for UI
-      setMissedDoseAlerts((prev) => [
-        ...prev,
-        { id: alertRef.id, ...alertData },
-      ]);
+      setMissedDoseAlerts((prev) => [...prev, { id: alertRef.id, ...alertData }]);
       console.log('Missed dose alert sent successfully:', alertData);
     } catch (err) {
       console.error('Failed to send missed dose alert:', err.message);
       setError(`Failed to send missed dose alert: ${err.message}. Retrying in 5 seconds...`);
-      setTimeout(sendMissedDoseAlert, 5000); // Retry after 5 seconds
+      setTimeout(sendMissedDoseAlert, 5000);
     }
   };
 
@@ -645,7 +656,15 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
 
     try {
       const idToken = await firebaseUser.getIdToken(true);
-      const isValid = await verifyMedicine(diagnosis, medicine, effectiveUserId, idToken);
+      const isValid = await verifyMedicine(
+        diagnosis,
+        medicine,
+        effectiveUserId,
+        idToken,
+        profileData || {},
+        doctorId,
+        doctorName
+      );
       console.log('verifyMedicine response:', isValid);
 
       if (isValid.success) {
@@ -658,8 +677,16 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           ...prev,
           [timestamp]: `Invalid prescription "${medicine}" for diagnosis "${diagnosis}".`,
         }));
-        const notificationMessage = `Invalid prescription: "${medicine}" for diagnosis "${diagnosis}" (Patient: ${effectivePatientId}, Doctor: ${doctorId})`;
-        const notificationResponse = await notifyAdmin(effectivePatientId, doctorId, notificationMessage, effectiveUserId, idToken);
+        const notificationMessage = `Invalid prescription: "${medicine}" for diagnosis "${diagnosis}" (Patient: ${profileData?.name || 'Unknown Patient'}, Doctor: ${doctorName})`;
+        const notificationResponse = await notifyAdmin(
+          profileData?.name || 'Unknown Patient',
+          doctorName,
+          notificationMessage,
+          effectivePatientId,
+          doctorId,
+          effectiveUserId,
+          idToken
+        );
         if (!notificationResponse.success) {
           throw new Error(notificationResponse.message || 'Failed to notify admin about invalid prescription.');
         }
@@ -670,9 +697,17 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         ...prev,
         [timestamp]: `Error validating prescription: ${error.message}. Retrying in 5 seconds...`,
       }));
-      const notificationMessage = `Error validating prescription: ${error.message} (Diagnosis: ${diagnosis}, Medicine: ${medicine}, Patient: ${effectivePatientId}, Doctor: ${doctorId})`;
-      setTimeout(() => validatePrescription(diagnosis, prescription, timestamp), 5000); // Retry after 5 seconds
-      await notifyAdmin(effectivePatientId, doctorId, notificationMessage, effectiveUserId, await firebaseUser.getIdToken(true));
+      const notificationMessage = `Error validating prescription: ${error.message} (Diagnosis: ${diagnosis}, Medicine: ${medicine}, Patient: ${profileData?.name || 'Unknown Patient'}, Doctor: ${doctorName})`;
+      setTimeout(() => validatePrescription(diagnosis, prescription, timestamp), 5000);
+      await notifyAdmin(
+        profileData?.name || 'Unknown Patient',
+        doctorName,
+        notificationMessage,
+        effectivePatientId,
+        doctorId,
+        effectiveUserId,
+        await firebaseUser.getIdToken(true)
+      );
     }
   };
 
@@ -719,10 +754,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         formData.append('sender', 'patient');
 
         const postUrl = `${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`;
-        console.log('Sending retry upload:', {
-          url: postUrl,
-          message,
-        });
+        console.log('Sending retry upload:', { url: postUrl, message });
 
         const idToken = await firebaseUser.getIdToken(true);
         const saveResponse = await fetch(postUrl, {
@@ -734,7 +766,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
 
         if (!saveResponse.ok) {
           const errorData = await saveResponse.json();
-          throw new Error(`Failed to save message: ${saveResponse.status} - ${errorData.error?.message || 'Unknown error'}`);
+          throw new Error(`Failed to save message: ${saveResponse.status} - ${errorData.message || 'Unknown error'}`);
         }
         const data = await saveResponse.json();
         setMessages((prev) => {
@@ -822,11 +854,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           formData.append('sender', 'patient');
 
           const postUrl = `${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`;
-          console.log('Sending audio message:', {
-            url: postUrl,
-            message,
-            audioSize: audioBlob.size,
-          });
+          console.log('Sending audio message:', { url: postUrl, message, audioSize: audioBlob.size });
 
           const idToken = await firebaseUser.getIdToken(true);
           const response = await fetch(postUrl, {
@@ -838,7 +866,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
 
           if (!response.ok) {
             const errorData = await response.json();
-            throw new Error(`Failed to save message: ${response.status} - ${errorData.error?.message || 'Unknown error'}`);
+            throw new Error(`Failed to save message: ${response.status} - ${errorData.message || 'Unknown error'}`);
           }
           const data = await response.json();
           setMessages((prev) => {
@@ -900,11 +928,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       return;
     }
 
-    console.log('Selected file:', {
-      name: file.name,
-      type: file.type,
-      size: file.size,
-    });
+    console.log('Selected file:', { name: file.name, type: file.type, size: file.size });
 
     const validTypes = ['image/jpeg', 'image/png', 'image/gif'];
     if (!validTypes.includes(file.type)) {
@@ -933,11 +957,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     formData.append('sender', 'patient');
 
     const postUrl = `${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`;
-    console.log('Uploading image:', {
-      url: postUrl,
-      message,
-      file: { name: file.name, type: file.type, size: file.size },
-    });
+    console.log('Uploading image:', { url: postUrl, message, file: { name: file.name, type: file.type, size: file.size } });
 
     try {
       const idToken = await firebaseUser.getIdToken(true);
@@ -950,7 +970,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
 
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(`Image upload failed: ${response.status} - ${errorData.error?.message || 'Unknown error'}`);
+        throw new Error(`Image upload failed: ${response.status} - ${errorData.message || 'Unknown error'}`);
       }
 
       const data = await response.json();
@@ -1055,10 +1075,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
 
     try {
       const postUrl = `${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`;
-      console.log('Sending text message:', {
-        url: postUrl,
-        message,
-      });
+      console.log('Sending text message:', { url: postUrl, message });
       const idToken = await firebaseUser.getIdToken(true);
       const response = await fetch(postUrl, {
         method: 'POST',
@@ -1072,7 +1089,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       });
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(`Failed to save text message: ${response.status} - ${errorData.error?.message || 'Unknown error'}`);
+        throw new Error(`Failed to save text message: ${response.status} - ${errorData.message || 'Unknown error'}`);
       }
       const data = await response.json();
       setMessages((prev) =>
@@ -1117,10 +1134,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
 
     try {
       const postUrl = `${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`;
-      console.log('Sending quick reply:', {
-        url: postUrl,
-        message,
-      });
+      console.log('Sending quick reply:', { url: postUrl, message });
       const idToken = await firebaseUser.getIdToken(true);
       const response = await fetch(postUrl, {
         method: 'POST',
@@ -1134,7 +1148,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       });
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(`Failed to save quick reply message: ${response.status} - ${errorData.error?.message || 'Unknown error'}`);
+        throw new Error(`Failed to save quick reply message: ${response.status} - ${errorData.message || 'Unknown error'}`);
       }
       const data = await response.json();
       setMessages((prev) =>
@@ -1406,9 +1420,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                             ? `${msg.prescription.medicine}, ${msg.prescription.dosage}, ${msg.prescription.frequency}, ${msg.prescription.duration}`
                             : msg.prescription}
                           <button
-                            onClick={() =>
-                              validatePrescription(msg.diagnosis, msg.prescription, msg.timestamp)
-                            }
+                            onClick={() => validatePrescription(msg.diagnosis, msg.prescription, msg.timestamp)}
                             className="validate-button"
                           >
                             ✅ Validate
@@ -1477,9 +1489,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                         ) : (
                           <div className="message-block">
                             <p className="primary-text">{msg.text || 'No transcription'}</p>
-                            {msg.translatedText && (
-                              <p className="translated-text">English: {msg.translatedText}</p>
-                            )}
+                            {msg.translatedText && <p className="translated-text">English: {msg.translatedText}</p>}
                             <div className="audio-container">
                               <audio controls src={msg.audioUrl} onError={() => setError('Failed to load audio. It may be inaccessible or unsupported.')} />
                               <div className="read-aloud-container">
@@ -1516,9 +1526,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                         ) : (
                           <>
                             <p className="primary-text">{msg.text || 'No transcription'}</p>
-                            {msg.translatedText && (
-                              <p className="translated-text">English: {msg.translatedText}</p>
-                            )}
+                            {msg.translatedText && <p className="translated-text">English: {msg.translatedText}</p>}
                           </>
                         )}
                         {msg.audioUrl && (
@@ -1645,11 +1653,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap');
 
-        * {
-          margin: 0;
-          padding: 0;
-          box-sizing: border-box;
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
 
         .patient-chat-container {
           width: 100vw;
@@ -1681,9 +1685,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           transition: transform 0.3s ease;
         }
 
-        .hamburger-button:hover {
-          transform: scale(1.1);
-        }
+        .hamburger-button:hover { transform: scale(1.1); }
 
         .chat-header h2 {
           font-size: 1.8rem;
@@ -1703,11 +1705,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           border-radius: 2px;
         }
 
-        .header-actions {
-          display: flex;
-          align-items: center;
-          gap: 15px;
-        }
+        .header-actions { display: flex; align-items: center; gap: 15px; }
 
         .logout-button {
           padding: 8px 20px;

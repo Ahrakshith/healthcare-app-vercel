@@ -65,17 +65,37 @@ const fetchMedicineValidationCsv = async () => {
 
 /**
  * Verifies if a medicine is valid for a given disease based on the CSV data.
+ * If verification fails, notifies the admin.
  * @param {string} disease - The disease to verify.
  * @param {string} medicine - The medicine to verify.
+ * @param {string} userId - The user ID for authentication.
+ * @param {string} idToken - The Firebase ID token for authentication.
+ * @param {Object} profileData - Patient profile data (e.g., name, patientId).
+ * @param {string} doctorId - The doctor's ID.
+ * @param {string} [doctorName='Unknown Doctor'] - The doctor's name (optional, defaults to 'Unknown Doctor').
  * @returns {Promise<{ success: boolean, message: string }>} The verification result.
  */
-async function verifyMedicine(disease, medicine) {
+async function verifyMedicine(disease, medicine, userId, idToken, profileData = {}, doctorId, doctorName = 'Unknown Doctor') {
   try {
     // Input validation
     if (!disease || !medicine) {
       return {
         success: false,
         message: 'Both disease and medicine must be provided.',
+      };
+    }
+
+    if (!userId || !idToken) {
+      return {
+        success: false,
+        message: 'User authentication details (userId, idToken) are required.',
+      };
+    }
+
+    if (!doctorId) {
+      return {
+        success: false,
+        message: 'Doctor ID is required for notification purposes.',
       };
     }
 
@@ -98,6 +118,16 @@ async function verifyMedicine(disease, medicine) {
           }
         }
         console.log(`medicineVerify.js: Medicine "${medicine}" not found for disease "${disease}"`);
+        await notifyAdmin(
+          profileData.name || 'Unknown Patient',
+          doctorName,
+          disease,
+          medicine,
+          profileData.patientId || 'Unknown',
+          doctorId,
+          userId,
+          idToken
+        );
         return {
           success: false,
           message: 'Medicine not found for the specified disease.',
@@ -106,6 +136,16 @@ async function verifyMedicine(disease, medicine) {
     }
 
     console.log(`medicineVerify.js: Disease "${disease}" not found in database`);
+    await notifyAdmin(
+      profileData.name || 'Unknown Patient',
+      doctorName,
+      disease,
+      medicine,
+      profileData.patientId || 'Unknown',
+      doctorId,
+      userId,
+      idToken
+    );
     return {
       success: false,
       message: 'Disease not found in the database.',
@@ -127,19 +167,34 @@ async function verifyMedicine(disease, medicine) {
  * @param {string} medicine - The prescribed medicine.
  * @param {string} patientId - The patient's ID.
  * @param {string} doctorId - The doctor's ID.
+ * @param {string} userId - The user ID for authentication.
+ * @param {string} idToken - The Firebase ID token for authentication.
  * @returns {Promise<{ success: boolean, message: string }>} The notification result.
  */
-async function notifyAdmin(patientName, doctorName, disease, medicine, patientId, doctorId) {
+async function notifyAdmin(patientName, doctorName, disease, medicine, patientId, doctorId, userId, idToken) {
   try {
     // Input validation
-    if (!patientName || !doctorName || !disease || !medicine || !patientId || !doctorId) {
-      throw new Error('All fields (patientName, doctorName, disease, medicine, patientId, doctorId) are required to notify admin.');
+    if (!patientName || !doctorName || !disease || !medicine || !patientId || !doctorId || !userId || !idToken) {
+      console.error('medicineVerify.js: Missing required fields for notification:', {
+        patientName,
+        doctorName,
+        disease,
+        medicine,
+        patientId,
+        doctorId,
+        userId,
+        idToken,
+      });
+      throw new Error('All fields (patientName, doctorName, disease, medicine, patientId, doctorId, userId, idToken) are required to notify admin.');
     }
 
-    const response = await fetch('http://localhost:5005/notify-missed-dose', {
+    // Use the production URL for the admin notification endpoint
+    const response = await fetch('https://healthcare-app-vercel.vercel.app/api/admin/notify', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'Authorization': `Bearer ${idToken}`,
+        'x-user-uid': userId,
       },
       body: JSON.stringify({
         patientId,
@@ -149,7 +204,8 @@ async function notifyAdmin(patientName, doctorName, disease, medicine, patientId
     });
 
     if (!response.ok) {
-      throw new Error(`Failed to notify admin: ${response.statusText}`);
+      const errorData = await response.json();
+      throw new Error(`Failed to notify admin: ${response.statusText} - ${errorData.error?.message || 'Unknown error'}`);
     }
 
     console.log('medicineVerify.js: Admin notified of invalid prescription.');
@@ -166,4 +222,12 @@ async function notifyAdmin(patientName, doctorName, disease, medicine, patientId
   }
 }
 
-export { verifyMedicine, notifyAdmin };
+/**
+ * Clears the cached CSV data (useful for testing or refreshing data).
+ */
+function clearCache() {
+  cachedCsvData = null;
+  console.log('medicineVerify.js: CSV cache cleared');
+}
+
+export { verifyMedicine, notifyAdmin, fetchMedicineValidationCsv, clearCache };
