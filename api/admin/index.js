@@ -380,8 +380,10 @@ const handleMissedDoseAlertsRequest = async (req, res, patientId, doctorId, user
 
 // Handler for admin notifications
 const handleAdminNotifyRequest = async (req, res, userId) => {
+  console.log('handleAdminNotifyRequest called with method:', req.method); // Debug log
   if (req.method === 'POST') {
     try {
+      console.log('Received body:', req.body); // Debug log
       const { patientId, doctorId, message } = req.body;
 
       if (!patientId || !doctorId || !message) {
