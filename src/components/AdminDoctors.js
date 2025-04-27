@@ -67,21 +67,28 @@ function AdminDoctors({ refreshTrigger, refreshList }) {
       await deleteDoc(userDocRef);
       console.log(`Doctor ${uid} deleted from Firestore (users)`);
 
-      // Step 4: Attempt to delete from backend using doctorId (optional, non-critical step)
+      // Step 4: Attempt to delete from backend using doctorId (POST request to /admin/delete-doctor)
       const adminId = localStorage.getItem('userId');
       if (adminId) {
-        const response = await fetch(`http://localhost:5005/delete-doctor/${doctorId}`, {
-          method: 'DELETE',
+        const baseApiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app';
+        const apiUrl = baseApiUrl.endsWith('/api') ? baseApiUrl.replace(/\/api$/, '') : baseApiUrl;
+        const response = await fetch(`${apiUrl}/api/admin/delete-doctor`, {
+          method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'x-user-uid': adminId, // Pass admin UID for role check
+            'x-user-uid': adminId,
+            'Authorization': `Bearer ${await auth.currentUser?.getIdToken(true)}`,
           },
+          body: JSON.stringify({ doctorId }),
           credentials: 'include',
+        }).catch((err) => {
+          console.warn(`AdminDoctors: Failed to delete doctor from backend: ${err.message}`);
+          return { ok: false, statusText: err.message };
         });
 
         if (!response.ok) {
           const errorData = await response.json().catch(() => ({}));
-          console.warn(`AdminDoctors: Failed to delete doctor from backend: ${errorData.error || 'Connection refused'}`);
+          console.warn(`AdminDoctors: Failed to delete doctor from backend: ${errorData.error || response.statusText}`);
         } else {
           console.log(`Doctor ${doctorId} deleted from backend successfully`);
         }

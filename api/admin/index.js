@@ -1,8 +1,8 @@
+// api/admin/index.js
 import admin from 'firebase-admin';
 import Pusher from 'pusher';
 import { Storage } from '@google-cloud/storage';
 import busboy from 'busboy';
-//import end
 
 // Initialize Firebase Admin
 if (!admin.apps.length) {
@@ -542,10 +542,16 @@ const handleDeleteDoctorRequest = async (req, res, userId) => {
 
       const doctorDoc = doctorQuery.docs[0];
       const doctorData = doctorDoc.data();
+      const uid = doctorData.uid;
 
       // Delete doctor from Firestore
       await doctorDoc.ref.delete();
-      console.log(`Doctor ${doctorId} deleted from Firestore`);
+      console.log(`Doctor ${doctorId} deleted from Firestore (doctors)`);
+
+      // Delete user from Firestore
+      const userRef = db.collection('users').doc(uid);
+      await userRef.delete();
+      console.log(`User ${uid} deleted from Firestore (users)`);
 
       // Clean up associated GCS data (e.g., chat files)
       const chatFiles = await bucket.getFiles({ prefix: `chats/-${doctorId}` });
