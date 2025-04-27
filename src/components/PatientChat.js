@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Pusher from 'pusher-js';
 import {
@@ -511,15 +511,18 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     }
   }, []);
 
- // ... (previous code remains unchanged)
-
   const sendMissedDoseAlert = async () => {
+    if (!firebaseUser) {
+      setError('User authentication failed. Cannot send missed dose alert.');
+      return;
+    }
+
     try {
       const idToken = await firebaseUser.getIdToken(true);
       const alertData = {
         patientId: effectivePatientId,
         doctorId,
-        message: `Patient has missed 3 consecutive doses.`,
+        message: `Patient has missed 3 consecutive doses on ${new Date().toLocaleString()}.`,
         timestamp: new Date().toISOString(),
         userId: effectiveUserId,
       };
@@ -529,25 +532,30 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       await setDoc(alertRef, alertData);
 
       // Notify admin via API
-      await notifyAdmin(
+      const notificationResponse = await notifyAdmin(
         effectivePatientId,
         doctorId,
         alertData.message,
         effectiveUserId,
         idToken
       );
+      if (!notificationResponse.success) {
+        throw new Error(notificationResponse.message || 'Failed to notify admin.');
+      }
 
       // Update state for UI
       setMissedDoseAlerts((prev) => [
         ...prev,
         { id: alertRef.id, ...alertData },
       ]);
+      console.log('Missed dose alert sent successfully:', alertData);
     } catch (err) {
-      setError(`Failed to send missed dose alert: ${err.message}`);
+      console.error('Failed to send missed dose alert:', err.message);
+      setError(`Failed to send missed dose alert: ${err.message}. Retrying in 5 seconds...`);
+      setTimeout(sendMissedDoseAlert, 5000); // Retry after 5 seconds
     }
   };
 
-  // ... (rest of the code remains unchanged)
   const handleConfirmReminder = async (id) => {
     try {
       const updatedReminders = reminders.map((reminder) =>
@@ -615,9 +623,12 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     }
   };
 
-  // ... (previous code remains unchanged)
-
   const validatePrescription = async (diagnosis, prescription, timestamp) => {
+    if (!firebaseUser) {
+      setError('User authentication failed. Cannot validate prescription.');
+      return;
+    }
+
     console.log('Validating prescription:', { diagnosis, prescription, timestamp });
 
     if (!diagnosis || !prescription) {
@@ -648,20 +659,23 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           [timestamp]: `Invalid prescription "${medicine}" for diagnosis "${diagnosis}".`,
         }));
         const notificationMessage = `Invalid prescription: "${medicine}" for diagnosis "${diagnosis}" (Patient: ${effectivePatientId}, Doctor: ${doctorId})`;
-        await notifyAdmin(effectivePatientId, doctorId, notificationMessage, effectiveUserId, idToken);
+        const notificationResponse = await notifyAdmin(effectivePatientId, doctorId, notificationMessage, effectiveUserId, idToken);
+        if (!notificationResponse.success) {
+          throw new Error(notificationResponse.message || 'Failed to notify admin about invalid prescription.');
+        }
       }
     } catch (error) {
       console.error('Error in validatePrescription:', error.message);
       setValidationResult((prev) => ({
         ...prev,
-        [timestamp]: `Error validating prescription: ${error.message}`,
+        [timestamp]: `Error validating prescription: ${error.message}. Retrying in 5 seconds...`,
       }));
       const notificationMessage = `Error validating prescription: ${error.message} (Diagnosis: ${diagnosis}, Medicine: ${medicine}, Patient: ${effectivePatientId}, Doctor: ${doctorId})`;
-      await notifyAdmin(effectivePatientId, doctorId, notificationMessage, effectiveUserId, idToken);
+      setTimeout(() => validatePrescription(diagnosis, prescription, timestamp), 5000); // Retry after 5 seconds
+      await notifyAdmin(effectivePatientId, doctorId, notificationMessage, effectiveUserId, await firebaseUser.getIdToken(true));
     }
   };
 
-  // ... (rest of the code remains unchanged
   const retryUpload = async (audioBlob, language) => {
     if (!firebaseUser || !audioBlob || !language) {
       setError('Invalid retry data or user session. Please log in again.');
