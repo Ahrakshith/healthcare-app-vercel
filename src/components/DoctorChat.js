@@ -150,6 +150,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           console.log('Accepted patients fetched:', acceptedDoc.data().accepted);
         } else {
           console.log('No accepted patients document found');
+          setAcceptedPatients({});
         }
       } catch (err) {
         const errorMsg = `Failed to fetch accepted patients: ${err.message}`;
@@ -305,7 +306,6 @@ function DoctorChat({ user, role, handleLogout, setError }) {
         });
 
         console.log('Fetch alerts response status:', response.status);
-        console.log('Fetch alerts response headers:', response.headers);
         if (!response.ok) {
           const errorText = await response.text();
           console.error('Fetch alerts response error:', errorText);
@@ -354,35 +354,31 @@ function DoctorChat({ user, role, handleLogout, setError }) {
     const patientAssignment = patients.find((p) => p.patientId === selectedPatientId);
     if (!patientAssignment) return;
 
+    // Check if patient is already accepted
+    if (acceptedPatients[selectedPatientId]) {
+      setDiagnosisPrompt(null);
+      console.log('Diagnosis prompt cleared: Patient already accepted');
+      return;
+    }
+
     const timestamps = patientMessageTimestamps[selectedPatientId];
     const now = new Date();
     const assignmentTime = new Date(patientAssignment.timestamp);
     const hoursSinceAssignment = (now - assignmentTime) / (1000 * 60 * 60);
 
-    if (acceptedPatients[selectedPatientId]) {
-      const lastMessageTime = timestamps?.lastMessageTime ? new Date(timestamps.lastMessageTime) : null;
-      const hoursSinceLastMessage = lastMessageTime ? (now - lastMessageTime) / (1000 * 60 * 60) : Infinity;
-      if (hoursSinceLastMessage >= 168) {
-        setDiagnosisPrompt(selectedPatientId);
-        console.log('Diagnosis prompt set due to inactivity > 7 days');
-      } else {
-        setDiagnosisPrompt(null);
-        console.log('Diagnosis prompt cleared due to recent activity');
-      }
-      return;
-    }
-
+    // Prompt for new patients (within 24 hours) or no messages yet
     if (!timestamps || !timestamps.firstMessageTime) {
       if (hoursSinceAssignment <= 24) {
         setDiagnosisPrompt(selectedPatientId);
         console.log('Diagnosis prompt set for new patient within 24 hours');
       } else {
         setDiagnosisPrompt(null);
-        console.log('Diagnosis prompt cleared for old patient');
+        console.log('Diagnosis prompt cleared for old patient with no messages');
       }
       return;
     }
 
+    // Prompt for new messages (within 24 hours) or inactivity (7 days)
     const hoursSinceFirstMessage = (now - new Date(timestamps.firstMessageTime)) / (1000 * 60 * 60);
     const hoursSinceLastMessage = (now - new Date(timestamps.lastMessageTime)) / (1000 * 60 * 60);
 
@@ -398,79 +394,91 @@ function DoctorChat({ user, role, handleLogout, setError }) {
   const handleDiagnosisDecision = useCallback(
     async (accept) => {
       console.log('Handling diagnosis decision:', { accept, selectedPatientId });
-      if (!selectedPatientId) {
-        const errorMsg = 'No patient selected.';
+      if (!selectedPatientId || !doctorId) {
+        const errorMsg = 'No patient selected or doctor ID missing.';
         setError(errorMsg);
         console.error(errorMsg);
         return;
       }
-      if (accept) {
-        try {
-          const acceptedRef = doc(db, 'doctor_accepted_patients', doctorId);
-          await setDoc(
-            acceptedRef,
-            {
-              accepted: {
-                ...acceptedPatients,
-                [selectedPatientId]: true,
-              },
-            },
-            { merge: true }
-          );
+
+      try {
+        const idToken = await getIdToken();
+        const response = await fetch(`${apiBaseUrl}/admin/accept-patient`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-user-uid': user.uid,
+            'Authorization': `Bearer ${idToken}`,
+          },
+          body: JSON.stringify({
+            doctorId,
+            patientId: selectedPatientId,
+            accept,
+          }),
+          credentials: 'include',
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+        }
+
+        const result = await response.json();
+        console.log('Accept patient response:', result);
+
+        if (accept) {
           setAcceptedPatients((prev) => ({
             ...prev,
             [selectedPatientId]: true,
           }));
           setDiagnosisPrompt(null);
           console.log('Patient accepted successfully:', selectedPatientId);
-        } catch (err) {
-          const errorMsg = `Failed to accept patient: ${err.message}`;
-          setError(errorMsg);
-          console.error('Accept patient error:', err);
-        }
-      } else {
-        const message = {
-          sender: 'doctor',
-          text: 'Sorry, I am not available at the moment. Please chat with another doctor.',
-          translatedText: languagePreference === 'kn' ? await translateText(
-            'Sorry, I am not available at the moment. Please chat with another doctor.',
-            'en',
-            'kn',
-            user.uid,
-            await getIdToken()
-          ) : null,
-          language: 'en',
-          recordingLanguage: 'en',
-          timestamp: new Date().toISOString(),
-          doctorId,
-          patientId: selectedPatientId,
-        };
-        try {
-          const idToken = await getIdToken();
-          const response = await fetch(`${apiBaseUrl}/chats/${selectedPatientId}/${doctorId}`, {
+        } else {
+          // Send decline message
+          const declineMessage = {
+            sender: 'doctor',
+            text: 'Sorry, I am not available at the moment. Please chat with another doctor.',
+            translatedText: languagePreference === 'kn' ? await translateText(
+              'Sorry, I am not available at the moment. Please chat with another doctor.',
+              'en',
+              'kn',
+              user.uid,
+              idToken
+            ) : null,
+            language: 'en',
+            recordingLanguage: 'en',
+            timestamp: new Date().toISOString(),
+            doctorId,
+            patientId: selectedPatientId,
+          };
+
+          const messageResponse = await fetch(`${apiBaseUrl}/chats/${selectedPatientId}/${doctorId}`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
               'x-user-uid': user.uid,
               'Authorization': `Bearer ${idToken}`,
             },
-            body: JSON.stringify({ message, append: true }),
+            body: JSON.stringify({ message: declineMessage, append: true }),
             credentials: 'include',
           });
-          if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+
+          if (!messageResponse.ok) {
+            throw new Error(`HTTP ${messageResponse.status}: ${await messageResponse.text()}`);
+          }
+
           setPatients((prev) => prev.filter((p) => p.patientId !== selectedPatientId));
           setSelectedPatientId(null);
           setSelectedPatientName('');
           setDiagnosisPrompt(null);
-          console.log('Patient declined and message sent:', message);
-        } catch (err) {
-          const errorMsg = `Failed to send message: ${err.message}`;
-          setError(errorMsg);
-          console.error('Diagnosis decision error:', err);
+          console.log('Patient declined and message sent:', declineMessage);
         }
+      } catch (err) {
+        const errorMsg = `Failed to process diagnosis decision: ${err.message}`;
+        setError(errorMsg);
+        console.error('Diagnosis decision error:', err);
       }
     },
-    [selectedPatientId, languagePreference, doctorId, user?.uid, apiBaseUrl, acceptedPatients, setError]
+    [selectedPatientId, doctorId, user?.uid, languagePreference, apiBaseUrl, setError]
   );
 
   const retryUpload = useCallback(
@@ -2121,6 +2129,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           flex-direction: column;
           gap: 15px;
         }
+
 
         .modal-content select,
         .modal-content input,
