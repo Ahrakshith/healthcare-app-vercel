@@ -240,12 +240,8 @@ function AdminDashboard({ user, role, handleLogout, setUser }) {
           errorMessage = 'Password should be at least 6 characters long.';
         } else if (err.message.includes('Forbidden')) {
           errorMessage = 'Insufficient permissions to add doctor.';
-        } else if (err.message.includes('A server error has occurred') || err.message.includes('FUNCTION_INVOCATION_FAILED')) {
+        } else if (err.message.includes('Server error')) {
           errorMessage = 'A server error occurred. Please try again later.';
-        } else if (err.message.includes('Failed to parse response as JSON')) {
-          errorMessage = 'A server error occurred. Please try again later.';
-        } else {
-          errorMessage = 'An unexpected error occurred. Please try again.';
         }
         setAddDoctorError(`Error adding doctor: ${errorMessage}`);
       }
@@ -300,14 +296,7 @@ function AdminDashboard({ user, role, handleLogout, setUser }) {
         credentials: 'include',
       });
 
-      const responseText = await response.text();
-      let responseData;
-      try {
-        responseData = responseText ? JSON.parse(responseText) : {};
-      } catch (jsonError) {
-        throw new Error(`Failed to parse response as JSON: ${jsonError.message}. Raw response: ${responseText}`);
-      }
-
+      const responseData = await response.json();
       if (!response.ok) throw new Error(responseData.error?.message || `Failed to create admin: ${response.statusText}`);
 
       const adminUid = responseData.uid;
@@ -320,23 +309,19 @@ function AdminDashboard({ user, role, handleLogout, setUser }) {
     } catch (error) {
       console.error('AdminDashboard: Add admin error - Details:', error);
       if (isMounted.current) {
-        let errorMessage = error.message;
         if (error.message.includes('email-already-in-use') || error.message.includes('This email is already registered')) {
-          errorMessage = 'This email is already registered.';
+          setAddAdminError('This email is already registered.');
         } else if (error.message.includes('invalid-email')) {
-          errorMessage = 'Please enter a valid Gmail address (e.g., example@gmail.com).';
+          setAddAdminError('Please enter a valid Gmail address (e.g., example@gmail.com).');
         } else if (error.message.includes('weak-password')) {
-          errorMessage = 'Password should be at least 6 characters long.';
+          setAddAdminError('Password should be at least 6 characters long.');
         } else if (error.message.includes('Forbidden')) {
-          errorMessage = 'Insufficient permissions to add admin.';
-        } else if (error.message.includes('A server error has occurred') || error.message.includes('FUNCTION_INVOCATION_FAILED')) {
-          errorMessage = 'A server error occurred. Please try again later.';
-        } else if (error.message.includes('Failed to parse response as JSON')) {
-          errorMessage = 'A server error occurred. Please try again later.';
+          setAddAdminError('Insufficient permissions to add admin.');
+        } else if (error.message.includes('Server error')) {
+          setAddAdminError('A server error occurred. Please try again later.');
         } else {
-          errorMessage = 'An unexpected error occurred. Please try again.';
+          setAddAdminError(`Failed to add admin: ${error.message}`);
         }
-        setAddAdminError(`Failed to add admin: ${errorMessage}`);
       }
     } finally {
       if (isMounted.current) setIsAddingAdmin(false);
