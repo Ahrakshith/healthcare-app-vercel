@@ -1,4 +1,3 @@
-// api/admin/index.js
 import admin from 'firebase-admin';
 import Pusher from 'pusher';
 import { Storage } from '@google-cloud/storage';
@@ -496,7 +495,7 @@ const handleAcceptPatientRequest = async (req, res, userId) => {
       const acceptedDoc = await acceptedRef.get();
       let acceptedPatients = {};
 
-      if (acceptedDoc.exists()) {
+      if (acceptedDoc.exists) {
         acceptedPatients = acceptedDoc.data().accepted || {};
       }
 
@@ -624,6 +623,50 @@ const handleDeletePatientRequest = async (req, res, userId) => {
   }
 };
 
+// Handler for fetching invalid prescriptions
+const handleInvalidPrescriptionsRequest = async (req, res, userId) => {
+  if (req.method === 'GET') {
+    try {
+      // Verify the user is an admin
+      const adminQuery = await db.collection('users').where('uid', '==', userId).get();
+      if (adminQuery.empty || adminQuery.docs[0].data().role !== 'admin') {
+        return res.status(403).json({ success: false, message: 'Only admins can fetch invalid prescriptions' });
+      }
+
+      // Fetch all doctor_patient_records
+      const recordsSnapshot = await db.collection('doctor_patient_records').get();
+      const invalidRecords = [];
+
+      for (const doc of recordsSnapshot.docs) {
+        const data = doc.data();
+        const { doctorId, patientId, records } = data;
+
+        // Filter records where valid is false
+        const invalidEntries = records
+          .filter((record) => record.valid === false && record.prescription)
+          .map((record) => ({
+            doctorId,
+            patientId,
+            diagnosis: record.diagnosis || 'N/A',
+            prescription: record.prescription,
+            timestamp: record.timestamp,
+          }));
+
+        invalidRecords.push(...invalidEntries);
+      }
+
+      console.log(`Fetched ${invalidRecords.length} invalid prescriptions for admin ${userId}`);
+      return res.status(200).json({ success: true, invalidPrescriptions: invalidRecords });
+    } catch (error) {
+      console.error(`Error fetching invalid prescriptions for user ${userId}:`, error.message);
+      return res.status(500).json({ success: false, message: 'Failed to fetch invalid prescriptions', details: error.message });
+    }
+  } else {
+    res.setHeader('Allow', ['GET']);
+    return res.status(405).json({ success: false, message: `Method ${req.method} Not Allowed for /admin/invalid-prescriptions` });
+  }
+};
+
 // Main handler
 export default async function handler(req, res) {
   console.log(`[DEBUG] Main handler called with method: ${req.method}, URL: ${req.url}`);
@@ -672,6 +715,9 @@ export default async function handler(req, res) {
     } else if (req.url.includes('/delete-patient')) {
       console.log('[DEBUG] Routing to handleDeletePatientRequest');
       return handleDeletePatientRequest(req, res, userId);
+    } else if (req.url.includes('/invalid-prescriptions')) {
+      console.log('[DEBUG] Routing to handleInvalidPrescriptionsRequest');
+      return handleInvalidPrescriptionsRequest(req, res, userId);
     } else {
       console.log('[DEBUG] Routing to handleChatRequest');
       if (!patientId || !doctorId) {

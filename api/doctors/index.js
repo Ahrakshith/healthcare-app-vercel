@@ -88,6 +88,7 @@ const handleRecordsRequest = async (req, res, userId) => {
         diagnosis: diagnosis || null,
         prescription: prescription || null,
         timestamp: new Date().toISOString(),
+        valid: true, // Default to true; validation process updates this
       };
 
       // Store or update the record in Firestore
@@ -124,8 +125,46 @@ const handleRecordsRequest = async (req, res, userId) => {
         error: { code: 500, message: 'Server error', details: error.message }
       });
     }
+  } else if (req.method === 'GET') {
+    try {
+      // Verify user is an admin
+      const userDoc = await operationWithRetry(() => db.collection('users').doc(userId).get());
+      if (!userDoc.exists || userDoc.data().role !== 'admin') {
+        return res.status(403).json({
+          error: { code: 403, message: 'Forbidden: Only admins can fetch all records' }
+        });
+      }
+
+      // Fetch all doctor_patient_records
+      const recordsSnapshot = await operationWithRetry(() => db.collection('doctor_patient_records').get());
+      const allRecords = [];
+
+      for (const doc of recordsSnapshot.docs) {
+        const data = doc.data();
+        const { doctorId, patientId, records } = data;
+
+        records.forEach((record) => {
+          allRecords.push({
+            doctorId,
+            patientId,
+            diagnosis: record.diagnosis || 'N/A',
+            prescription: record.prescription || 'N/A',
+            timestamp: record.timestamp,
+            valid: record.valid !== undefined ? record.valid : true,
+          });
+        });
+      }
+
+      console.log(`Fetched ${allRecords.length} records for admin ${userId}`);
+      return res.status(200).json({ success: true, records: allRecords });
+    } catch (error) {
+      console.error(`Error fetching records for user ${userId}:`, error.message);
+      return res.status(500).json({
+        error: { code: 500, message: 'Server error', details: error.message }
+      });
+    }
   } else {
-    res.setHeader('Allow', ['POST', 'PUT']);
+    res.setHeader('Allow', ['GET', 'POST', 'PUT']);
     return res.status(405).json({
       error: { code: 405, message: `Method ${req.method} Not Allowed for /doctors/records` }
     });

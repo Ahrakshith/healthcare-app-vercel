@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { auth } from '../services/firebase.js';
 
-function AdminCases() {
-  const [cases, setCases] = useState([]);
+function AdminInvalidPrescriptions() {
+  const [invalidPrescriptions, setInvalidPrescriptions] = useState([]);
   const [patients, setPatients] = useState({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -35,44 +35,44 @@ function AdminCases() {
         }, {});
         setPatients(patientMap);
       } catch (err) {
-        console.error('AdminCases: Error fetching patients:', err);
+        console.error('AdminInvalidPrescriptions: Error fetching patients:', err);
         setError(`Error fetching patients: ${err.message}`);
       }
     };
 
-    const fetchCases = async () => {
+    const fetchInvalidPrescriptions = async () => {
       setLoading(true);
       setError('');
       try {
         const baseApiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app';
         const apiUrl = baseApiUrl.endsWith('/api') ? baseApiUrl.replace(/\/api$/, '') : baseApiUrl;
         const idToken = await auth.currentUser?.getIdToken(true);
-        const response = await fetch(`${apiUrl}/api/doctors/records`, {
+        const response = await fetch(`${apiUrl}/api/admin/invalid-prescriptions`, {
           headers: {
             'Authorization': `Bearer ${idToken}`,
             'x-user-uid': adminId,
           },
         });
-        if (!response.ok) throw new Error('Failed to fetch cases');
-        const { records } = await response.json();
-        setCases(records);
+        if (!response.ok) throw new Error('Failed to fetch invalid prescriptions');
+        const { invalidPrescriptions } = await response.json();
+        setInvalidPrescriptions(invalidPrescriptions);
       } catch (err) {
-        console.error('AdminCases: Error fetching cases:', err);
-        setError(`Error fetching cases: ${err.message}`);
-        setCases([]);
+        console.error('AdminInvalidPrescriptions: Error fetching invalid prescriptions:', err);
+        setError(`Error fetching invalid prescriptions: ${err.message}`);
+        setInvalidPrescriptions([]);
       } finally {
         setLoading(false);
       }
     };
 
-    // Fetch patients first, then cases
+    // Fetch patients first, then invalid prescriptions
     const initializeData = async () => {
       await fetchPatients();
-      await fetchCases();
+      await fetchInvalidPrescriptions();
     };
 
     initializeData();
-    const interval = setInterval(fetchCases, 5000); // Poll every 5 seconds
+    const interval = setInterval(fetchInvalidPrescriptions, 5000); // Poll every 5 seconds
     return () => clearInterval(interval);
   }, []);
 
@@ -80,7 +80,7 @@ function AdminCases() {
     <div className="table-container">
       {error && <p className="error-message">{error}</p>}
       {loading ? (
-        <p className="loading-message">Loading cases...</p>
+        <p className="loading-message">Loading invalid prescriptions...</p>
       ) : (
         <table>
           <thead>
@@ -91,30 +91,26 @@ function AdminCases() {
               <th>Age</th>
               <th>Sex</th>
               <th>Diagnosis</th>
-              <th>Prescription</th>
-              <th>Valid</th>
+              <th>Invalid Prescription</th>
             </tr>
           </thead>
           <tbody>
-            {cases.length === 0 ? (
+            {invalidPrescriptions.length === 0 ? (
               <tr>
-                <td colSpan="8">No cases found.</td>
+                <td colSpan="7">No invalid prescriptions found.</td>
               </tr>
             ) : (
-              cases.map((caseItem, index) => {
-                const patient = patients[caseItem.patientId] || {};
+              invalidPrescriptions.map((prescription, index) => {
+                const patient = patients[prescription.patientId] || {};
                 return (
-                  <tr key={`${caseItem.doctorId}-${caseItem.patientId}-${caseItem.timestamp}-${index}`}>
-                    <td>{caseItem.doctorId}</td>
-                    <td>{caseItem.patientId}</td>
+                  <tr key={`${prescription.doctorId}-${prescription.patientId}-${prescription.timestamp}-${index}`}>
+                    <td>{prescription.doctorId}</td>
+                    <td>{prescription.patientId}</td>
                     <td>{patient.name || 'N/A'}</td>
                     <td>{patient.age || 'N/A'}</td>
                     <td>{patient.sex || 'N/A'}</td>
-                    <td>{caseItem.diagnosis}</td>
-                    <td className={caseItem.valid ? '' : 'invalid-prescription'}>
-                      {caseItem.prescription}
-                    </td>
-                    <td>{caseItem.valid ? 'Yes' : 'No'}</td>
+                    <td>{prescription.diagnosis}</td>
+                    <td className="invalid-prescription">{prescription.prescription}</td>
                   </tr>
                 );
               })
@@ -197,4 +193,4 @@ function AdminCases() {
   );
 }
 
-export default AdminCases;
+export default AdminInvalidPrescriptions;

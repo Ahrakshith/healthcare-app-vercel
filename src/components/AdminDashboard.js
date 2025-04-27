@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import AdminDoctors from './AdminDoctors.js';
 import AdminPatients from './AdminPatients.js';
 import AdminCases from './AdminCases.js';
+import AdminInvalidPrescriptions from './AdminInvalidPrescriptions.js';
 import { SPECIALTIES } from '../constants/specialties.js';
 import { doc, getDoc } from 'firebase/firestore';
 import { getAuth, signOut } from 'firebase/auth';
@@ -422,6 +423,9 @@ function AdminDashboard({ user, role, handleLogout, setUser }) {
           <li className={currentView === 'cases' ? 'active' : ''} onClick={() => handleViewChange('cases')}>
             Cases List
           </li>
+          <li className={currentView === 'invalid-prescriptions' ? 'active' : ''} onClick={() => handleViewChange('invalid-prescriptions')}>
+            Invalid Prescriptions
+          </li>
           <li onClick={handleLogoutClick}>Logout</li>
         </ul>
       </div>
@@ -653,6 +657,13 @@ function AdminDashboard({ user, role, handleLogout, setUser }) {
           <div className="section">
             <h3>Cases List</h3>
             <AdminCases />
+          </div>
+        )}
+
+        {currentView === 'invalid-prescriptions' && (
+          <div className="section">
+            <h3>Invalid Prescriptions</h3>
+            <AdminInvalidPrescriptions />
           </div>
         )}
       </div>
