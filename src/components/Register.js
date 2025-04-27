@@ -1,5 +1,9 @@
-import React, { useState } from 'react';
+// src/components/Register.js
+import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { createUserWithEmailAndPassword } from 'firebase/auth';
+import { doc, setDoc, getDocs, query, collection, where } from 'firebase/firestore';
+import { auth, db } from '../services/firebase.js';
 
 function Register({ setUser, setRole, user }) {
   const [email, setEmail] = useState('');
@@ -8,7 +12,6 @@ function Register({ setUser, setRole, user }) {
   const [sex, setSex] = useState('');
   const [age, setAge] = useState('');
   const [address, setAddress] = useState('');
-  const [languagePreference, setLanguagePreference] = useState('');
   const [patientId, setPatientId] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -18,10 +21,43 @@ function Register({ setUser, setRole, user }) {
 
   const { username: initialEmail, password: initialPassword } = location.state || {};
 
-  // Set initial email and password if passed via location state
-  React.useEffect(() => {
+  const apiBaseUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
+
+  // Generate a unique 6-character alphanumeric patientId
+  const generatePatientId = async () => {
+    const characters = 'abcdefghijklmnopqrstuvwxyz0123456789';
+    let generatedId = '';
+    const patientIdsRef = collection(db, 'patients');
+
+    while (true) {
+      generatedId = '';
+      for (let i = 0; i < 6; i++) {
+        const randomIndex = Math.floor(Math.random() * characters.length);
+        generatedId += characters[randomIndex];
+      }
+
+      const q = query(patientIdsRef, where('patientId', '==', generatedId));
+      const querySnapshot = await getDocs(q);
+      if (querySnapshot.empty) break;
+      console.log(`Register.js: Generated patientId ${generatedId} already exists, regenerating...`);
+    }
+
+    return generatedId;
+  };
+
+  useEffect(() => {
     if (initialEmail) setEmail(initialEmail);
     if (initialPassword) setPassword(initialPassword);
+
+    generatePatientId()
+      .then((uniqueId) => {
+        setPatientId(uniqueId);
+        console.log('Register.js: Generated unique patientId:', uniqueId);
+      })
+      .catch((err) => {
+        console.error('Register.js: Error generating patientId:', err);
+        setError('Failed to generate patient ID. Please try again.');
+      });
   }, [initialEmail, initialPassword]);
 
   const handleRegister = async (e) => {
@@ -29,12 +65,12 @@ function Register({ setUser, setRole, user }) {
     setError('');
     setIsLoading(true);
 
-    // Frontend validation
     if (!termsAccepted) {
       setError('You must accept the terms and conditions.');
       setIsLoading(false);
       return;
     }
+
     if (!email.trim()) {
       setError('Email is required.');
       setIsLoading(false);
@@ -47,11 +83,6 @@ function Register({ setUser, setRole, user }) {
     }
     if (!password) {
       setError('Password is required.');
-      setIsLoading(false);
-      return;
-    }
-    if (password.length < 6) {
-      setError('Password should be at least 6 characters long.');
       setIsLoading(false);
       return;
     }
@@ -75,8 +106,8 @@ function Register({ setUser, setRole, user }) {
       setIsLoading(false);
       return;
     }
-    if (!languagePreference) {
-      setError('Please select a language preference.');
+    if (!patientId) {
+      setError('Patient ID generation failed. Please try again.');
       setIsLoading(false);
       return;
     }
@@ -84,68 +115,92 @@ function Register({ setUser, setRole, user }) {
     console.log('Register.js: Attempting registration with:', { email, password, role: 'patient' });
 
     try {
-      // Prepare data for the API
+      // Step 1: Register user with Firebase Authentication
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      const firebaseUser = userCredential.user;
+      console.log('Register.js: User registered in Firebase Auth:', firebaseUser.uid);
+
+      // Step 2: Store user data in Firestore (users collection)
+      const userDocRef = doc(db, 'users', firebaseUser.uid);
       const userData = {
-        role: 'patient',
-        email,
-        password,
-        name,
-        age,
-        sex,
-        address,
-        languagePreference: languagePreference === 'Kannada' ? 'kn' : 'en',
-      };
-
-      // Call the backend API to register the user
-      const apiBaseUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
-      const response = await fetch(`${apiBaseUrl}/users`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          // Note: In a production environment, we might need an admin token here.
-          // For now, assuming the endpoint allows self-registration.
-        },
-        body: JSON.stringify(userData),
-        credentials: 'include',
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error.message || 'Registration failed');
-      }
-
-      console.log('Register.js: Registration successful:', data);
-
-      // Update patientId from the API response
-      setPatientId(data.patientId);
-
-      // Update application state
-      const updatedUser = {
-        uid: data.uid,
+        uid: firebaseUser.uid,
         email,
         role: 'patient',
-        patientId: data.patientId,
+        createdAt: new Date().toISOString(),
         name,
         sex,
         age: parseInt(age),
         address,
-        languagePreference: languagePreference === 'Kannada' ? 'kn' : 'en',
+        patientId,
       };
+      await setDoc(userDocRef, userData);
+      console.log('Register.js: User data stored in Firestore (users):', firebaseUser.uid);
+
+      // Step 3: Store patient data in Firestore (patients collection)
+      const patientDocRef = doc(db, 'patients', patientId);
+      const patientData = {
+        uid: firebaseUser.uid,
+        patientId,
+        name,
+        sex,
+        age: parseInt(age),
+        address,
+        createdAt: new Date().toISOString(),
+      };
+      await setDoc(patientDocRef, patientData);
+      console.log('Register.js: Patient data stored in Firestore (patients):', patientId);
+
+      // Step 4: Store patient profile via API (calls /api/users)
+      try {
+        const idToken = await firebaseUser.getIdToken(true);
+        const patientProfile = {
+          role: 'patient',
+          email,
+          password,
+          name,
+          sex,
+          age: parseInt(age),
+          address,
+        };
+
+        const response = await fetch(`${apiBaseUrl}/users`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-user-uid': firebaseUser.uid,
+            Authorization: `Bearer ${idToken}`,
+          },
+          body: JSON.stringify(patientProfile),
+          credentials: 'include',
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(`Failed to store patient profile: ${errorData.error.message || response.statusText}`);
+        }
+
+        const result = await response.json();
+        console.log('Register.js: Patient profile stored via API:', result);
+      } catch (backendError) {
+        console.error('Register.js: API storage error:', backendError.message);
+        setError(`Registration successful, but failed to store patient profile via API: ${backendError.message}`);
+      }
+
+      // Step 5: Update application state and redirect
+      const updatedUser = { uid: firebaseUser.uid, email, role: 'patient', patientId, name, sex, age, address };
       setUser(updatedUser);
       setRole('patient');
-      localStorage.setItem('userId', data.uid);
-      localStorage.setItem('patientId', data.patientId);
+      localStorage.setItem('userId', firebaseUser.uid);
+      localStorage.setItem('patientId', patientId);
 
-      // Redirect to the homepage
       navigate('/');
     } catch (error) {
       console.error('Register.js: Registration error:', error.message);
-      if (error.message.includes('already registered')) {
+      if (error.code === 'auth/email-already-in-use') {
         setError('This email is already registered. Please login instead.');
-      } else if (error.message.includes('Invalid email')) {
+      } else if (error.code === 'auth/invalid-email') {
         setError('Please enter a valid Gmail address (e.g., example@gmail.com).');
-      } else if (error.message.includes('Password should be')) {
+      } else if (error.code === 'auth/weak-password') {
         setError('Password should be at least 6 characters long.');
       } else {
         setError(`Registration failed: ${error.message}`);
@@ -249,26 +304,13 @@ function Register({ setUser, setRole, user }) {
             />
           </div>
           <div className="form-group">
-            <label htmlFor="languagePreference">Language Preference</label>
-            <select
-              id="languagePreference"
-              value={languagePreference}
-              onChange={(e) => setLanguagePreference(e.target.value)}
-              required
-            >
-              <option value="" disabled>Select language</option>
-              <option value="English">English</option>
-              <option value="Kannada">Kannada</option>
-            </select>
-          </div>
-          <div className="form-group">
             <label htmlFor="patientId">Patient ID</label>
             <input
               type="text"
               id="patientId"
-              value={patientId || (isLoading ? 'Generating...' : '')}
+              value={patientId}
               readOnly
-              placeholder="Auto-generated after registration"
+              placeholder="Auto-generated Patient ID"
             />
           </div>
           {error && <p className="error-message">{error}</p>}
