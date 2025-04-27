@@ -125,9 +125,9 @@ export default async function handler(req, res) {
       console.error(`User document not found for adminId ${adminId} in api/users/index.js`);
       return res.status(404).json({ error: { code: 404, message: 'User not found' } });
     }
-    const userData = userDoc.data();
-    if (userData.role !== 'admin') {
-      console.error(`User ${adminId} is not an admin in api/users/index.js, role: ${userData.role}`);
+    const userDataFromDoc = userDoc.data();
+    if (userDataFromDoc.role !== 'admin') {
+      console.error(`User ${adminId} is not an admin in api/users/index.js, role: ${userDataFromDoc.role}`);
       return res.status(403).json({ error: { code: 403, message: 'Forbidden: Only admins can perform this action' } });
     }
 
