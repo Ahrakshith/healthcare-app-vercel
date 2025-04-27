@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { SPECIALTIES } from '../constants/specialties.js';
+import { getAuth } from 'firebase/auth';
 
 function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout, isLoggingOut }) {
   const [specialty, setSpecialty] = useState('All');
@@ -13,6 +14,7 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout, isLog
 
   const baseApiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app';
   const apiBaseUrl = baseApiUrl.endsWith('/api') ? baseApiUrl.replace(/\/api$/, '') : baseApiUrl;
+  const auth = getAuth();
 
   useEffect(() => {
     const authTimeout = setTimeout(() => {
@@ -179,7 +181,17 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout, isLog
   const handleLogoutClick = async () => {
     console.log('SelectDoctor: Initiating logout');
     try {
-      await handleLogout();
+      await auth.signOut();
+      await fetch(`${apiBaseUrl}/misc/logout`, {
+        method: 'POST',
+        headers: {
+          'x-user-uid': user?.uid,
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+      });
+      if (handleLogout) handleLogout();
+      navigate('/login', { replace: true });
       console.log('SelectDoctor: Logged out successfully');
     } catch (err) {
       console.error('SelectDoctor: Logout error:', err.message);
