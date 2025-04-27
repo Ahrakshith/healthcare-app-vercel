@@ -64,7 +64,7 @@ function App() {
   const [error, setError] = useState('');
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const unsubscribeFirestoreRef = useRef(() => {});
-  const navigate = useNavigate(); // Added for immediate redirect
+  const navigate = useNavigate();
 
   useEffect(() => {
     console.log('App: Starting auth state listener setup');
@@ -99,7 +99,7 @@ function App() {
               if (userData.role === 'patient') {
                 const pid = userData.patientId || userId;
                 setPatientId(pid);
-                sessionStorage.setExpress sessionStorage.setItem('patientId', pid);
+                sessionStorage.setItem('patientId', pid);
                 console.log(`App: Set patientId=${pid} for patient role`);
               } else {
                 setPatientId(null);
@@ -159,7 +159,7 @@ function App() {
     sessionStorage.removeItem('patientId');
     localStorage.removeItem('userId');
     localStorage.removeItem('patientId');
-    navigate('/login', { replace: true }); // Immediate redirect
+    navigate('/login', { replace: true });
     console.log('App: Auth failure handled, loading set to false');
   };
 
