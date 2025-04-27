@@ -106,6 +106,27 @@
       ]
     },
     {
+      "source": "/api/admin/invalid-prescriptions",
+      "headers": [
+        {
+          "key": "Access-Control-Allow-Origin",
+          "value": "*"
+        },
+        {
+          "key": "Access-Control-Allow-Methods",
+          "value": "GET, OPTIONS"
+        },
+        {
+          "key": "Access-Control-Allow-Headers",
+          "value": "Authorization, x-user-uid, Content-Type, Accept"
+        },
+        {
+          "key": "Access-Control-Max-Age",
+          "value": "86400"
+        }
+      ]
+    },
+    {
       "source": "/data/(.*)",
       "headers": [
         {
@@ -146,6 +167,10 @@
     },
     {
       "source": "/api/admin/delete-patient",
+      "destination": "/api/admin/index"
+    },
+    {
+      "source": "/api/admin/invalid-prescriptions",
       "destination": "/api/admin/index"
     },
     {
