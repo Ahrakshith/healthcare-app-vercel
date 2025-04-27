@@ -281,54 +281,55 @@ function DoctorChat({ user, role, handleLogout, setError }) {
       }
     };
 
-   const fetchMissedDoseAlerts = async () => {
-  console.log('Fetching missed dose alerts for patient:', selectedPatientId, 'and doctor:', doctorId);
-  if (!selectedPatientId || !doctorId) {
-    const errorMsg = 'Cannot fetch alerts: patientId or doctorId is missing.';
-    setError(errorMsg);
-    console.error(errorMsg);
-    return;
-  }
+    const fetchMissedDoseAlerts = async () => {
+      console.log('Fetching missed dose alerts for patient:', selectedPatientId, 'and doctor:', doctorId);
+      if (!selectedPatientId || !doctorId) {
+        const errorMsg = 'Cannot fetch alerts: patientId or doctorId is missing.';
+        setError(errorMsg);
+        console.error(errorMsg);
+        return;
+      }
 
-  try {
-    const idToken = await getIdToken();
-    const response = await fetch(`${apiBaseUrl}/admin/missed-doses/${selectedPatientId}/${doctorId}`, {
-      method: 'GET', // Use GET instead of POST
-      headers: {
-        'x-user-uid': user.uid,
-        'Authorization': `Bearer ${idToken}`,
-        'Content-Type': 'application/json',
-      },
-      credentials: 'include',
-    });
+      try {
+        const idToken = await getIdToken();
+        const response = await fetch(`${apiBaseUrl}/admin/missed-doses/${selectedPatientId}/${doctorId}`, {
+          method: 'GET',
+          headers: {
+            'x-user-uid': user.uid,
+            'Authorization': `Bearer ${idToken}`,
+            'Content-Type': 'application/json',
+          },
+          credentials: 'include',
+        });
 
-    console.log('Fetch alerts response status:', response.status);
-    console.log('Fetch alerts response headers:', response.headers);
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('Fetch alerts response error:', errorText);
-      throw new Error(`HTTP ${response.status}: ${errorText || 'Failed to fetch alerts'}`);
-    }
+        console.log('Fetch alerts response status:', response.status);
+        console.log('Fetch alerts response headers:', response.headers);
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.error('Fetch alerts response error:', errorText);
+          throw new Error(`HTTP ${response.status}: ${errorText || 'Failed to fetch alerts'}`);
+        }
 
-    const data = await response.json();
-    console.log('Fetched alerts data:', data);
-    const notifications = data.alerts || [];
-    if (!Array.isArray(notifications)) {
-      throw new Error('Invalid response format: Expected an array of notifications');
-    }
+        const data = await response.json();
+        console.log('Fetched alerts data:', data);
+        const notifications = data.alerts || [];
+        if (!Array.isArray(notifications)) {
+          throw new Error('Invalid response format: Expected an array of notifications');
+        }
 
-    setMissedDoseAlerts(
-      notifications
-        .filter((n) => n.patientId === selectedPatientId)
-        .map((n) => ({ ...n, id: n.id || Date.now().toString() }))
-    );
-    console.log('Updated missed dose alerts:', notifications);
-  } catch (err) {
-    const errorMsg = `Failed to fetch alerts: ${err.message}`;
-    setError(errorMsg);
-    console.error('Fetch alerts error:', err);
-  }
-};
+        setMissedDoseAlerts(
+          notifications
+            .filter((n) => n.patientId === selectedPatientId)
+            .map((n) => ({ ...n, id: n.id || Date.now().toString() }))
+        );
+        console.log('Updated missed dose alerts:', notifications);
+      } catch (err) {
+        const errorMsg = `Failed to fetch alerts: ${err.message}`;
+        setError(errorMsg);
+        console.error('Fetch alerts error:', err);
+      }
+    };
+
     fetchMessages();
     fetchLanguagePreference();
     fetchMissedDoseAlerts();
@@ -1191,8 +1192,8 @@ function DoctorChat({ user, role, handleLogout, setError }) {
                   <div className="recording-buttons">
                     <button
                       onClick={startRecording}
-                      disabled={recording || loadingAudio}
-                      className={recording || loadingAudio ? 'disabled-button' : 'start-button'}
+                      disabled={recording || loadingAudio || newMessage.trim().length > 0}
+                      className={recording || loadingAudio || newMessage.trim().length > 0 ? 'disabled-button' : 'start-button'}
                       aria-label="Start recording"
                     >
                       🎙️ Record
@@ -1221,12 +1222,12 @@ function DoctorChat({ user, role, handleLogout, setError }) {
                       placeholder="Type a message (English only)..."
                       onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
                       aria-label="Type a message to the patient"
-                      disabled={loadingAudio}
+                      disabled={loadingAudio || recording}
                     />
                     <button
                       onClick={sendMessage}
                       className="send-button"
-                      disabled={loadingAudio}
+                      disabled={loadingAudio || recording}
                       aria-label="Send message"
                     >
                       Send
@@ -1634,6 +1635,8 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           padding: 20px;
           margin-bottom: 20px;
           border: 1px solid rgba(255, 255, 255, 0.1);
+          position: relative;
+          z-index: 10;
         }
 
         .missed-dose-alerts h3 {
@@ -1691,6 +1694,8 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           overflow-y: auto;
           margin-bottom: 20px;
           border: 1px solid rgba(255, 255, 255, 0.1);
+          position: relative;
+          z-index: 1;
         }
 
         .no-messages,
