@@ -125,9 +125,9 @@ export default async function handler(req, res) {
       console.error(`User document not found for adminId ${adminId} in api/users/index.js`);
       return res.status(404).json({ error: { code: 404, message: 'User not found' } });
     }
-    const userDataFromDoc = userDoc.data();
-    if (userDataFromDoc.role !== 'admin') {
-      console.error(`User ${adminId} is not an admin in api/users/index.js, role: ${userDataFromDoc.role}`);
+    const userData = userDoc.data();
+    if (userData.role !== 'admin') {
+      console.error(`User ${adminId} is not an admin in api/users/index.js, role: ${userData.role}`);
       return res.status(403).json({ error: { code: 403, message: 'Forbidden: Only admins can perform this action' } });
     }
 
@@ -153,10 +153,11 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: { code: 400, message: 'Password should be at least 6 characters long' } });
     }
 
-    // Role-specific validations
+    // Initialize userData
     let userData = { email, role, createdAt: new Date().toISOString() };
     let collectionName, idField, uniqueId;
 
+    // Role-specific validations and updates to userData
     if (role === 'doctor') {
       if (!name || !age || !sex || !experience || !specialty || !qualification || !address || !contactNumber) {
         console.error('Missing required doctor fields in api/users/index.js');
@@ -212,7 +213,7 @@ export default async function handler(req, res) {
       collectionName = 'patients';
       idField = 'patientId';
     } else if (role === 'admin') {
-      userData = { ...userData };
+      // No additional fields for admin
       collectionName = null;
       idField = null;
     }
@@ -227,7 +228,7 @@ export default async function handler(req, res) {
       });
     } catch (authError) {
       console.error(`Firebase Auth error in api/users/index.js: ${authError.code}`, authError.stack);
-      if (authError.code === 'auth/email-already-in-use') {
+      if (authError.code === 'auth/email-already-exists') {
         return res.status(409).json({ error: { code: 409, message: 'This email is already registered' } });
       }
       throw authError; // Re-throw other auth errors
@@ -264,7 +265,7 @@ export default async function handler(req, res) {
   } catch (error) {
     console.error(`Error in /api/users for admin ${adminId}:`, error.message, error.stack);
     let errorResponse = { error: { code: 500, message: 'A server error has occurred' } };
-    if (error.code === 'auth/email-already-in-use') {
+    if (error.code === 'auth/email-already-exists') {
       errorResponse = { error: { code: 409, message: 'This email is already registered' } };
     } else if (error.code === 'auth/invalid-email') {
       errorResponse = { error: { code: 400, message: 'Invalid email address' } };
