@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Pusher from 'pusher-js';
@@ -33,7 +32,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   const [missedDoses, setMissedDoses] = useState(0);
   const [missedDoseAlerts, setMissedDoseAlerts] = useState([]);
   const [doctorPrompt, setDoctorPrompt] = useState(null);
-  const [doctorName, setDoctorName] = useState('Unknown Doctor'); // Added to fetch doctor's name
+  const [doctorName, setDoctorName] = useState('Unknown Doctor');
   const audioChunksRef = useRef([]);
   const streamRef = useRef(null);
   const pusherRef = useRef(null);
@@ -991,9 +990,20 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       throw new Error('Text-to-speech conversion failed after retries. Please try again later.');
     }
 
+    if (!firebaseUser) {
+      throw new Error('User authentication failed. Cannot perform text-to-speech conversion.');
+    }
+
     try {
+      const idToken = await firebaseUser.getIdToken(true);
+      console.log('retryTextToSpeech: Fetched idToken:', idToken ? 'Valid token' : 'No token');
+
+      if (!idToken || typeof idToken !== 'string' || idToken.trim() === '') {
+        throw new Error('Invalid idToken: Must be a non-empty string.');
+      }
+
       const normalizedLang = normalizeLanguageCode(lang);
-      const audioUrl = await textToSpeechConvert(text.trim(), normalizedLang, effectiveUserId);
+      const audioUrl = await textToSpeechConvert(text.trim(), normalizedLang, effectiveUserId, idToken);
       const response = await fetch(audioUrl, { method: 'HEAD', mode: 'cors' });
       if (!response.ok) {
         throw new Error(`Audio URL inaccessible: ${audioUrl} (Status: ${response.status}) - ${response.statusText}`);
@@ -1018,6 +1028,12 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       return;
     }
 
+    if (!firebaseUser) {
+      setError('User authentication failed. Cannot read aloud.');
+      navigate('/login');
+      return;
+    }
+
     try {
       if (!text || typeof text !== 'string' || text.trim() === '') {
         setError('Cannot read aloud: No valid text provided.');
@@ -1039,6 +1055,9 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         errorMessage = 'Error reading aloud: CORS policy blocked access. Please contact support.';
       } else if (err.message.includes('Playback failed')) {
         errorMessage = 'Error reading aloud: Audio playback failed. Please check your browser or device audio settings.';
+      } else if (err.message.includes('Invalid idToken')) {
+        errorMessage = 'Error reading aloud: Authentication failed. Please log in again.';
+        navigate('/login');
       }
       setError(errorMessage);
     }
