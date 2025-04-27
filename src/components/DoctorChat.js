@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { collection, query, where, onSnapshot, getDocs, doc, getDoc, setDoc } from 'firebase/firestore';
@@ -42,6 +43,9 @@ function DoctorChat({ user, role, handleLogout, setError }) {
 
   const auth = getAuth();
   const apiBaseUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
+
+  // Flag to control whether admin/notify endpoint is called (for Issue 1)
+  const shouldNotifyAdmin = true; // Set to false if you want to disable admin notifications
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -176,18 +180,30 @@ function DoctorChat({ user, role, handleLogout, setError }) {
     console.log('Setting up Pusher and fetching data for patient:', selectedPatientId);
     if (!selectedPatientId || !user?.uid || !doctorId) return;
 
+    // Initialize Pusher with proper configuration
     const pusher = new Pusher(process.env.REACT_APP_PUSHER_APP_ID || '2ed44c3ce3ef227d9924', {
       cluster: process.env.REACT_APP_PUSHER_CLUSTER || 'ap2',
       authEndpoint: `${apiBaseUrl}/pusher/auth`,
       auth: {
         headers: {
           'x-user-uid': user.uid,
+          'Authorization': `Bearer ${user.uid}`, // Ensure consistent auth
         },
       },
     });
 
-    const channel = pusher.subscribe(`chat-${selectedPatientId}-${doctorId}`);
-    console.log('Subscribed to Pusher channel:', `chat-${selectedPatientId}-${doctorId}`);
+    const channelName = `chat-${selectedPatientId}-${doctorId}`;
+    const channel = pusher.subscribe(channelName);
+    console.log('Subscribed to Pusher channel:', channelName);
+
+    channel.bind('pusher:subscription_succeeded', () => {
+      console.log('Successfully subscribed to Pusher channel:', channelName);
+    });
+
+    channel.bind('pusher:subscription_error', (error) => {
+      console.error('Pusher subscription error:', error);
+      setError('Failed to subscribe to real-time updates. Please refresh the page.');
+    });
 
     channel.bind('new-message', (message) => {
       console.log('New message received from Pusher:', message);
@@ -330,7 +346,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
 
     return () => {
       console.log('Cleaning up Pusher subscription');
-      pusher.unsubscribe(`chat-${selectedPatientId}-${doctorId}`);
+      pusher.unsubscribe(channelName);
       pusher.disconnect();
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((track) => track.stop());
@@ -346,7 +362,6 @@ function DoctorChat({ user, role, handleLogout, setError }) {
     const patientAssignment = patients.find((p) => p.patientId === selectedPatientId);
     if (!patientAssignment) return;
 
-    // Check if patient is already accepted
     if (acceptedPatients[selectedPatientId]) {
       setDiagnosisPrompt(null);
       console.log('Diagnosis prompt cleared: Patient already accepted');
@@ -358,7 +373,6 @@ function DoctorChat({ user, role, handleLogout, setError }) {
     const assignmentTime = new Date(patientAssignment.timestamp);
     const hoursSinceAssignment = (now - assignmentTime) / (1000 * 60 * 60);
 
-    // Prompt for new patients (within 24 hours) or no messages yet
     if (!timestamps || !timestamps.firstMessageTime) {
       if (hoursSinceAssignment <= 24) {
         setDiagnosisPrompt(selectedPatientId);
@@ -370,7 +384,6 @@ function DoctorChat({ user, role, handleLogout, setError }) {
       return;
     }
 
-    // Prompt for new messages (within 24 hours) or inactivity (7 days)
     const hoursSinceFirstMessage = (now - new Date(timestamps.firstMessageTime)) / (1000 * 60 * 60);
     const hoursSinceLastMessage = (now - new Date(timestamps.lastMessageTime)) / (1000 * 60 * 60);
 
@@ -425,7 +438,6 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           setDiagnosisPrompt(null);
           console.log('Patient accepted successfully:', selectedPatientId);
         } else {
-          // Send decline message
           const declineMessage = {
             sender: 'doctor',
             text: 'Sorry, I am not available at the moment. Please chat with another doctor.',
@@ -757,7 +769,6 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           return prev;
         });
 
-        // Store the record in doctor_patient_records
         const recordData = {
           doctorId,
           patientId: selectedPatientId,
@@ -780,30 +791,40 @@ function DoctorChat({ user, role, handleLogout, setError }) {
         }
         console.log('Record stored successfully:', recordData);
 
-        const selectedPatient = patients.find((p) => p.patientId === selectedPatientId);
-        const disease = actionType === 'Combined' ? diagnosis : null;
+        // Only notify admin if the flag is true
+        if (shouldNotifyAdmin) {
+          const selectedPatient = patients.find((p) => p.patientId === selectedPatientId);
+          const disease = actionType === 'Combined' || actionType === 'Diagnosis' ? diagnosis : 'N/A';
+          const notificationMessage = prescriptionString
+            ? `Diagnosis: ${disease}, Prescription: ${prescriptionString}`
+            : `Diagnosis: ${disease}`;
 
-        console.log('Sending admin notification');
-        const adminResponse = await fetch(`${apiBaseUrl}/admin/notify`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-user-uid': user.uid,
-            'Authorization': `Bearer ${idToken}`,
-          },
-          body: JSON.stringify({
-            patientId: selectedPatientId,
-            patientName: selectedPatientName,
-            age: selectedPatient?.age || 'N/A',
-            sex: selectedPatient?.sex || 'N/A',
-            description: 'N/A',
-            disease: disease || 'N/A',
-            medicine: actionType === 'Combined' ? prescriptionString : undefined,
-            doctorId,
-          }),
-          credentials: 'include',
-        });
-        if (!adminResponse.ok) throw new Error(`HTTP ${adminResponse.status}: ${await adminResponse.text()}`);
+          console.log('Sending admin notification');
+          const adminResponse = await fetch(`${apiBaseUrl}/admin/notify`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-user-uid': user.uid,
+              'Authorization': `Bearer ${idToken}`,
+            },
+            body: JSON.stringify({
+              patientId: selectedPatientId,
+              patientName: selectedPatientName || 'Unknown',
+              age: selectedPatient?.age || 'N/A',
+              sex: selectedPatient?.sex || 'N/A',
+              description: notificationMessage, // Ensure description is meaningful
+              disease: disease,
+              message: notificationMessage, // Added message field as required by the endpoint
+              medicine: actionType === 'Combined' ? prescriptionString : undefined,
+              doctorId,
+            }),
+            credentials: 'include',
+          });
+          if (!adminResponse.ok) throw new Error(`HTTP ${adminResponse.status}: ${await adminResponse.text()}`);
+          console.log('Admin notification sent successfully');
+        } else {
+          console.log('Admin notification skipped due to shouldNotifyAdmin flag');
+        }
 
         setDiagnosis('');
         setPrescription({ medicine: '', dosage: '', frequency: '', duration: '' });
@@ -2075,6 +2096,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           background: #C0392B;
           transform: scale(1.05);
         }
+
 
         @keyframes shake {
           0%,
