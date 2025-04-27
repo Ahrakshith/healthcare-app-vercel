@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { SPECIALTIES } from '../constants/specialties.js';
 import { getAuth } from 'firebase/auth';
@@ -11,11 +11,21 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout, isLog
   const [loadingDoctorId, setLoadingDoctorId] = useState(null);
   const [error, setError] = useState('');
   const navigate = useNavigate();
+  const isMounted = useRef(true); // Track component mount state
 
   const baseApiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app';
   const apiBaseUrl = baseApiUrl.endsWith('/api') ? baseApiUrl.replace(/\/api$/, '') : baseApiUrl;
   const auth = getAuth();
 
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      isMounted.current = false;
+      console.log('SelectDoctor: Component unmounted, cleanup complete');
+    };
+  }, []);
+
+  // Authentication check with cleanup
   useEffect(() => {
     const authTimeout = setTimeout(() => {
       if (!firebaseUser || !user || role !== 'patient' || !patientId || isLoggingOut) {
@@ -29,7 +39,7 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout, isLog
         setError('Invalid session or logging out. Please log in again.');
         navigate('/login', { replace: true });
       } else {
-        setAuthLoading(false);
+        if (isMounted.current) setAuthLoading(false);
       }
     }, 500);
 
@@ -37,8 +47,8 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout, isLog
   }, [firebaseUser, user, role, patientId, isLoggingOut, navigate]);
 
   const fetchDoctors = useCallback(async () => {
-    if (isLoggingOut) {
-      console.log('SelectDoctor: Skipping fetchDoctors due to logout in progress');
+    if (isLoggingOut || !isMounted.current) {
+      console.log('SelectDoctor: Skipping fetchDoctors due to logout or unmount');
       return;
     }
 
@@ -70,30 +80,37 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout, isLog
 
       const data = await response.json();
       console.log('SelectDoctor: Doctors fetched:', data.doctors);
-      setDoctors(data.doctors || []);
-      setError(
-        data.doctors.length === 0
-          ? specialty === 'All'
-            ? 'No doctors available at this time.'
-            : `No doctors found for specialty: ${specialty}.`
-          : ''
-      );
+      if (isMounted.current) {
+        setDoctors(data.doctors || []);
+        setError(
+          data.doctors.length === 0
+            ? specialty === 'All'
+              ? 'No doctors available at this time.'
+              : `No doctors found for specialty: ${specialty}.`
+            : ''
+        );
+      }
     } catch (err) {
       console.error('SelectDoctor: Fetch error:', err.message);
-      if (err.message.includes('auth/user-token-expired')) {
-        setError('Session expired. Please log in again.');
-        navigate('/login', { replace: true });
-      } else {
-        setError(`Failed to load doctors: ${err.message}`);
-        setDoctors([]);
+      if (isMounted.current) {
+        if (err.message.includes('auth/user-token-expired')) {
+          setError('Session expired. Please log in again.');
+          navigate('/login', { replace: true });
+        } else {
+          setError(`Failed to load doctors: ${err.message}`);
+          setDoctors([]);
+        }
       }
     } finally {
-      setLoading(false);
+      if (isMounted.current) setLoading(false);
     }
   }, [specialty, user, firebaseUser, apiBaseUrl, isLoggingOut, navigate]);
 
   useEffect(() => {
-    if (authLoading || isLoggingOut) return;
+    if (authLoading || isLoggingOut || !isMounted.current) {
+      console.log('SelectDoctor: Skipping fetchDoctors due to authLoading, logout, or unmount');
+      return;
+    }
 
     console.log('SelectDoctor: Fetching doctors for patient:', { patientId, uid: user.uid });
     fetchDoctors();
@@ -101,7 +118,7 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout, isLog
     return () => {
       console.log('SelectDoctor: Cleaning up fetchDoctors effect');
     };
-  }, [fetchDoctors, authLoading, isLoggingOut]);
+  }, [fetchDoctors, authLoading, isLoggingOut, patientId, user.uid]);
 
   async function fetchWithRetry(url, options, retries = 3, backoff = 1000) {
     for (let attempt = 1; attempt <= retries; attempt++) {
@@ -130,7 +147,7 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout, isLog
   }
 
   const handleDoctorSelect = async (doctorId) => {
-    if (!patientId || !doctorId || isLoggingOut) {
+    if (!patientId || !doctorId || isLoggingOut || !isMounted.current) {
       setError('Patient ID or Doctor ID not found, or logout in progress.');
       return;
     }
@@ -154,35 +171,44 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout, isLog
 
       const result = await response.json();
       console.log(`SelectDoctor: Assigned doctor ${doctorId} to patient ${patientId}`, result);
-      navigate(`/patient/language-preference/${patientId}/${doctorId}`);
+      if (isMounted.current) {
+        navigate(`/patient/language-preference/${patientId}/${doctorId}`);
+      }
     } catch (err) {
       console.error('SelectDoctor: Error assigning doctor:', err.message);
-      if (err.message.includes('auth/user-token-expired')) {
-        setError('Session expired. Please log in again.');
-        navigate('/login', { replace: true });
-      } else {
-        setError(
-          `Error assigning doctor: ${
-            err.message.includes('404')
-              ? 'Doctor assignment endpoint not found. Please contact support.'
-              : err.message.includes('403')
-              ? 'Access denied. Please verify your role or log in again.'
-              : err.message.includes('400')
-              ? 'Invalid request. Please ensure all data is correct.'
-              : err.message
-          }`
-        );
+      if (isMounted.current) {
+        if (err.message.includes('auth/user-token-expired')) {
+          setError('Session expired. Please log in again.');
+          navigate('/login', { replace: true });
+        } else {
+          setError(
+            `Error assigning doctor: ${
+              err.message.includes('404')
+                ? 'Doctor assignment endpoint not found. Please contact support.'
+                : err.message.includes('403')
+                ? 'Access denied. Please verify your role or log in again.'
+                : err.message.includes('400')
+                ? 'Invalid request. Please ensure all data is correct.'
+                : err.message
+            }`
+          );
+        }
       }
     } finally {
-      setLoadingDoctorId(null);
+      if (isMounted.current) setLoadingDoctorId(null);
     }
   };
 
   const handleLogoutClick = async () => {
+    if (!isMounted.current) return;
+
     console.log('SelectDoctor: Initiating logout');
     try {
+      // Sign out from Firebase
       await auth.signOut();
-      await fetch(`${apiBaseUrl}/misc/logout`, {
+
+      // Backend logout request
+      await fetch(`${apiBaseUrl}/api/misc/logout`, {
         method: 'POST',
         headers: {
           'x-user-uid': user?.uid,
@@ -190,12 +216,20 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout, isLog
         },
         credentials: 'include',
       });
-      if (handleLogout) handleLogout();
-      navigate('/login', { replace: true });
-      console.log('SelectDoctor: Logged out successfully');
+
+      // Call parent logout handler if provided
+      if (handleLogout) await handleLogout();
+
+      // Navigate to login
+      if (isMounted.current) {
+        navigate('/login', { replace: true });
+        console.log('SelectDoctor: Logged out successfully');
+      }
     } catch (err) {
       console.error('SelectDoctor: Logout error:', err.message);
-      setError('Failed to log out. Please try again.');
+      if (isMounted.current) {
+        setError('Failed to log out. Please try again.');
+      }
     }
   };
 
