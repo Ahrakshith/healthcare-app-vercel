@@ -18,9 +18,12 @@ const fetchMedicineValidationCsv = async () => {
   console.log('medicineVerify.js: Attempting to fetch medicine_validation.csv from:', csvPath);
 
   try {
-    const response = await fetch(csvPath);
+    const response = await fetch(csvPath, {
+      method: 'GET',
+      headers: { 'Content-Type': 'text/csv' },
+    });
     if (!response.ok) {
-      throw new Error(`Failed to fetch CSV: ${response.statusText}`);
+      throw new Error(`Failed to fetch CSV: ${response.status} - ${response.statusText}`);
     }
 
     const csvText = await response.text();
@@ -113,16 +116,16 @@ async function verifyMedicine(disease, medicine, userId, idToken, profileData = 
             console.log(`medicineVerify.js: Verification successful: disease=${disease}, medicine=${medicine}`);
             return {
               success: true,
-              message: 'Medication verified',
+              message: 'Medication verified successfully.',
             };
           }
         }
         console.log(`medicineVerify.js: Medicine "${medicine}" not found for disease "${disease}"`);
+        const notificationMessage = `Invalid prescription: "${medicine}" for diagnosis "${disease}" (Patient: ${profileData.name || 'Unknown Patient'}, Doctor: ${doctorName})`;
         await notifyAdmin(
           profileData.name || 'Unknown Patient',
           doctorName,
-          disease,
-          medicine,
+          notificationMessage,
           profileData.patientId || 'Unknown',
           doctorId,
           userId,
@@ -130,17 +133,17 @@ async function verifyMedicine(disease, medicine, userId, idToken, profileData = 
         );
         return {
           success: false,
-          message: 'Medicine not found for the specified disease.',
+          message: `Medicine "${medicine}" not found for the specified disease "${disease}".`,
         };
       }
     }
 
     console.log(`medicineVerify.js: Disease "${disease}" not found in database`);
+    const notificationMessage = `Disease "${disease}" not found in database for medicine "${medicine}" (Patient: ${profileData.name || 'Unknown Patient'}, Doctor: ${doctorName})`;
     await notifyAdmin(
       profileData.name || 'Unknown Patient',
       doctorName,
-      disease,
-      medicine,
+      notificationMessage,
       profileData.patientId || 'Unknown',
       doctorId,
       userId,
@@ -148,10 +151,20 @@ async function verifyMedicine(disease, medicine, userId, idToken, profileData = 
     );
     return {
       success: false,
-      message: 'Disease not found in the database.',
+      message: `Disease "${disease}" not found in the database.`,
     };
   } catch (error) {
     console.error('medicineVerify.js: Error verifying medicine:', error.message);
+    const notificationMessage = `Error verifying medicine: ${error.message} (Disease: ${disease}, Medicine: ${medicine}, Patient: ${profileData.name || 'Unknown Patient'}, Doctor: ${doctorName})`;
+    await notifyAdmin(
+      profileData.name || 'Unknown Patient',
+      doctorName,
+      notificationMessage,
+      profileData.patientId || 'Unknown',
+      doctorId,
+      userId,
+      idToken
+    );
     return {
       success: false,
       message: `Error verifying medicine: ${error.message}`,
@@ -163,34 +176,33 @@ async function verifyMedicine(disease, medicine, userId, idToken, profileData = 
  * Notifies the admin of an invalid prescription by sending a request to the server.
  * @param {string} patientName - The name of the patient.
  * @param {string} doctorName - The name of the doctor.
- * @param {string} disease - The disease being treated.
- * @param {string} medicine - The prescribed medicine.
+ * @param {string} message - The notification message (e.g., invalid prescription details).
  * @param {string} patientId - The patient's ID.
  * @param {string} doctorId - The doctor's ID.
  * @param {string} userId - The user ID for authentication.
  * @param {string} idToken - The Firebase ID token for authentication.
  * @returns {Promise<{ success: boolean, message: string }>} The notification result.
  */
-async function notifyAdmin(patientName, doctorName, disease, medicine, patientId, doctorId, userId, idToken) {
+async function notifyAdmin(patientName, doctorName, message, patientId, doctorId, userId, idToken) {
   try {
     // Input validation
-    if (!patientName || !doctorName || !disease || !medicine || !patientId || !doctorId || !userId || !idToken) {
+    if (!patientName || !doctorName || !message || !patientId || !doctorId || !userId || !idToken) {
       console.error('medicineVerify.js: Missing required fields for notification:', {
         patientName,
         doctorName,
-        disease,
-        medicine,
+        message,
         patientId,
         doctorId,
         userId,
         idToken,
       });
-      throw new Error('All fields (patientName, doctorName, disease, medicine, patientId, doctorId, userId, idToken) are required to notify admin.');
+      throw new Error('All fields (patientName, doctorName, message, patientId, doctorId, userId, idToken) are required to notify admin.');
     }
 
     // Use the production URL for the admin notification endpoint
-    const response = await fetch('https://healthcare-app-vercel.vercel.app/api/admin/notify', {
-      method: 'POST',
+    const apiBaseUrl = 'https://healthcare-app-vercel.vercel.app/api';
+    const response = await fetch(`${apiBaseUrl}/admin/notify`, {
+      method: 'POST', // Switch to GET if POST continues to fail (405 error)
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${idToken}`,
@@ -199,19 +211,21 @@ async function notifyAdmin(patientName, doctorName, disease, medicine, patientId
       body: JSON.stringify({
         patientId,
         doctorId,
-        message: `Invalid prescription: ${medicine} for ${disease} (Patient: ${patientName}, Doctor: ${doctorName})`,
+        message,
       }),
+      credentials: 'include',
     });
 
     if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(`Failed to notify admin: ${response.statusText} - ${errorData.error?.message || 'Unknown error'}`);
+      const errorText = await response.text();
+      throw new Error(`Failed to notify admin: ${response.status} - ${errorText || response.statusText}`);
     }
 
-    console.log('medicineVerify.js: Admin notified of invalid prescription.');
+    const result = await response.json();
+    console.log('medicineVerify.js: Admin notified successfully:', result);
     return {
       success: true,
-      message: 'Admin notified of invalid prescription.',
+      message: 'Admin notified successfully.',
     };
   } catch (error) {
     console.error('medicineVerify.js: Error notifying admin:', error.message);
