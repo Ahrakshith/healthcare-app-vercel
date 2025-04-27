@@ -513,22 +513,26 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   }, []);
 
   const sendMissedDoseAlert = async () => {
-    try {
-      await notifyAdmin(
-        `Patient_${effectivePatientId}`,
-        'Doctor',
-        'Missed Doses Alert',
-        `Patient has missed 3 consecutive doses.`
-      );
-      setMissedDoseAlerts((prev) => [
-        ...prev,
-        { id: Date.now().toString(), message: 'Alert: You have missed 3 consecutive doses. Notified your doctor.' },
-      ]);
-    } catch (err) {
-      setError(`Failed to send missed dose alert: ${err.message}`);
-    }
-  };
-
+  try {
+    const idToken = await firebaseUser.getIdToken(true);
+    await notifyAdmin(
+      `Patient_${effectivePatientId}`,
+      'Doctor',
+      'Missed Doses Alert',
+      `Patient has missed 3 consecutive doses.`,
+      effectivePatientId, // patientId
+      doctorId, // doctorId
+      effectiveUserId, // userId
+      idToken // idToken
+    );
+    setMissedDoseAlerts((prev) => [
+      ...prev,
+      { id: Date.now().toString(), message: 'Alert: You have missed 3 consecutive doses. Notified your doctor.' },
+    ]);
+  } catch (err) {
+    setError(`Failed to send missed dose alert: ${err.message}`);
+  }
+};
   const handleConfirmReminder = async (id) => {
     try {
       const updatedReminders = reminders.map((reminder) =>
@@ -596,40 +600,59 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     }
   };
 
-  const validatePrescription = async (diagnosis, prescription, timestamp) => {
-    if (!diagnosis || !prescription) {
+ const validatePrescription = async (diagnosis, prescription, timestamp) => {
+  if (!diagnosis || !prescription) {
+    setValidationResult((prev) => ({
+      ...prev,
+      [timestamp]: 'Diagnosis or prescription is missing.',
+    }));
+    return;
+  }
+
+  const medicine = typeof prescription === 'object' ? prescription.medicine : prescription;
+
+  try {
+    const isValid = await verifyMedicine(diagnosis, medicine);
+    if (isValid.success) {
       setValidationResult((prev) => ({
         ...prev,
-        [timestamp]: 'Diagnosis or prescription is missing.',
+        [timestamp]: `Prescription "${medicine}" is valid for diagnosis "${diagnosis}".`,
       }));
-      return;
-    }
-
-    const medicine = typeof prescription === 'object' ? prescription.medicine : prescription;
-
-    try {
-      const isValid = await verifyMedicine(diagnosis, medicine);
-      if (isValid) {
-        setValidationResult((prev) => ({
-          ...prev,
-          [timestamp]: `Prescription "${medicine}" is valid for diagnosis "${diagnosis}".`,
-        }));
-      } else {
-        setValidationResult((prev) => ({
-          ...prev,
-          [timestamp]: `Invalid prescription "${medicine}" for diagnosis "${diagnosis}".`,
-        }));
-        await notifyAdmin(`Patient_${effectivePatientId}`, 'Doctor', diagnosis, medicine);
-      }
-    } catch (error) {
+    } else {
       setValidationResult((prev) => ({
         ...prev,
-        [timestamp]: `Error validating prescription: ${error.message}`,
+        [timestamp]: `Invalid prescription "${medicine}" for diagnosis "${diagnosis}".`,
       }));
-      await notifyAdmin(`Patient_${effectivePatientId}`, 'Doctor', diagnosis, medicine);
+      const idToken = await firebaseUser.getIdToken(true);
+      await notifyAdmin(
+        `Patient_${effectivePatientId}`,
+        'Doctor',
+        diagnosis,
+        medicine,
+        effectivePatientId,
+        doctorId,
+        effectiveUserId,
+        idToken
+      );
     }
-  };
-
+  } catch (error) {
+    setValidationResult((prev) => ({
+      ...prev,
+      [timestamp]: `Error validating prescription: ${error.message}`,
+    }));
+    const idToken = await firebaseUser.getIdToken(true);
+    await notifyAdmin(
+      `Patient_${effectivePatientId}`,
+      'Doctor',
+      diagnosis,
+      medicine,
+      effectivePatientId,
+      doctorId,
+      effectiveUserId,
+      idToken
+    );
+  }
+};
   const retryUpload = async (audioBlob, language) => {
     if (!firebaseUser || !audioBlob || !language) {
       setError('Invalid retry data or user session. Please log in again.');
