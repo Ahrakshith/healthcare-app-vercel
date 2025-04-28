@@ -631,12 +631,8 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           });
           if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`);
           console.log('Message sent successfully:', message);
-          setMessages((prev) => {
-            if (!prev.some((msg) => msg.timestamp === message.timestamp && msg.text === message.text)) {
-              return [...prev, message].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-            }
-            return prev;
-          });
+          // Removed local setMessages call to prevent duplication
+          // The message will be added via the Pusher 'new-message' event
         } catch (err) {
           const errorMsg = `Failed to send message: ${err.message}`;
           setError(errorMsg);
@@ -705,12 +701,8 @@ function DoctorChat({ user, role, handleLogout, setError }) {
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`);
       console.log('Message sent successfully:', message);
-      setMessages((prev) => {
-        if (!prev.some((msg) => msg.timestamp === message.timestamp && msg.text === message.text)) {
-          return [...prev, message].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-        }
-        return prev;
-      });
+      // Removed local setMessages call to prevent duplication
+      // The message will be added via the Pusher 'new-message' event
       setNewMessage('');
     } catch (err) {
       const errorMsg = `Failed to send message: ${err.message}`;
@@ -2054,7 +2046,6 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           gap: 15px;
         }
 
-        .modal-content select,
         .modal-content input,
         .modal-content textarea {
           width: 100%;
