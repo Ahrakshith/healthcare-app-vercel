@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useStimport React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Pusher from 'pusher-js';
 import {
@@ -786,7 +786,11 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     const attemptRetry = async () => {
       try {
         console.log('Retrying upload with:', { language, audioBlobSize: audioBlob.size });
-        const transcriptionResult = await transcribeAudio(audioBlob, language, effectiveUserId);
+        const idToken = await firebaseUser.getIdToken(true);
+        if (!idToken || typeof idToken !== 'string' || idToken.trim() === '') {
+          throw new Error('Invalid idToken: Must be a non-empty string.');
+        }
+        const transcriptionResult = await transcribeAudio(audioBlob, language, effectiveUserId, idToken);
         if (!transcriptionResult.audioUrl) {
           throw new Error('Transcription succeeded, but no audio URL was returned.');
         }
@@ -818,7 +822,6 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         const postUrl = `${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`;
         console.log('Sending retry upload:', { url: postUrl, message });
 
-        const idToken = await firebaseUser.getIdToken(true);
         const saveResponse = await fetch(postUrl, {
           method: 'POST',
           headers: { 'x-user-uid': effectiveUserId, Authorization: `Bearer ${idToken}` },
@@ -889,7 +892,11 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         let text, translatedText = null;
 
         try {
-          const transcriptionResult = await transcribeAudio(audioBlob, normalizedTranscriptionLanguage, effectiveUserId);
+          const idToken = await firebaseUser.getIdToken(true);
+          if (!idToken || typeof idToken !== 'string' || idToken.trim() === '') {
+            throw new Error('Invalid idToken: Must be a non-empty string.');
+          }
+          const transcriptionResult = await transcribeAudio(audioBlob, normalizedTranscriptionLanguage, effectiveUserId, idToken);
           text = transcriptionResult.transcription || 'Transcription failed';
 
           if (normalizedTranscriptionLanguage === 'kn-IN') {
@@ -918,7 +925,6 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           const postUrl = `${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`;
           console.log('Sending audio message:', { url: postUrl, message, audioSize: audioBlob.size });
 
-          const idToken = await firebaseUser.getIdToken(true);
           const response = await fetch(postUrl, {
             method: 'POST',
             headers: { 'x-user-uid': effectiveUserId, Authorization: `Bearer ${idToken}` },
@@ -1745,7 +1751,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           background: linear-gradient(135deg, #2C1A3D, #3E2A5A);
           font-family: 'Poppins', sans-serif;
           color: #E0E0E0;
-          overflow: hidden;
+           overflow: hidden;
         }
 
         .chat-header {
