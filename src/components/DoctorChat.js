@@ -422,8 +422,23 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           credentials: 'include',
         });
 
+        // Check if the response is successful
         if (!response.ok) {
-          throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+          const errorText = await response.text();
+          let userFriendlyMessage = `Failed to process patient decision: HTTP ${response.status}`;
+
+          // Customize error message based on status code
+          if (response.status === 405) {
+            userFriendlyMessage = 'The server does not support this action. Please try again later or contact support.';
+          } else if (response.status === 403) {
+            userFriendlyMessage = 'You are not authorized to perform this action.';
+          } else if (response.status === 404) {
+            userFriendlyMessage = 'Patient or doctor assignment not found.';
+          } else {
+            userFriendlyMessage = `Failed to process patient decision: ${errorText || 'Unknown error'}`;
+          }
+
+          throw new Error(userFriendlyMessage);
         }
 
         const result = await response.json();
@@ -476,7 +491,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           console.log('Patient declined and message sent:', declineMessage);
         }
       } catch (err) {
-        const errorMsg = `Failed to process diagnosis decision: ${err.message}`;
+        const errorMsg = err.message || 'An unexpected error occurred while processing the patient decision.';
         setError(errorMsg);
         console.error('Diagnosis decision error:', err);
       }
