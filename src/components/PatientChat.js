@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Pusher from 'pusher-js';
@@ -12,8 +13,6 @@ import { verifyMedicine, notifyAdmin } from '../services/medicineVerify.js';
 import { doc, getDoc, collection, getDocs, updateDoc, setDoc } from 'firebase/firestore';
 import { db, auth } from '../services/firebase.js';
 import { signOut } from 'firebase/auth';
-
-
 
 function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   const { patientId: urlPatientId, doctorId } = useParams();
@@ -300,7 +299,8 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
               msg.timestamp === message.timestamp &&
               msg.sender === message.sender &&
               msg.text === message.text &&
-              msg.audioUrl === message.audioUrl
+              msg.audioUrl === message.audioUrl &&
+              msg.imageUrl === message.imageUrl
           );
           if (isDuplicate) {
             console.log('PatientChat: Skipped duplicate message:', message.timestamp, message.text);
@@ -1013,12 +1013,17 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       return;
     }
 
+    // Generate a unique temporary ID for the message to prevent duplicates
+    const tempMessageId = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+    const timestamp = new Date().toISOString();
+
     const message = {
       sender: 'patient',
-      timestamp: new Date().toISOString(),
+      timestamp,
       doctorId,
       userId: effectivePatientId,
       messageType: 'image',
+      tempMessageId, // Add a temporary ID to track this message
     };
 
     const formData = new FormData();
@@ -1048,7 +1053,23 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         throw new Error('Image upload succeeded, but no image URL was returned.');
       }
 
-      setMessages((prev) => [...prev, data.newMessage].sort((a, b) => a.timestamp.localeCompare(b.timestamp)));
+      // Update messages state, ensuring no duplicates
+      setMessages((prev) => {
+        // Filter out any temporary messages with the same tempMessageId
+        const filteredMessages = prev.filter((msg) => msg.tempMessageId !== tempMessageId);
+        // Check for duplicates based on timestamp and imageUrl
+        const isDuplicate = filteredMessages.some(
+          (msg) =>
+            msg.timestamp === data.newMessage.timestamp &&
+            msg.imageUrl === data.newMessage.imageUrl &&
+            msg.sender === data.newMessage.sender
+        );
+        if (isDuplicate) {
+          console.log('PatientChat: Skipped duplicate image message:', data.newMessage.timestamp, data.newMessage.imageUrl);
+          return filteredMessages;
+        }
+        return [...filteredMessages, data.newMessage].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+      });
     } catch (err) {
       console.error('Image upload failed:', err);
       setError(err.message);
