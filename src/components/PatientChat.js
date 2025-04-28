@@ -1,4 +1,4 @@
-import React, { useStimport React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Pusher from 'pusher-js';
 import {
@@ -12,6 +12,8 @@ import { verifyMedicine, notifyAdmin } from '../services/medicineVerify.js';
 import { doc, getDoc, collection, getDocs, updateDoc, setDoc } from 'firebase/firestore';
 import { db, auth } from '../services/firebase.js';
 import { signOut } from 'firebase/auth';
+
+
 
 function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   const { patientId: urlPatientId, doctorId } = useParams();
