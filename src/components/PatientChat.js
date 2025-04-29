@@ -372,6 +372,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       return;
     }
 
+    // Step 1: Parse the Prescription
     let medicine, dosage, times, durationDays, timesStr;
 
     if (typeof prescription === 'object') {
@@ -412,33 +413,30 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       return;
     }
 
+    // Convert times to 24-hour format
     const parseTime = (timeStr) => {
       const cleanTimeStr = timeStr.replace('.', ':');
       const [time, period] = cleanTimeStr.split(/\s*(AM|PM)/i);
       let [hours, minutes] = time.split(':').map(Number);
       if (period.toUpperCase() === 'PM' && hours !== 12) hours += 12;
       if (period.toUpperCase() === 'AM' && hours === 12) hours = 0;
-      return { hours, minutes };
+      return { hours, minutes, original: timeStr };
     };
 
     const timeSchedules = times.map(parseTime);
 
-    // Use the issuance timestamp as the reference point for scheduling
+    // Step 2: Generate Reminder Schedule
     const issuanceTime = new Date(issuanceTimestamp);
     const startDate = new Date(issuanceTime);
     startDate.setHours(0, 0, 0, 0); // Start from midnight of the issuance day
 
-    // Calculate the end date/time: issuance time + duration
-    const endDateTime = new Date(issuanceTime);
-    endDateTime.setDate(endDateTime.getDate() + days);
-    endDateTime.setHours(issuanceTime.getHours(), issuanceTime.getMinutes(), 0, 0);
-
     const newReminders = [];
     let dosesScheduled = 0;
 
-    // Iterate over each day within the duration
-    let currentDate = new Date(startDate);
-    while (currentDate < endDateTime) {
+    // Loop for the number of days in duration
+    for (let dayOffset = 0; dayOffset < days; dayOffset++) {
+      const currentDate = new Date(startDate);
+      currentDate.setDate(startDate.getDate() + dayOffset);
       const dateStr = currentDate.toISOString().split('T')[0]; // e.g., '2025-04-29'
 
       for (let i = 0; i < timeSchedules.length; i++) {
@@ -450,11 +448,6 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
 
         // Skip if the scheduled dose is before the issuance time
         if (scheduledDate <= issuanceTime) {
-          continue;
-        }
-
-        // Skip if the scheduled dose is after the end date/time
-        if (scheduledDate >= endDateTime) {
           continue;
         }
 
@@ -486,8 +479,6 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           setError(`Failed to add reminder: ${err.message}`);
         }
       }
-
-      currentDate.setDate(currentDate.getDate() + 1);
     }
 
     if (newReminders.length > 0) {
@@ -495,8 +486,8 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       scheduleReminders(newReminders);
       console.log('setupMedicationSchedule: Added reminders:', newReminders);
     } else {
-      console.warn('setupMedicationSchedule: No new reminders added (all scheduled times in the past or after end date)');
-      setError('No future reminders scheduled within the duration.');
+      console.warn('setupMedicationSchedule: No new reminders added (all scheduled times in the past)');
+      setError('No future reminders scheduled.');
     }
   };
 
@@ -539,9 +530,9 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       setAdherenceRate(0);
       return;
     }
-    const completed = remindersList.filter((r) => r.status === 'taken').length;
+    const taken = remindersList.filter((r) => r.status === 'taken').length;
     const total = remindersList.length;
-    const rate = (completed / total) * 100;
+    const rate = (taken / total) * 100;
     setAdherenceRate(rate.toFixed(2));
   }, []);
 
@@ -650,7 +641,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       if (!reminder) return;
 
       const newSnoozeCount = (reminder.snoozeCount || 0) + 1;
-      const snoozeTime = new Date(new Date(reminder.scheduledTime).getTime() + 15 * 60 * 1000);
+      const snoozeTime = new Date(new Date(reminder.scheduledTime).getTime() + 10 * 60 * 1000); // 10 minutes as per algorithm
 
       const updatedReminders = reminders.map((r) =>
         r.id === id
@@ -1654,7 +1645,9 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                                     🔊 Kannada
                                   </button>
                                   <button
-                                    onClick={() => readAloud(msg.translatedText || msg.text, 'en')}
+                                    onClick={() => readAloud(msg.translatedText || msg
+
+.text, 'en')}
                                     className="read-aloud-button english"
                                   >
                                     🔊 English
