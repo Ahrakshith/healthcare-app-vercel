@@ -722,133 +722,132 @@ function DoctorChat({ user, role, handleLogout, setError }) {
     }
   }, [newMessage, selectedPatientId, user?.uid, doctorId, apiBaseUrl, setError]);
 
-  const sendAction = useCallback(
-    async () => {
-      console.log('Sending action:', { actionType, diagnosis, prescription, selectedPatientId });
-      if (!selectedPatientId || !doctorId) {
-        const errorMsg = 'No patient selected or doctor ID missing.';
-        setError(errorMsg);
-        console.error(errorMsg);
-        return;
-      }
+ const sendAction = useCallback(
+  async () => {
+    console.log('Sending action:', { actionType, diagnosis, prescription, selectedPatientId });
+    if (!selectedPatientId || !doctorId) {
+      const errorMsg = 'No patient selected or doctor ID missing.';
+      setError(errorMsg);
+      console.error(errorMsg);
+      return;
+    }
 
-      if (actionType === 'Diagnosis' && !diagnosis.trim()) {
-        const errorMsg = 'Please enter a diagnosis.';
-        setError(errorMsg);
-        console.error(errorMsg);
-        return;
-      }
+    if (actionType === 'Diagnosis' && !diagnosis.trim()) {
+      const errorMsg = 'Please enter a diagnosis.';
+      setError(errorMsg);
+      console.error(errorMsg);
+      return;
+    }
 
-      if (actionType === 'Combined' && (!diagnosis.trim() || !Object.values(prescription).every((v) => v.trim()))) {
-        const errorMsg = 'Please fill all diagnosis and prescription fields.';
-        setError(errorMsg);
-        console.error(errorMsg);
-        return;
-      }
+    if (actionType === 'Combined' && (!diagnosis.trim() || !Object.values(prescription).every((v) => v.trim()))) {
+      const errorMsg = 'Please fill all diagnosis and prescription fields.';
+      setError(errorMsg);
+      console.error(errorMsg);
+      return;
+    }
 
-      const prescriptionString =
-        actionType === 'Combined'
-          ? `${prescription.medicine}, ${prescription.dosage}, ${prescription.frequency}, ${prescription.duration} days`
-          : undefined;
+    const prescriptionString =
+      actionType === 'Combined' || actionType === 'Prescription'
+        ? `${prescription.medicine}, ${prescription.dosage}, ${prescription.frequency}, ${prescription.duration} days`
+        : undefined;
 
-      const tempMessageId = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`; // Updated tempMessageId
-      const message = {
-        sender: 'doctor',
-        ...(actionType === 'Diagnosis' || actionType === 'Combined' ? { diagnosis } : {}),
-        ...(actionType === 'Combined' ? { prescription: { ...prescription } } : {}),
-        timestamp: new Date().toISOString(),
+    const tempMessageId = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`; // Updated tempMessageId
+    const message = {
+      sender: 'doctor',
+      ...(actionType === 'Diagnosis' || actionType === 'Combined' ? { diagnosis } : {}),
+      ...(actionType === 'Prescription' || actionType === 'Combined' ? { prescription: { ...prescription } } : {}),
+      timestamp: new Date().toISOString(),
+      doctorId,
+      patientId: selectedPatientId,
+      tempMessageId,
+    };
+
+    try {
+      const idToken = await getIdToken();
+      console.log('Sending chat action to API');
+      const chatResponse = await fetch(`${apiBaseUrl}/chats/${selectedPatientId}/${doctorId}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-uid': user.uid,
+          'Authorization': `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ message, append: true }),
+        credentials: 'include',
+      });
+      if (!chatResponse.ok) throw new Error(`HTTP ${chatResponse.status}: ${await chatResponse.text()}`);
+
+      console.log('Chat action sent successfully');
+
+      const recordData = {
         doctorId,
         patientId: selectedPatientId,
-        tempMessageId,
+        ...(actionType === 'Diagnosis' || actionType === 'Combined' ? { diagnosis } : { diagnosis: null }),
+        ...(actionType === 'Prescription' || actionType === 'Combined' ? { prescription } : { prescription: null }),
       };
-
-      try {
-        const idToken = await getIdToken();
-        console.log('Sending chat action to API');
-        const chatResponse = await fetch(`${apiBaseUrl}/chats/${selectedPatientId}/${doctorId}`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-user-uid': user.uid,
-            'Authorization': `Bearer ${idToken}`,
-          },
-          body: JSON.stringify({ message, append: true }),
-          credentials: 'include',
-        });
-        if (!chatResponse.ok) throw new Error(`HTTP ${chatResponse.status}: ${await chatResponse.text()}`);
-
-        console.log('Chat action sent successfully');
-
-        const recordData = {
-          doctorId,
-          patientId: selectedPatientId,
-          ...(actionType === 'Diagnosis' || actionType === 'Combined' ? { diagnosis } : { diagnosis: null }),
-          ...(actionType === 'Combined' ? { prescription } : { prescription: null }),
-        };
-        const recordResponse = await fetch(`${apiBaseUrl}/doctors/records`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-user-uid': user.uid,
-            'Authorization': `Bearer ${idToken}`,
-          },
-          body: JSON.stringify(recordData),
-          credentials: 'include',
-        });
-        if (!recordResponse.ok) {
-          console.error('Record storage failed:', await recordResponse.text());
-          throw new Error(`HTTP ${recordResponse.status}: ${await recordResponse.text()}`);
-        }
-        console.log('Record stored successfully:', recordData);
-
-        if (shouldNotifyAdmin) {
-          const selectedPatient = patients.find((p) => p.patientId === selectedPatientId);
-          const disease = actionType === 'Combined' || actionType === 'Diagnosis' ? diagnosis : 'N/A';
-          const notificationMessage = prescriptionString
-            ? `Diagnosis: ${disease}, Prescription: ${prescriptionString}`
-            : `Diagnosis: ${disease}`;
-
-          console.log('Sending admin notification');
-          const adminResponse = await fetch(`${apiBaseUrl}/admin/notify`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'x-user-uid': user.uid,
-              'Authorization': `Bearer ${idToken}`,
-            },
-            body: JSON.stringify({
-              patientId: selectedPatientId,
-              patientName: selectedPatientName || 'Unknown',
-              age: selectedPatient?.age || 'N/A',
-              sex: selectedPatient?.sex || 'N/A',
-              description: notificationMessage,
-              disease: disease,
-              message: notificationMessage,
-              medicine: actionType === 'Combined' ? prescriptionString : undefined,
-              doctorId,
-            }),
-            credentials: 'include',
-          });
-          if (!adminResponse.ok) throw new Error(`HTTP ${adminResponse.status}: ${await adminResponse.text()}`);
-          console.log('Admin notification sent successfully');
-        } else {
-          console.log('Admin notification skipped due to shouldNotifyAdmin flag');
-        }
-
-        setDiagnosis('');
-        setPrescription({ medicine: '', dosage: '', frequency: '', duration: '' });
-        setShowActionModal(false);
-        setActionType('');
-        console.log('Action completed successfully:', { diagnosis, prescriptionString });
-      } catch (err) {
-        const errorMsg = `Failed to send action: ${err.message}`;
-        setError(errorMsg);
-        console.error('Send action error:', err);
+      const recordResponse = await fetch(`${apiBaseUrl}/doctors/records`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-uid': user.uid,
+          'Authorization': `Bearer ${idToken}`,
+        },
+        body: JSON.stringify(recordData),
+        credentials: 'include',
+      });
+      if (!recordResponse.ok) {
+        const errorText = await recordResponse.text();
+        throw new Error(`HTTP ${recordResponse.status}: ${errorText}`);
       }
-    },
-    [actionType, diagnosis, prescription, selectedPatientId, doctorId, user?.uid, selectedPatientName, patients, apiBaseUrl, setError]
-  );
+      console.log('Record stored successfully:', recordData);
 
+      if (shouldNotifyAdmin) {
+        const selectedPatient = patients.find((p) => p.patientId === selectedPatientId);
+        const disease = actionType === 'Combined' || actionType === 'Diagnosis' ? diagnosis : 'N/A';
+        const notificationMessage = prescriptionString
+          ? `Diagnosis: ${disease}, Prescription: ${prescriptionString}`
+          : `Diagnosis: ${disease}`;
+
+        console.log('Sending admin notification');
+        const adminResponse = await fetch(`${apiBaseUrl}/admin/notify`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-user-uid': user.uid,
+            'Authorization': `Bearer ${idToken}`,
+          },
+          body: JSON.stringify({
+            patientId: selectedPatientId,
+            patientName: selectedPatientName || 'Unknown',
+            age: selectedPatient?.age || 'N/A',
+            sex: selectedPatient?.sex || 'N/A',
+            description: notificationMessage,
+            disease: disease,
+            message: notificationMessage,
+            medicine: actionType === 'Combined' || actionType === 'Prescription' ? prescriptionString : undefined,
+            doctorId,
+          }),
+          credentials: 'include',
+        });
+        if (!adminResponse.ok) throw new Error(`HTTP ${adminResponse.status}: ${await adminResponse.text()}`);
+        console.log('Admin notification sent successfully');
+      } else {
+        console.log('Admin notification skipped due to shouldNotifyAdmin flag');
+      }
+
+      setDiagnosis('');
+      setPrescription({ medicine: '', dosage: '', frequency: '', duration: '' });
+      setShowActionModal(false);
+      setActionType('');
+      console.log('Action completed successfully:', { diagnosis, prescriptionString });
+    } catch (err) {
+      const errorMsg = err.message || 'An unexpected error occurred while processing the patient decision.';
+      setError(errorMsg);
+      console.error('Send action error:', err);
+    }
+  },
+  [actionType, diagnosis, prescription, selectedPatientId, doctorId, user?.uid, selectedPatientName, patients, apiBaseUrl, setError]
+);
   const readAloud = useCallback(
     async (text, lang, sender) => {
       console.log('Reading aloud:', { text, lang, sender });
