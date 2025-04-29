@@ -180,10 +180,12 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   const streamRef = useRef(null);
   const pusherRef = useRef(null);
   const messagesEndRef = useRef(null);
+  const messagesContainerRef = useRef(null);
   const reminderTimeoutsRef = useRef(new Map());
   const timeoutManagerRef = useRef(new Map());
   const messageBufferRef = useRef([]);
   const retryTimeoutRef = useRef(null);
+  const isUserAtBottomRef = useRef(true);
   const navigate = useNavigate();
 
   const effectiveUserId = user?.uid || '';
@@ -204,7 +206,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     timeoutManagerRef.current.set(key, timeoutId);
   }, []);
 
-  // Fetch interceptor cleanup
+  // Cleanup timeouts on unmount
   useEffect(() => {
     return () => {
       timeoutManagerRef.current.forEach(clearTimeout);
@@ -212,13 +214,31 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     };
   }, []);
 
-  const scrollToBottom = useCallback(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  // Track scroll position to determine if user is at the bottom
+  useEffect(() => {
+    const messagesContainer = messagesContainerRef.current;
+    if (!messagesContainer) return;
+
+    const handleScroll = () => {
+      const { scrollTop, scrollHeight, clientHeight } = messagesContainer;
+      // Consider the user at the bottom if they are within 50 pixels of the bottom
+      isUserAtBottomRef.current = Math.abs(scrollHeight - scrollTop - clientHeight) < 50;
+    };
+
+    messagesContainer.addEventListener('scroll', handleScroll);
+    return () => messagesContainer.removeEventListener('scroll', handleScroll);
   }, []);
 
+  const scrollToBottom = useCallback(() => {
+    if (isUserAtBottomRef.current) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, []);
+
+  // Only scroll to bottom when a new message is added and user is at the bottom
   useEffect(() => {
     scrollToBottom();
-  }, [messages, scrollToBottom]);
+  }, [messages.length, scrollToBottom]);
 
   useEffect(() => {
     if (error) {
@@ -333,7 +353,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       reminderTimeoutsRef.current.clear();
       clearTimeout(retryTimeoutRef.current);
     };
-  }, [firebaseUser, effectiveUserId, effectivePatientId, doctorId, role, navigate]);
+  }, [firebaseUser, effectiveUserId, effectivePatientId, doctorId, role, navigate, setManagedTimeout]);
 
   // Insert messages in order to avoid repeated sorting
   const insertMessageInOrder = useCallback((messages, newMessage) => {
@@ -931,6 +951,9 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         }
         const data = await saveResponse.json();
         setMessages((prev) => insertMessageInOrder(prev, data.newMessage));
+        // Force scroll to bottom after user sends a message
+        isUserAtBottomRef.current = true;
+        scrollToBottom();
       } catch (err) {
         attempts--;
         if (attempts > 0) {
@@ -1018,6 +1041,9 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           }
           const data = await response.json();
           setMessages((prev) => insertMessageInOrder(prev, data.newMessage));
+          // Force scroll to bottom after user sends a message
+          isUserAtBottomRef.current = true;
+          scrollToBottom();
         } catch (err) {
           setError(`Failed to process audio: ${err.message}`);
           setFailedUpload({ audioBlob, language: normalizedTranscriptionLanguage });
@@ -1116,6 +1142,9 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         const filteredMessages = prev.filter((msg) => msg.tempMessageId !== tempMessageId);
         return insertMessageInOrder(filteredMessages, data.newMessage);
       });
+      // Force scroll to bottom after user uploads an image
+      isUserAtBottomRef.current = true;
+      scrollToBottom();
     } catch (err) {
       setError(err.message);
       setFailedUpload({ file, type: 'image' });
@@ -1240,6 +1269,9 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       }
       const data = await response.json();
       setMessages((prev) => insertMessageInOrder(prev, data.newMessage));
+      // Force scroll to bottom after user sends a message
+      isUserAtBottomRef.current = true;
+      scrollToBottom();
     } catch (err) {
       setError(`Failed to save text message: ${err.message}`);
       if (err.message.includes('404')) {
@@ -1285,6 +1317,9 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       }
       const data = await response.json();
       setMessages((prev) => insertMessageInOrder(prev, data.newMessage));
+      // Force scroll to bottom after user sends a quick reply
+      isUserAtBottomRef.current = true;
+      scrollToBottom();
     } catch (err) {
       setError(`Failed to save quick reply message: ${err.message}`);
     }
@@ -1569,7 +1604,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
             </div>
           )}
           {activeMenuOption === null && (
-            <div className="messages-container">
+            <div className="messages-container" ref={messagesContainerRef}>
               {missedDoseAlerts.length > 0 && (
                 <div className="missed-dose-alerts">
                   {missedDoseAlerts.map((alert) => (
