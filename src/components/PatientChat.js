@@ -10,7 +10,7 @@ import {
 } from '../services/speech.js';
 import { verifyMedicine, notifyAdmin } from '../services/medicineVerify.js';
 import { doc, getDoc, collection, getDocs, updateDoc, setDoc } from 'firebase/firestore';
-import { db, auth } from '../SEMBLY';
+import { db, auth } from '../services/firebase.js';
 import { signOut } from 'firebase/auth';
 
 function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
