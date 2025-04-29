@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { collection, query, where, onSnapshot, getDocs, doc, getDoc, setDoc } from 'firebase/firestore';
@@ -790,7 +789,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'x-user-uid': user.uid,
+            'x-user-uid icons': user.uid,
             'Authorization': `Bearer ${idToken}`,
           },
           body: JSON.stringify(recordData),
@@ -892,7 +891,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
 
   const isValidPrescription = useCallback((prescription) => {
     console.log('Validating prescription:', prescription);
-    return false;
+    return Object.values(prescription).every((value) => value.trim() !== '');
   }, []);
 
   const onLogout = useCallback(async () => {
@@ -1314,7 +1313,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
                     type="text"
                     value={prescription.frequency}
                     onChange={(e) => setPrescription({ ...prescription, frequency: e.target.value })}
-                    placeholder="Frequency (e.g., 08:00 AM and 06:00 PM)"
+                    placeholder="Frequency (e.g., Twice daily)"
                     aria-label="Enter dosage frequency"
                   />
                   <input
