@@ -333,16 +333,16 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   }, [firebaseUser, effectiveUserId, effectivePatientId, doctorId, languagePreference, apiBaseUrl, pusherKey, pusherCluster]);
 
   // Process prescriptions
-  useEffect(() => {
-    const doctorMessages = messages.filter((msg) => msg.sender === 'doctor' && msg.prescription);
-    if (doctorMessages.length > 0) {
-      const latestPrescription = doctorMessages.sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0];
-      if (latestPrescription?.prescription) {
-        console.log('Processing prescription:', latestPrescription.prescription, typeof latestPrescription.prescription);
-        setupMedicationSchedule(latestPrescription.prescription, latestPrescription.timestamp);
-      }
-    }
-  }, [messages]);
+ useEffect(() => {
+  const doctorMessages = messages.filter((msg) => msg.sender === 'doctor' && msg.prescription);
+  if (doctorMessages.length > 0) {
+    // Process all prescriptions, not just the latest
+    doctorMessages.forEach((msg) => {
+      console.log('Processing prescription:', msg.prescription, 'at timestamp:', msg.timestamp);
+      setupMedicationSchedule(msg.prescription, msg.timestamp);
+    });
+  }
+}, [messages]);
 
   const normalizeLanguageCode = useCallback((code) => {
     switch (code?.toLowerCase()) {
@@ -356,8 +356,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         return 'en-US';
     }
   }, []);
-
- const setupMedicationSchedule = async (prescription, issuanceTimestamp) => {
+const setupMedicationSchedule = async (prescription, issuanceTimestamp) => {
   console.log('setupMedicationSchedule: Received prescription:', prescription, 'at timestamp:', issuanceTimestamp);
 
   if (!prescription || !issuanceTimestamp) {
@@ -415,19 +414,8 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   const issuanceTime = new Date(issuanceTimestamp);
   let startDate = new Date(issuanceTime);
 
-  // Determine if the first dose time on the issuance day has passed
-  const firstDoseTimeToday = new Date(issuanceTime);
-  const firstTime = timeSchedules[0];
-  firstDoseTimeToday.setHours(firstTime.hours, firstTime.minutes, 0, 0);
-
-  // If the issuance time is after the last dose time of the day, start from the next day
-  const lastTime = timeSchedules[timeSchedules.length - 1];
-  const lastDoseTimeToday = new Date(issuanceTime);
-  lastDoseTimeToday.setHours(lastTime.hours, lastTime.minutes, 0, 0);
-
-  if (issuanceTime > lastDoseTimeToday) {
-    startDate.setDate(startDate.getDate() + 1); // Start from the next day
-  }
+  // Always start from the next day for consistency with UI behavior
+  startDate.setDate(startDate.getDate() + 1);
   startDate.setHours(0, 0, 0, 0); // Reset to midnight for consistent date handling
 
   const newReminders = [];
@@ -484,10 +472,10 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
 
   if (newReminders.length > 0) {
     setReminders((prev) => {
-      // Avoid duplicates by filtering out existing reminders with the same ID
-      const existingIds = new Set(prev.map((r) => r.id));
-      const uniqueNewReminders = newReminders.filter((r) => !existingIds.has(r.id));
-      return [...prev, ...uniqueNewReminders].sort((a, b) => new Date(a.scheduledTime) - new Date(b.scheduledTime));
+      // Filter out existing reminders for this medicine to avoid duplicates, then append new ones
+      const otherReminders = prev.filter((r) => !r.id.startsWith(medicine));
+      const updatedReminders = [...otherReminders, ...newReminders];
+      return updatedReminders.sort((a, b) => new Date(a.scheduledTime) - new Date(b.scheduledTime));
     });
     scheduleReminders(newReminders);
     console.log('setupMedicationSchedule: Added reminders:', newReminders);
