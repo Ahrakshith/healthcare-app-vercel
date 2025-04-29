@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Pusher from 'pusher-js';
@@ -367,33 +366,32 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       return;
     }
 
-    let medicine, dosage, time1Str, time2Str, durationDays;
+    let medicine, dosage, times, durationDays;
 
     if (typeof prescription === 'object') {
       medicine = prescription.medicine;
       dosage = prescription.dosage;
       const frequency = prescription.frequency || '';
       durationDays = prescription.duration || '5';
-      const times = frequency.split(' and ').map((t) => t.trim());
-      time1Str = times[0] || '8:00 AM';
-      time2Str = times[1] || '8:00 PM';
+      times = frequency.split(' and ').map((t) => t.trim());
 
-      if (!medicine || !dosage || !time1Str || !time2Str || !durationDays) {
+      if (!medicine || !dosage || !times[0] || !durationDays) {
         setError('Invalid prescription object format. Missing required fields.');
         console.error('setupMedicationSchedule: Invalid prescription object:', prescription);
         return;
       }
     } else if (typeof prescription === 'string') {
-      const regex = /(.+?),\s*(\d+mg),\s*(\d{1,2}[:.]\d{2}\s*(?:AM|PM))\s*and\s*(\d{1,2}[:.]\d{2}\s*(?:AM|PM)),\s*(\d+)\s*days?/i;
+      const regex = /(.+?),\s*(\d+mg),\s*(\d{1,2}[:.]\d{2}\s*(?:AM|PM)(?:\s*and\s*\d{1,2}[:.]\d{2}\s*(?:AM|PM))?),?\s*(\d+)\s*days?/i;
       const match = prescription.match(regex);
 
       if (!match) {
-        setError('Invalid prescription string format. Expected: "Medicine, dosage, time1 and time2, duration days"');
+        setError('Invalid prescription string format. Expected: "Medicine, dosage, time1 [and time2], duration days"');
         console.error('setupMedicationSchedule: Invalid prescription string:', prescription);
         return;
       }
 
-      [, medicine, dosage, time1Str, time2Str, durationDays] = match;
+      [, medicine, dosage, timesStr, durationDays] = match;
+      times = timesStr.split(' and ').map((t) => t.trim());
     } else {
       setError('Unsupported prescription format. Must be a string or object.');
       console.error('setupMedicationSchedule: Unsupported prescription type:', typeof prescription);
@@ -416,8 +414,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       return { hours, minutes };
     };
 
-    const time1 = parseTime(time1Str);
-    const time2 = parseTime(time2Str);
+    const timeSchedules = times.map(parseTime);
 
     const now = new Date();
     const startDate = new Date(now);
@@ -425,80 +422,42 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     endDate.setDate(startDate.getDate() + days - 1);
 
     const newReminders = [];
+    let totalDoses = days * timeSchedules.length; // Total expected doses
+    let dosesScheduled = 0;
+
+    // Start scheduling from the current time
     let currentDate = new Date(startDate);
 
-    while (currentDate <= endDate) {
-      const dateStr = currentDate.toISOString().split('T')[0]; // e.g., '2025-04-27'
+    while (dosesScheduled < totalDoses && currentDate <= endDate) {
+      const dateStr = currentDate.toISOString().split('T')[0]; // e.g., '2025-04-29'
 
-      // Reminder 1
-      const scheduledDate1 = new Date(currentDate);
-      scheduledDate1.setHours(time1.hours, time1.minutes, 0, 0);
-      if (scheduledDate1 > now) {
-        const reminder1Id = `${medicine}_${dateStr}_${time1Str.replace(/[:.\s]/g, '-')}`; // Deterministic ID
-        const reminder1Ref = doc(db, `patients/${effectivePatientId}/reminders`, reminder1Id);
-        const reminder1 = {
-          medicine,
-          dosage,
-          scheduledTime: scheduledDate1.toISOString(),
-          status: 'pending',
-          snoozeCount: 0,
-          createdAt: new Date().toISOString(),
-          patientId: effectivePatientId,
-        };
+      for (let i = 0; i < timeSchedules.length && dosesScheduled < totalDoses; i++) {
+        const time = timeSchedules[i];
+        const timeStr = times[i]; // Original time string for ID generation
 
-        try {
-          const reminder1Snap = await getDoc(reminder1Ref);
-          if (reminder1Snap.exists()) {
-            console.log(`setupMedicationSchedule: Reminder ${reminder1Id} exists, updating`);
-            await setDoc(reminder1Ref, reminder1, { merge: true });
-          } else {
-            console.log(`setupMedicationSchedule: Creating reminder ${reminder1Id}`);
-            await setDoc(reminder1Ref, reminder1);
+        const scheduledDate = new Date(currentDate);
+        scheduledDate.setHours(time.hours, time.minutes, 0, 0);
+
+        // Check if this is the first day and the dose time is in the future
+        if (currentDate.getDate() === startDate.getDate()) {
+          if (scheduledDate <= now) {
+            continue; // Skip past doses on the first day
           }
-          newReminders.push({ id: reminder1Id, ...reminder1 });
-        } catch (err) {
-          console.error('setupMedicationSchedule: Failed to add reminder1:', err.message);
-          setError(`Failed to add reminder: ${err.message}`);
         }
-      } else if (scheduledDate1.getDate() === now.getDate() && scheduledDate1.getHours() >= now.getHours() && scheduledDate1.getMinutes() > now.getMinutes()) {
-        const reminder1Id = `${medicine}_${dateStr}_${time1Str.replace(/[:.\s]/g, '-')}`; // Deterministic ID
-        const reminder1Ref = doc(db, `patients/${effectivePatientId}/reminders`, reminder1Id);
-        const reminder1 = {
-          medicine,
-          dosage,
-          scheduledTime: scheduledDate1.toISOString(),
-          status: 'pending',
-          snoozeCount: 0,
-          createdAt: new Date().toISOString(),
-          patientId: effectivePatientId,
-        };
 
-        try {
-          const reminder1Snap = await getDoc(reminder1Ref);
-          if (reminder1Snap.exists()) {
-            console.log(`setupMedicationSchedule: Reminder ${reminder1Id} exists, updating`);
-            await setDoc(reminder1Ref, reminder1, { merge: true });
-          } else {
-            console.log(`setupMedicationSchedule: Creating reminder ${reminder1Id}`);
-            await setDoc(reminder1Ref, reminder1);
+        // For the last day, only schedule doses that fit within the duration
+        if (currentDate.getDate() === endDate.getDate()) {
+          if (dosesScheduled >= totalDoses) {
+            break; // Stop if we've scheduled all doses
           }
-          newReminders.push({ id: reminder1Id, ...reminder1 });
-        } catch (err) {
-          console.error('setupMedicationSchedule: Failed to add reminder1:', err.message);
-          setError(`Failed to add reminder: ${err.message}`);
         }
-      }
 
-      // Reminder 2
-      const scheduledDate2 = new Date(currentDate);
-      scheduledDate2.setHours(time2.hours, time2.minutes, 0, 0);
-      if (scheduledDate2 > now) {
-        const reminder2Id = `${medicine}_${dateStr}_${time2Str.replace(/[:.\s]/g, '-')}`; // Deterministic ID
-        const reminder2Ref = doc(db, `patients/${effectivePatientId}/reminders`, reminder2Id);
-        const reminder2 = {
+        const reminderId = `${medicine}_${dateStr}_${timeStr.replace(/[:.\s]/g, '-')}`; // Deterministic ID
+        const reminderRef = doc(db, `patients/${effectivePatientId}/reminders`, reminderId);
+        const reminder = {
           medicine,
           dosage,
-          scheduledTime: scheduledDate2.toISOString(),
+          scheduledTime: scheduledDate.toISOString(),
           status: 'pending',
           snoozeCount: 0,
           createdAt: new Date().toISOString(),
@@ -506,44 +465,18 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         };
 
         try {
-          const reminder2Snap = await getDoc(reminder2Ref);
-          if (reminder2Snap.exists()) {
-            console.log(`setupMedicationSchedule: Reminder ${reminder2Id} exists, updating`);
-            await setDoc(reminder2Ref, reminder2, { merge: true });
+          const reminderSnap = await getDoc(reminderRef);
+          if (reminderSnap.exists()) {
+            console.log(`setupMedicationSchedule: Reminder ${reminderId} exists, updating`);
+            await setDoc(reminderRef, reminder, { merge: true });
           } else {
-            console.log(`setupMedicationSchedule: Creating reminder ${reminder2Id}`);
-            await setDoc(reminder2Ref, reminder2);
+            console.log(`setupMedicationSchedule: Creating reminder ${reminderId}`);
+            await setDoc(reminderRef, reminder);
           }
-          newReminders.push({ id: reminder2Id, ...reminder2 });
+          newReminders.push({ id: reminderId, ...reminder });
+          dosesScheduled++;
         } catch (err) {
-          console.error('setupMedicationSchedule: Failed to add reminder2:', err.message);
-          setError(`Failed to add reminder: ${err.message}`);
-        }
-      } else if (scheduledDate2.getDate() === now.getDate() && scheduledDate2.getHours() >= now.getHours() && scheduledDate2.getMinutes() > now.getMinutes()) {
-        const reminder2Id = `${medicine}_${dateStr}_${time2Str.replace(/[:.\s]/g, '-')}`; // Deterministic ID
-        const reminder2Ref = doc(db, `patients/${effectivePatientId}/reminders`, reminder2Id);
-        const reminder2 = {
-          medicine,
-          dosage,
-          scheduledTime: scheduledDate2.toISOString(),
-          status: 'pending',
-          snoozeCount: 0,
-          createdAt: new Date().toISOString(),
-          patientId: effectivePatientId,
-        };
-
-        try {
-          const reminder2Snap = await getDoc(reminder2Ref);
-          if (reminder2Snap.exists()) {
-            console.log(`setupMedicationSchedule: Reminder ${reminder2Id} exists, updating`);
-            await setDoc(reminder2Ref, reminder2, { merge: true });
-          } else {
-            console.log(`setupMedicationSchedule: Creating reminder ${reminder2Id}`);
-            await setDoc(reminder2Ref, reminder2);
-          }
-          newReminders.push({ id: reminder2Id, ...reminder2 });
-        } catch (err) {
-          console.error('setupMedicationSchedule: Failed to add reminder2:', err.message);
+          console.error('setupMedicationSchedule: Failed to add reminder:', err.message);
           setError(`Failed to add reminder: ${err.message}`);
         }
       }
