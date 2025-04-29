@@ -70,7 +70,7 @@ const fetchMedicineValidationCsv = async () => {
  * Verifies if a medicine is valid for a given disease based on the CSV data.
  * If verification fails, notifies the admin.
  * @param {string} disease - The disease to verify.
- * @param {string} medicine - The medicine to verify.
+ * @param {string} medicine - The medicine to verify (can be a full prescription string or just the medicine name).
  * @param {string} userId - The user ID for authentication.
  * @param {string} idToken - The Firebase ID token for authentication.
  * @param {Object} profileData - Patient profile data (e.g., name, patientId).
@@ -103,7 +103,8 @@ async function verifyMedicine(disease, medicine, userId, idToken, profileData = 
     }
 
     const normalizedDisease = disease.trim().toLowerCase();
-    const normalizedMedicine = medicine.trim().toLowerCase();
+    // Extract just the medicine name if the input is a full prescription string (e.g., "Paracetamol, 100mg, 3.00PM, 2 days")
+    const medicineName = medicine.split(',')[0].trim().toLowerCase();
 
     const rows = await fetchMedicineValidationCsv();
 
@@ -112,15 +113,15 @@ async function verifyMedicine(disease, medicine, userId, idToken, profileData = 
       if (row[0].trim().toLowerCase() === normalizedDisease) {
         // Check if medicine exists in the row (columns 1 and beyond)
         for (const item of row.slice(1)) {
-          if (item && item.trim().toLowerCase() === normalizedMedicine) {
-            console.log(`medicineVerify.js: Verification successful: disease=${disease}, medicine=${medicine}`);
+          if (item && item.trim().toLowerCase() === medicineName) {
+            console.log(`medicineVerify.js: Verification successful: disease=${disease}, medicine=${medicineName}`);
             return {
               success: true,
               message: 'Medication verified successfully.',
             };
           }
         }
-        console.log(`medicineVerify.js: Medicine "${medicine}" not found for disease "${disease}"`);
+        console.log(`medicineVerify.js: Medicine "${medicineName}" not found for disease "${disease}"`);
         const notificationMessage = `Invalid prescription: "${medicine}" for diagnosis "${disease}" (Patient: ${profileData.name || 'Unknown Patient'}, Doctor: ${doctorName})`;
         await notifyAdmin(
           profileData.name || 'Unknown Patient',
@@ -133,7 +134,7 @@ async function verifyMedicine(disease, medicine, userId, idToken, profileData = 
         );
         return {
           success: false,
-          message: `Medicine "${medicine}" not found for the specified disease "${disease}".`,
+          message: `Medicine "${medicineName}" not found for the specified disease "${disease}".`,
         };
       }
     }
@@ -199,7 +200,6 @@ async function notifyAdmin(patientName, doctorName, message, patientId, doctorId
       throw new Error('All fields (patientName, doctorName, message, patientId, doctorId, userId, idToken) are required to notify admin.');
     }
 
-    // Use the production URL for the admin notification endpoint
     const apiBaseUrl = 'https://healthcare-app-vercel.vercel.app/api';
     const response = await fetch(`${apiBaseUrl}/admin/notify`, {
       method: 'POST',
