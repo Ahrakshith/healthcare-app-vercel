@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Pusher from 'pusher-js';
@@ -1481,7 +1482,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                       <div key={reminder.id} className="table-row">
                         <span>{reminder.medicine}</span>
                         <span>{reminder.dosage}</span>
-                        <span>{new Date(reminder.scheduledTime).toLocaleTimeString('en-US', { hour12: true })}</span>
+                        <span>{new Date(reminder.scheduledTime).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) + ' ' + new Date(reminder.scheduledTime).toLocaleTimeString('en-US', { hour12: true })}</span>
                         <span>{reminder.status}</span>
                         <span>
                           {reminder.status === 'pending' || reminder.status === 'snoozed' ? (
