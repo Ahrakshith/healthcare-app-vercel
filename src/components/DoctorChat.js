@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { collection, query, where, onSnapshot, getDocs, doc, getDoc, setDoc } from 'firebase/firestore';
@@ -851,24 +850,49 @@ function DoctorChat({ user, role, handleLogout, setError }) {
   );
 
   const readAloud = useCallback(
-    async (audioUrl, lang, fallbackText) => {
-      console.log('Reading aloud:', { audioUrl, lang, fallbackText });
+    async (audioUrl, audioUrlEn, audioUrlKn, lang, fallbackText, sender) => {
+      console.log('Reading aloud:', { audioUrl, audioUrlEn, audioUrlKn, lang, fallbackText, sender });
       try {
-        if (!audioUrl && (!fallbackText || typeof fallbackText !== 'string' || fallbackText.trim() === '')) {
+        if (!audioUrl && !audioUrlEn && !audioUrlKn && (!fallbackText || typeof fallbackText !== 'string' || fallbackText.trim() === '')) {
           const errorMsg = 'Cannot read aloud: No valid audio or text provided.';
           setError(errorMsg);
           console.error(errorMsg);
           return;
         }
-        if (audioUrl) {
-          await playAudio(audioUrl);
-          console.log('Played audio from URL:', audioUrl);
+
+        const idToken = await getIdToken();
+        const normalizedLang = lang === 'kn' ? 'kn-IN' : 'en-US';
+
+        if (sender === 'patient') {
+          if (lang === 'kn' && audioUrlKn) {
+            await playAudio(audioUrlKn);
+            console.log('Played audio from audioUrlKn:', audioUrlKn);
+          } else if (audioUrlEn) {
+            await playAudio(audioUrlEn);
+            console.log('Played audio from audioUrlEn:', audioUrlEn);
+          } else if (audioUrl) {
+            await playAudio(audioUrl);
+            console.log('Played audio from audioUrl as fallback:', audioUrl);
+          } else {
+            const generatedAudioUrl = await textToSpeechConvert(fallbackText.trim(), normalizedLang, user.uid, idToken);
+            await playAudio(generatedAudioUrl);
+            console.log('Generated and played audio for text:', fallbackText);
+          }
         } else {
-          const idToken = await getIdToken();
-          const normalizedLang = lang === 'kn' ? 'kn-IN' : 'en-US';
-          const generatedAudioUrl = await textToSpeechConvert(fallbackText.trim(), normalizedLang, user.uid, idToken);
-          await playAudio(generatedAudioUrl);
-          console.log('Generated and played audio for text:', fallbackText);
+          if (lang === 'kn' && audioUrlKn) {
+            await playAudio(audioUrlKn);
+            console.log('Played audio from audioUrlKn:', audioUrlKn);
+          } else if (audioUrlEn) {
+            await playAudio(audioUrlEn);
+            console.log('Played audio from audioUrlEn:', audioUrlEn);
+          } else if (audioUrl) {
+            await playAudio(audioUrl);
+            console.log('Played audio from audioUrl:', audioUrl);
+          } else {
+            const generatedAudioUrl = await textToSpeechConvert(fallbackText.trim(), normalizedLang, user.uid, idToken);
+            await playAudio(generatedAudioUrl);
+            console.log('Generated and played audio for text:', fallbackText);
+          }
         }
       } catch (err) {
         const errorMsg = `Failed to read aloud: ${err.message}`;
@@ -1046,10 +1070,10 @@ function DoctorChat({ user, role, handleLogout, setError }) {
                                       </audio>
                                     </div>
                                   )}
-                                  {msg.audioUrlEn && (
+                                  {(msg.audioUrl || msg.audioUrlEn) && (
                                     <div className="read-aloud-buttons">
                                       <button
-                                        onClick={() => readAloud(msg.audioUrlEn, 'en', msg.text)}
+                                        onClick={() => readAloud(msg.audioUrl, msg.audioUrlEn, msg.audioUrlKn, 'en', msg.text, msg.sender)}
                                         className="read-aloud-button"
                                         aria-label="Read aloud in English"
                                       >
@@ -1085,20 +1109,20 @@ function DoctorChat({ user, role, handleLogout, setError }) {
                                       </audio>
                                     </div>
                                   )}
-                                  {(msg.audioUrlEn || msg.audioUrlKn) && (
+                                  {(msg.audioUrl || msg.audioUrlEn || msg.audioUrlKn) && (
                                     <div className="read-aloud-buttons">
-                                      {msg.audioUrlKn && (
+                                      {(msg.audioUrl || msg.audioUrlKn) && (
                                         <button
-                                          onClick={() => readAloud(msg.audioUrlKn, 'kn', msg.text)}
+                                          onClick={() => readAloud(msg.audioUrl, msg.audioUrlEn, msg.audioUrlKn, 'kn', msg.text, msg.sender)}
                                           className="read-aloud-button"
                                           aria-label="Read aloud in Kannada"
                                         >
                                           🔊 (Kannada)
                                         </button>
                                       )}
-                                      {msg.audioUrlEn && (
+                                      {(msg.audioUrl || msg.audioUrlEn) && (
                                         <button
-                                          onClick={() => readAloud(msg.audioUrlEn, 'en', msg.translatedText || msg.text)}
+                                          onClick={() => readAloud(msg.audioUrl, msg.audioUrlEn, msg.audioUrlKn, 'en', msg.translatedText || msg.text, msg.sender)}
                                           className="read-aloud-button"
                                           aria-label="Read aloud in English"
                                         >
@@ -1140,7 +1164,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
                                     <div className="read-aloud-buttons">
                                       {msg.audioUrlKn && languagePreference === 'kn' && (
                                         <button
-                                          onClick={() => readAloud(msg.audioUrlKn, 'kn', msg.translatedText || msg.text)}
+                                          onClick={() => readAloud(msg.audioUrl, msg.audioUrlEn, msg.audioUrlKn, 'kn', msg.translatedText || msg.text, msg.sender)}
                                           className="read-aloud-button"
                                           aria-label="Read aloud in Kannada"
                                         >
@@ -1149,7 +1173,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
                                       )}
                                       {msg.audioUrlEn && (
                                         <button
-                                          onClick={() => readAloud(msg.audioUrlEn, 'en', msg.text)}
+                                          onClick={() => readAloud(msg.audioUrl, msg.audioUrlEn, msg.audioUrlKn, 'en', msg.text, msg.sender)}
                                           className="read-aloud-button"
                                           aria-label="Read aloud in English"
                                         >
@@ -1171,7 +1195,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
                                     <div>
                                       <strong>Diagnosis:</strong> {msg.diagnosis}
                                       <button
-                                        onClick={() => readAloud(null, 'en', msg.diagnosis)}
+                                        onClick={() => readAloud(null, null, null, 'en', msg.diagnosis, msg.sender)}
                                         className="read-aloud-button"
                                         aria-label="Read diagnosis aloud"
                                       >
@@ -1183,7 +1207,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
                                   )}
                                   {msg.prescription ? (
                                     <div>
-                                      <strong>Prescription:</strong>{' '}
+                                      <strong>Presötscription:</strong>{' '}
                                       {`${msg.prescription.medicine}, ${msg.prescription.dosage}, ${msg.prescription.frequency}, ${msg.prescription.duration}`}
                                     </div>
                                   ) : (
@@ -2070,6 +2094,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           border-color: #6E48AA;
           box-shadow: 0 0 8px rgba(110, 72, 170, 0.3);
         }
+
 
         .modal-content textarea {
           min-height: 100px;
