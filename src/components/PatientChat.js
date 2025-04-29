@@ -1616,12 +1616,34 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                     )}
                     {msg.sender === 'doctor' && (
                       <div className="message-block">
-                        {languagePreference === 'en' ? (
-                          <p className="primary-text">{msg.text || 'No transcription'}</p>
+                        {msg.diagnosis || msg.prescription ? (
+                          <>
+                            <p className="primary-text">Doctor has provided a recommendation</p>
+                            {msg.diagnosis && (
+                              <p className="primary-text">
+                                <strong>Diagnosis:</strong>{' '}
+                                {languagePreference === 'kn' ? (msg.translatedDiagnosis || msg.diagnosis) : msg.diagnosis}
+                              </p>
+                            )}
+                            {msg.prescription && (
+                              <p className="primary-text">
+                                <strong>Prescription:</strong>{' '}
+                                {typeof msg.prescription === 'object'
+                                  ? `${msg.prescription.medicine}, ${msg.prescription.dosage}, ${msg.prescription.frequency}, ${msg.prescription.duration}`
+                                  : msg.prescription}
+                              </p>
+                            )}
+                          </>
                         ) : (
                           <>
-                            <p className="primary-text">{msg.text || 'No transcription'}</p>
-                            {msg.translatedText && <p className="translated-text">English: {msg.translatedText}</p>}
+                            {languagePreference === 'en' ? (
+                              <p className="primary-text">{msg.text || 'No message content'}</p>
+                            ) : (
+                              <>
+                                <p className="primary-text">{msg.text || 'No message content'}</p>
+                                {msg.translatedText && <p className="translated-text">English: {msg.translatedText}</p>}
+                              </>
+                            )}
                           </>
                         )}
                         {msg.audioUrl && (
