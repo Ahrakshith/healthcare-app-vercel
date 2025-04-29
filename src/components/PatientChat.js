@@ -2197,13 +2197,13 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         }
 
         .patient-message .message-content {
-          background: #6E48AA;
+          background: #6e48aa;
           color: #FFFFFF;
           border-bottom-right-radius: 5px;
         }
 
         .doctor-message .message-content {
-          background: #4A3270;
+          background: #5a3e8b;
           color: #E0E0E0;
           border-bottom-left-radius: 5px;
         }
