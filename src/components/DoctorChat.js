@@ -850,11 +850,11 @@ function DoctorChat({ user, role, handleLogout, setError }) {
   );
 
   const readAloud = useCallback(
-    async (audioUrl, audioUrlEn, audioUrlKn, lang, fallbackText, sender) => {
-      console.log('Reading aloud:', { audioUrl, audioUrlEn, audioUrlKn, lang, fallbackText, sender });
+    async (text, lang, sender) => {
+      console.log('Reading aloud:', { text, lang, sender });
       try {
-        if (!audioUrl && !audioUrlEn && !audioUrlKn && (!fallbackText || typeof fallbackText !== 'string' || fallbackText.trim() === '')) {
-          const errorMsg = 'Cannot read aloud: No valid audio or text provided.';
+        if (!text || typeof text !== 'string' || text.trim() === '') {
+          const errorMsg = 'Cannot read aloud: No valid text provided.';
           setError(errorMsg);
           console.error(errorMsg);
           return;
@@ -862,38 +862,11 @@ function DoctorChat({ user, role, handleLogout, setError }) {
 
         const idToken = await getIdToken();
         const normalizedLang = lang === 'kn' ? 'kn-IN' : 'en-US';
+        console.log(`Generating text-to-speech for text: "${text}" in language: ${normalizedLang}`);
 
-        if (sender === 'patient') {
-          if (lang === 'kn' && audioUrlKn) {
-            await playAudio(audioUrlKn);
-            console.log('Played audio from audioUrlKn:', audioUrlKn);
-          } else if (audioUrlEn) {
-            await playAudio(audioUrlEn);
-            console.log('Played audio from audioUrlEn:', audioUrlEn);
-          } else if (audioUrl) {
-            await playAudio(audioUrl);
-            console.log('Played audio from audioUrl as fallback:', audioUrl);
-          } else {
-            const generatedAudioUrl = await textToSpeechConvert(fallbackText.trim(), normalizedLang, user.uid, idToken);
-            await playAudio(generatedAudioUrl);
-            console.log('Generated and played audio for text:', fallbackText);
-          }
-        } else {
-          if (lang === 'kn' && audioUrlKn) {
-            await playAudio(audioUrlKn);
-            console.log('Played audio from audioUrlKn:', audioUrlKn);
-          } else if (audioUrlEn) {
-            await playAudio(audioUrlEn);
-            console.log('Played audio from audioUrlEn:', audioUrlEn);
-          } else if (audioUrl) {
-            await playAudio(audioUrl);
-            console.log('Played audio from audioUrl:', audioUrl);
-          } else {
-            const generatedAudioUrl = await textToSpeechConvert(fallbackText.trim(), normalizedLang, user.uid, idToken);
-            await playAudio(generatedAudioUrl);
-            console.log('Generated and played audio for text:', fallbackText);
-          }
-        }
+        const audioUrl = await textToSpeechConvert(text.trim(), normalizedLang, user.uid, idToken);
+        await playAudio(audioUrl);
+        console.log('Generated and played text-to-speech audio:', audioUrl);
       } catch (err) {
         const errorMsg = `Failed to read aloud: ${err.message}`;
         setError(errorMsg);
@@ -1070,10 +1043,10 @@ function DoctorChat({ user, role, handleLogout, setError }) {
                                       </audio>
                                     </div>
                                   )}
-                                  {(msg.audioUrl || msg.audioUrlEn) && (
+                                  {msg.text && (
                                     <div className="read-aloud-buttons">
                                       <button
-                                        onClick={() => readAloud(msg.audioUrl, msg.audioUrlEn, msg.audioUrlKn, 'en', msg.text, msg.sender)}
+                                        onClick={() => readAloud(msg.text, 'en', msg.sender)}
                                         className="read-aloud-button"
                                         aria-label="Read aloud in English"
                                       >
@@ -1109,20 +1082,20 @@ function DoctorChat({ user, role, handleLogout, setError }) {
                                       </audio>
                                     </div>
                                   )}
-                                  {(msg.audioUrl || msg.audioUrlEn || msg.audioUrlKn) && (
+                                  {(msg.text || msg.translatedText) && (
                                     <div className="read-aloud-buttons">
-                                      {(msg.audioUrl || msg.audioUrlKn) && (
+                                      {msg.text && (
                                         <button
-                                          onClick={() => readAloud(msg.audioUrl, msg.audioUrlEn, msg.audioUrlKn, 'kn', msg.text, msg.sender)}
+                                          onClick={() => readAloud(msg.text, 'kn', msg.sender)}
                                           className="read-aloud-button"
                                           aria-label="Read aloud in Kannada"
                                         >
                                           🔊 (Kannada)
                                         </button>
                                       )}
-                                      {(msg.audioUrl || msg.audioUrlEn) && (
+                                      {(msg.translatedText || msg.text) && (
                                         <button
-                                          onClick={() => readAloud(msg.audioUrl, msg.audioUrlEn, msg.audioUrlKn, 'en', msg.translatedText || msg.text, msg.sender)}
+                                          onClick={() => readAloud(msg.translatedText || msg.text, 'en', msg.sender)}
                                           className="read-aloud-button"
                                           aria-label="Read aloud in English"
                                         >
@@ -1160,20 +1133,20 @@ function DoctorChat({ user, role, handleLogout, setError }) {
                                       </audio>
                                     </div>
                                   )}
-                                  {(msg.audioUrlEn || msg.audioUrlKn) && (
+                                  {msg.text && (
                                     <div className="read-aloud-buttons">
-                                      {msg.audioUrlKn && languagePreference === 'kn' && (
+                                      {languagePreference === 'kn' && msg.translatedText && (
                                         <button
-                                          onClick={() => readAloud(msg.audioUrl, msg.audioUrlEn, msg.audioUrlKn, 'kn', msg.translatedText || msg.text, msg.sender)}
+                                          onClick={() => readAloud(msg.translatedText, 'kn', msg.sender)}
                                           className="read-aloud-button"
                                           aria-label="Read aloud in Kannada"
                                         >
                                           🔊 (Kannada)
                                         </button>
                                       )}
-                                      {msg.audioUrlEn && (
+                                      {msg.text && (
                                         <button
-                                          onClick={() => readAloud(msg.audioUrl, msg.audioUrlEn, msg.audioUrlKn, 'en', msg.text, msg.sender)}
+                                          onClick={() => readAloud(msg.text, 'en', msg.sender)}
                                           className="read-aloud-button"
                                           aria-label="Read aloud in English"
                                         >
@@ -1195,7 +1168,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
                                     <div>
                                       <strong>Diagnosis:</strong> {msg.diagnosis}
                                       <button
-                                        onClick={() => readAloud(null, null, null, 'en', msg.diagnosis, msg.sender)}
+                                        onClick={() => readAloud(msg.diagnosis, languagePreference === 'kn' ? 'kn' : 'en', msg.sender)}
                                         className="read-aloud-button"
                                         aria-label="Read diagnosis aloud"
                                       >
@@ -1207,7 +1180,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
                                   )}
                                   {msg.prescription ? (
                                     <div>
-                                      <strong>Presötscription:</strong>{' '}
+                                      <strong>Prescription:</strong>{' '}
                                       {`${msg.prescription.medicine}, ${msg.prescription.dosage}, ${msg.prescription.frequency}, ${msg.prescription.duration}`}
                                     </div>
                                   ) : (
@@ -2095,20 +2068,18 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           box-shadow: 0 0 8px rgba(110, 72, 170, 0.3);
         }
 
-
         .modal-content textarea {
           min-height: 100px;
-          resize: none;
         }
 
         .modal-buttons {
           display: flex;
           gap: 15px;
-          justify-content: center;
+          justify-content: flex-end;
         }
 
         .submit-button {
-          padding: 10px 20px;
+          padding: 10px 25px;
           background: #27AE60;
           color: #FFFFFF;
           border: none;
@@ -2125,7 +2096,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
         }
 
         .close-modal {
-          padding: 10px 20px;
+          padding: 10px 25px;
           background: #E74C3C;
           color: #FFFFFF;
           border: none;
@@ -2141,23 +2112,25 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           transform: scale(1.05);
         }
 
-        @keyframes shake {
-          0%,
-          100% {
-            transform: translateX(0);
+        @media (max-width: 768px) {
+          .chat-header h2 {
+            font-size: 1.5rem;
           }
-          10%,
-          30%,
-          50%,
-          70%,
-          90% {
-            transform: translateX(-5px);
+          .patient-sidebar.open {
+            width: 200px;
           }
-          20%,
-          40%,
-          60%,
-          80% {
-            transform: translateX(5px);
+          .message {
+            max-width: 85%;
+          }
+          .text-input-container input {
+            padding: 10px 15px;
+          }
+          .send-button {
+            padding: 10px 20px;
+          }
+          .modal-content {
+            width: 90%;
+            padding: 20px;
           }
         }
       `}</style>
