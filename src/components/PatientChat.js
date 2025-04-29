@@ -10,7 +10,7 @@ import {
 } from '../services/speech.js';
 import { verifyMedicine, notifyAdmin } from '../services/medicineVerify.js';
 import { doc, getDoc, collection, getDocs, updateDoc, setDoc } from 'firebase/firestore';
-import { db, auth } from '../services/firebase.js';
+import { db, auth } from '../SEMBLY';
 import { signOut } from 'firebase/auth';
 
 function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
@@ -336,10 +336,10 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   useEffect(() => {
     const doctorMessages = messages.filter((msg) => msg.sender === 'doctor' && msg.prescription);
     if (doctorMessages.length > 0) {
-      const latestPrescription = doctorMessages.sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0]?.prescription;
-      if (latestPrescription) {
-        console.log('Processing prescription:', latestPrescription, typeof latestPrescription);
-        setupMedicationSchedule(latestPrescription);
+      const latestPrescription = doctorMessages.sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0];
+      if (latestPrescription?.prescription) {
+        console.log('Processing prescription:', latestPrescription.prescription, typeof latestPrescription.prescription);
+        setupMedicationSchedule(latestPrescription.prescription, latestPrescription.timestamp);
       }
     }
   }, [messages]);
@@ -357,143 +357,149 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     }
   }, []);
 
- const setupMedicationSchedule = async (prescription) => {
-  console.log('setupMedicationSchedule: Received prescription:', prescription, typeof prescription);
+  const setupMedicationSchedule = async (prescription, issuanceTimestamp) => {
+    console.log('setupMedicationSchedule: Received prescription:', prescription, 'at timestamp:', issuanceTimestamp);
 
-  if (!prescription) {
-    setError('Prescription is missing or undefined.');
-    console.error('setupMedicationSchedule: Prescription is undefined or null');
-    return;
-  }
-
-  let medicine, dosage, times, durationDays, timesStr;
-
-  if (typeof prescription === 'object') {
-    medicine = prescription.medicine;
-    dosage = prescription.dosage;
-    const frequency = prescription.frequency || '';
-    durationDays = prescription.duration || '5';
-    timesStr = frequency; // Define timesStr for object case
-    times = frequency.split(' and ').map((t) => t.trim());
-
-    if (!medicine || !dosage || !times[0] || !durationDays) {
-      setError('Invalid prescription object format. Missing required fields.');
-      console.error('setupMedicationSchedule: Invalid prescription object:', prescription);
-      return;
-    }
-  } else if (typeof prescription === 'string') {
-    const regex = /(.+?),\s*(\d+mg),\s*(\d{1,2}[:.]\d{2}\s*(?:AM|PM)(?:\s*and\s*\d{1,2}[:.]\d{2}\s*(?:AM|PM))?),?\s*(\d+)\s*days?/i;
-    const match = prescription.match(regex);
-
-    if (!match) {
-      setError('Invalid prescription string format. Expected: "Medicine, dosage, time1 [and time2], duration days"');
-      console.error('setupMedicationSchedule: Invalid prescription string:', prescription);
+    if (!prescription) {
+      setError('Prescription is missing or undefined.');
+      console.error('setupMedicationSchedule: Prescription is undefined or null');
       return;
     }
 
-    [, medicine, dosage, timesStr, durationDays] = match; // timesStr is defined here
-    times = timesStr.split(' and ').map((t) => t.trim());
-  } else {
-    setError('Unsupported prescription format. Must be a string or object.');
-    console.error('setupMedicationSchedule: Unsupported prescription type:', typeof prescription);
-    return;
-  }
+    if (!issuanceTimestamp) {
+      setError('Prescription issuance timestamp is missing.');
+      console.error('setupMedicationSchedule: Issuance timestamp is undefined');
+      return;
+    }
 
-  const days = parseInt(durationDays, 10);
-  if (isNaN(days) || days <= 0) {
-    setError('Invalid duration in prescription.');
-    console.error('setupMedicationSchedule: Invalid duration:', durationDays);
-    return;
-  }
+    let medicine, dosage, times, durationDays, timesStr;
 
-  const parseTime = (timeStr) => {
-    const cleanTimeStr = timeStr.replace('.', ':');
-    const [time, period] = cleanTimeStr.split(/\s*(AM|PM)/i);
-    let [hours, minutes] = time.split(':').map(Number);
-    if (period.toUpperCase() === 'PM' && hours !== 12) hours += 12;
-    if (period.toUpperCase() === 'AM' && hours === 12) hours = 0;
-    return { hours, minutes };
+    if (typeof prescription === 'object') {
+      medicine = prescription.medicine;
+      dosage = prescription.dosage;
+      const frequency = prescription.frequency || '';
+      durationDays = prescription.duration || '5';
+      timesStr = frequency;
+      times = frequency.split(' and ').map((t) => t.trim());
+
+      if (!medicine || !dosage || !times[0] || !durationDays) {
+        setError('Invalid prescription object format. Missing required fields.');
+        console.error('setupMedicationSchedule: Invalid prescription object:', prescription);
+        return;
+      }
+    } else if (typeof prescription === 'string') {
+      const regex = /(.+?),\s*(\d+mg),\s*(\d{1,2}[:.]\d{2}\s*(?:AM|PM)(?:\s*and\s*\d{1,2}[:.]\d{2}\s*(?:AM|PM))?),?\s*(\d+)\s*days?/i;
+      const match = prescription.match(regex);
+
+      if (!match) {
+        setError('Invalid prescription string format. Expected: "Medicine, dosage, time1 [and time2], duration days"');
+        console.error('setupMedicationSchedule: Invalid prescription string:', prescription);
+        return;
+      }
+
+      [, medicine, dosage, timesStr, durationDays] = match;
+      times = timesStr.split(' and ').map((t) => t.trim());
+    } else {
+      setError('Unsupported prescription format. Must be a string or object.');
+      console.error('setupMedicationSchedule: Unsupported prescription type:', typeof prescription);
+      return;
+    }
+
+    const days = parseInt(durationDays, 10);
+    if (isNaN(days) || days <= 0) {
+      setError('Invalid duration in prescription.');
+      console.error('setupMedicationSchedule: Invalid duration:', durationDays);
+      return;
+    }
+
+    const parseTime = (timeStr) => {
+      const cleanTimeStr = timeStr.replace('.', ':');
+      const [time, period] = cleanTimeStr.split(/\s*(AM|PM)/i);
+      let [hours, minutes] = time.split(':').map(Number);
+      if (period.toUpperCase() === 'PM' && hours !== 12) hours += 12;
+      if (period.toUpperCase() === 'AM' && hours === 12) hours = 0;
+      return { hours, minutes };
+    };
+
+    const timeSchedules = times.map(parseTime);
+
+    // Use the issuance timestamp as the reference point for scheduling
+    const issuanceTime = new Date(issuanceTimestamp);
+    const startDate = new Date(issuanceTime);
+    startDate.setHours(0, 0, 0, 0); // Start from midnight of the issuance day
+
+    // Calculate the end date/time: issuance time + duration
+    const endDateTime = new Date(issuanceTime);
+    endDateTime.setDate(endDateTime.getDate() + days);
+    endDateTime.setHours(issuanceTime.getHours(), issuanceTime.getMinutes(), 0, 0);
+
+    const newReminders = [];
+    let dosesScheduled = 0;
+
+    // Iterate over each day within the duration
+    let currentDate = new Date(startDate);
+    while (currentDate < endDateTime) {
+      const dateStr = currentDate.toISOString().split('T')[0]; // e.g., '2025-04-29'
+
+      for (let i = 0; i < timeSchedules.length; i++) {
+        const time = timeSchedules[i];
+        const timeStr = times[i]; // Original time string for ID generation
+
+        const scheduledDate = new Date(currentDate);
+        scheduledDate.setHours(time.hours, time.minutes, 0, 0);
+
+        // Skip if the scheduled dose is before the issuance time
+        if (scheduledDate <= issuanceTime) {
+          continue;
+        }
+
+        // Skip if the scheduled dose is after the end date/time
+        if (scheduledDate >= endDateTime) {
+          continue;
+        }
+
+        const reminderId = `${medicine}_${dateStr}_${timeStr.replace(/[:.\s]/g, '-')}`; // Deterministic ID
+        const reminderRef = doc(db, `patients/${effectivePatientId}/reminders`, reminderId);
+        const reminder = {
+          medicine,
+          dosage,
+          scheduledTime: scheduledDate.toISOString(),
+          status: 'pending',
+          snoozeCount: 0,
+          createdAt: new Date().toISOString(),
+          patientId: effectivePatientId,
+        };
+
+        try {
+          const reminderSnap = await getDoc(reminderRef);
+          if (reminderSnap.exists()) {
+            console.log(`setupMedicationSchedule: Reminder ${reminderId} exists, updating`);
+            await setDoc(reminderRef, reminder, { merge: true });
+          } else {
+            console.log(`setupMedicationSchedule: Creating reminder ${reminderId}`);
+            await setDoc(reminderRef, reminder);
+          }
+          newReminders.push({ id: reminderId, ...reminder });
+          dosesScheduled++;
+        } catch (err) {
+          console.error('setupMedicationSchedule: Failed to add reminder:', err.message);
+          setError(`Failed to add reminder: ${err.message}`);
+        }
+      }
+
+      currentDate.setDate(currentDate.getDate() + 1);
+    }
+
+    if (newReminders.length > 0) {
+      setReminders((prev) => [...prev, ...newReminders]);
+      scheduleReminders(newReminders);
+      console.log('setupMedicationSchedule: Added reminders:', newReminders);
+    } else {
+      console.warn('setupMedicationSchedule: No new reminders added (all scheduled times in the past or after end date)');
+      setError('No future reminders scheduled within the duration.');
+    }
   };
 
-  const timeSchedules = times.map(parseTime);
-
-  const now = new Date();
-  const startDate = new Date(now);
-  const endDate = new Date(startDate);
-  endDate.setDate(startDate.getDate() + days - 1);
-
-  const newReminders = [];
-  let totalDoses = days * timeSchedules.length; // Total expected doses
-  let dosesScheduled = 0;
-
-  // Start scheduling from the current time
-  let currentDate = new Date(startDate);
-
-  while (dosesScheduled < totalDoses && currentDate <= endDate) {
-    const dateStr = currentDate.toISOString().split('T')[0]; // e.g., '2025-04-29'
-
-    for (let i = 0; i < timeSchedules.length && dosesScheduled < totalDoses; i++) {
-      const time = timeSchedules[i];
-      const timeStr = times[i]; // Original time string for ID generation
-
-      const scheduledDate = new Date(currentDate);
-      scheduledDate.setHours(time.hours, time.minutes, 0, 0);
-
-      // Check if this is the first day and the dose time is in the future
-      if (currentDate.getDate() === startDate.getDate()) {
-        if (scheduledDate <= now) {
-          continue; // Skip past doses on the first day
-        }
-      }
-
-      // For the last day, only schedule doses that fit within the duration
-      if (currentDate.getDate() === endDate.getDate()) {
-        if (dosesScheduled >= totalDoses) {
-          break; // Stop if we've scheduled all doses
-        }
-      }
-
-      const reminderId = `${medicine}_${dateStr}_${timeStr.replace(/[:.\s]/g, '-')}`; // Deterministic ID
-      const reminderRef = doc(db, `patients/${effectivePatientId}/reminders`, reminderId);
-      const reminder = {
-        medicine,
-        dosage,
-        scheduledTime: scheduledDate.toISOString(),
-        status: 'pending',
-        snoozeCount: 0,
-        createdAt: new Date().toISOString(),
-        patientId: effectivePatientId,
-      };
-
-      try {
-        const reminderSnap = await getDoc(reminderRef);
-        if (reminderSnap.exists()) {
-          console.log(`setupMedicationSchedule: Reminder ${reminderId} exists, updating`);
-          await setDoc(reminderRef, reminder, { merge: true });
-        } else {
-          console.log(`setupMedicationSchedule: Creating reminder ${reminderId}`);
-          await setDoc(reminderRef, reminder);
-        }
-        newReminders.push({ id: reminderId, ...reminder });
-        dosesScheduled++;
-      } catch (err) {
-        console.error('setupMedicationSchedule: Failed to add reminder:', err.message);
-        setError(`Failed to add reminder: ${err.message}`);
-      }
-    }
-
-    currentDate.setDate(currentDate.getDate() + 1);
-  }
-
-  if (newReminders.length > 0) {
-    setReminders((prev) => [...prev, ...newReminders]);
-    scheduleReminders(newReminders);
-    console.log('setupMedicationSchedule: Added reminders:', newReminders);
-  } else {
-    console.warn('setupMedicationSchedule: No new reminders added (all scheduled times in the past)');
-    setError('No future reminders scheduled. All times are in the past.');
-  }
-};
   const scheduleReminders = useCallback((remindersToSchedule) => {
     remindersToSchedule.forEach((reminder) => {
       if (reminder.status !== 'pending' && reminder.status !== 'snoozed') return;
@@ -1001,7 +1007,6 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       return;
     }
 
-    // Generate a unique temporary ID for the message to prevent duplicates
     const tempMessageId = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
     const timestamp = new Date().toISOString();
 
@@ -1011,7 +1016,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       doctorId,
       userId: effectivePatientId,
       messageType: 'image',
-      tempMessageId, // Add a temporary ID to track this message
+      tempMessageId,
     };
 
     const formData = new FormData();
@@ -1041,11 +1046,8 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         throw new Error('Image upload succeeded, but no image URL was returned.');
       }
 
-      // Update messages state, ensuring no duplicates
       setMessages((prev) => {
-        // Filter out any temporary messages with the same tempMessageId
         const filteredMessages = prev.filter((msg) => msg.tempMessageId !== tempMessageId);
-        // Check for duplicates based on timestamp and imageUrl
         const isDuplicate = filteredMessages.some(
           (msg) =>
             msg.timestamp === data.newMessage.timestamp &&
@@ -1462,16 +1464,13 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
               )}
               {messages.filter((msg) => msg.sender === 'doctor' && (msg.diagnosis || msg.prescription)).length > 0 ? (
                 (() => {
-                  // Get all doctor messages with diagnosis or prescription
                   const doctorMessages = messages
                     .filter((msg) => msg.sender === 'doctor' && (msg.diagnosis || msg.prescription))
                     .sort((a, b) => b.timestamp.localeCompare(a.timestamp));
 
-                  // Track the last diagnosis for cases where only prescription is given
                   let lastDiagnosis = '';
                   const combinedMessages = [];
 
-                  // Process messages in reverse chronological order
                   for (let i = 0; i < doctorMessages.length; i++) {
                     const msg = doctorMessages[i];
                     if (msg.diagnosis) {
@@ -1769,7 +1768,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           background: linear-gradient(135deg, #2C1A3D, #3E2A5A);
           font-family: 'Poppins', sans-serif;
           color: #E0E0E0;
-           overflow: hidden;
+          overflow: hidden;
         }
 
         .chat-header {
