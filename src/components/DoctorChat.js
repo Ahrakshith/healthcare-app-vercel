@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+imimport React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { collection, query, where, onSnapshot, getDocs, doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../services/firebase.js';
@@ -14,6 +14,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
   const [missedDoseAlerts, setMissedDoseAlerts] = useState([]);
   const [newMessage, setNewMessage] = useState('');
   const [diagnosis, setDiagnosis] = useState('');
+  const [lastDiagnosis, setLastDiagnosis] = useState(null); // New state to track last diagnosis
   const [prescription, setPrescription] = useState({
     medicine: '',
     dosage: '',
@@ -147,7 +148,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           setAcceptedPatients({});
         }
       } catch (err) {
-        const errorMsg = `Failed to fetch accepted patients: ${err.message}`;
+        const errorMsg = `Failed to fetch agreed patients: ${err.message}`;
         setError(errorMsg);
         console.error('Fetch accepted patients error:', err);
       }
@@ -225,6 +226,10 @@ function DoctorChat({ user, role, handleLogout, setError }) {
               },
             }));
           }
+          // Update last diagnosis if the message contains a diagnosis
+          if (message.diagnosis) {
+            setLastDiagnosis(message.diagnosis);
+          }
           return updatedMessages;
         }
         console.log('Duplicate message ignored:', message);
@@ -274,6 +279,14 @@ function DoctorChat({ user, role, handleLogout, setError }) {
             },
           }));
           console.log('Updated patient message timestamps:', patientMessages);
+        }
+
+        // Find the most recent message with a diagnosis
+        const lastDiagnosisMessage = fetchedMessages
+          .filter((msg) => msg.diagnosis)
+          .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0];
+        if (lastDiagnosisMessage) {
+          setLastDiagnosis(lastDiagnosisMessage.diagnosis);
         }
       } catch (err) {
         const errorMsg = `Error fetching messages: ${err.message}`;
@@ -743,6 +756,13 @@ function DoctorChat({ user, role, handleLogout, setError }) {
         return;
       }
 
+      if (actionType === 'Prescription' && !Object.values(prescription).every((v) => v.trim())) {
+        const errorMsg = 'Please fill all prescription fields.';
+        setError(errorMsg);
+        console.error(errorMsg);
+        return;
+      }
+
       const prescriptionString =
         actionType === 'Combined' || actionType === 'Prescription'
           ? `${prescription.medicine}, ${prescription.dosage}, ${prescription.frequency}, ${prescription.duration} days`
@@ -753,6 +773,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
         sender: 'doctor',
         ...(actionType === 'Diagnosis' || actionType === 'Combined' ? { diagnosis } : {}),
         ...(actionType === 'Prescription' || actionType === 'Combined' ? { prescription: { ...prescription } } : {}),
+        ...(actionType === 'Prescription' && lastDiagnosis ? { diagnosis: lastDiagnosis } : {}), // Include last diagnosis if Prescription Only
         timestamp: new Date().toISOString(),
         doctorId,
         patientId: selectedPatientId,
@@ -779,7 +800,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
         const recordData = {
           doctorId,
           patientId: selectedPatientId,
-          ...(actionType === 'Diagnosis' || actionType === 'Combined' ? { diagnosis } : { diagnosis: null }),
+          ...(actionType === 'Diagnosis' || actionType === 'Combined' ? { diagnosis } : { diagnosis: lastDiagnosis || null }),
           ...(actionType === 'Prescription' || actionType === 'Combined' ? { prescription } : { prescription: null }),
         };
         const recordResponse = await fetch(`${apiBaseUrl}/doctors/records`, {
@@ -800,7 +821,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
 
         if (shouldNotifyAdmin) {
           const selectedPatient = patients.find((p) => p.patientId === selectedPatientId);
-          const disease = actionType === 'Combined' || actionType === 'Diagnosis' ? diagnosis : 'N/A';
+          const disease = actionType === 'Combined' || actionType === 'Diagnosis' ? diagnosis : (lastDiagnosis || 'N/A');
           const notificationMessage = prescriptionString
             ? `Diagnosis: ${disease}, Prescription: ${prescriptionString}`
             : `Diagnosis: ${disease}`;
@@ -843,7 +864,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
         console.error('Send action error:', err);
       }
     },
-    [actionType, diagnosis, prescription, selectedPatientId, doctorId, user?.uid, selectedPatientName, patients, apiBaseUrl, setError]
+    [actionType, diagnosis, lastDiagnosis, prescription, selectedPatientId, doctorId, user?.uid, selectedPatientName, patients, apiBaseUrl, setError]
   );
 
   const readAloud = useCallback(
@@ -1290,6 +1311,11 @@ function DoctorChat({ user, role, handleLogout, setError }) {
               )}
               {(actionType === 'Prescription' || actionType === 'Combined') && (
                 <>
+                  {actionType === 'Prescription' && lastDiagnosis && (
+                    <div className="last-diagnosis">
+                      <strong>Last Diagnosis:</strong> {lastDiagnosis}
+                    </div>
+                  )}
                   <input
                     type="text"
                     value={prescription.medicine}
@@ -1308,14 +1334,14 @@ function DoctorChat({ user, role, handleLogout, setError }) {
                     type="text"
                     value={prescription.frequency}
                     onChange={(e) => setPrescription({ ...prescription, frequency: e.target.value })}
-                    placeholder="Frequency (e.g., 08:00 AM and 06:00 PM)"
+                    placeholder="Frequency (e.g., 08:00 AM or 08:00 AM and 06:00 PM)"
                     aria-label="Enter dosage frequency"
                   />
                   <input
                     type="text"
                     value={prescription.duration}
                     onChange={(e) => setPrescription({ ...prescription, duration: e.target.value })}
-                    placeholder="Duration (e.g., 3 days)"
+                    placeholder="Duration in days (e.g., 3)"
                     aria-label="Enter prescription duration"
                   />
                 </>
@@ -2044,6 +2070,18 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           gap: 15px;
         }
 
+        .last-diagnosis {
+          background: rgba(255, 255, 255, 0.1);
+          padding: 10px;
+          border-radius: 10px;
+          color: #E0E0E0;
+          font-size: 1rem;
+        }
+
+        .last-diagnosis strong {
+          color: #FFFFFF;
+        }
+
         .modal-content input,
         .modal-content select,
         .modal-content textarea {
@@ -2080,7 +2118,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           background: #27AE60;
           color: #FFFFFF;
           border: none;
-          border-radius: 20px;
+          border-radius: 20gins: 20px;
           font-size: 1rem;
           font-weight: 500;
           cursor: pointer;
