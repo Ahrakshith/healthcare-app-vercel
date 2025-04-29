@@ -2200,7 +2200,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           text-decoration: underline;
         }
 
-        .read-aloud-buttons {
+        .read-aloud-container {
           display: flex;
           gap: 10px;
         }
