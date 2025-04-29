@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { collection, query, where, onSnapshot, getDocs, doc, getDoc, setDoc } from 'firebase/firestore';
@@ -43,7 +44,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
   const auth = getAuth();
   const apiBaseUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
 
-  // Flag to control whether admin/notify endpoint is called (for Issue 1)
+  // Flag to control whether admin/notify endpoint is called
   const shouldNotifyAdmin = true; // Set to false if you want to disable admin notifications
 
   const scrollToBottom = useCallback(() => {
@@ -186,7 +187,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
       auth: {
         headers: {
           'x-user-uid': user.uid,
-          'Authorization': `Bearer ${user.uid}`, // Ensure consistent auth
+          'Authorization': `Bearer ${user.uid}`,
         },
       },
     });
@@ -207,7 +208,17 @@ function DoctorChat({ user, role, handleLogout, setError }) {
     channel.bind('new-message', (message) => {
       console.log('New message received from Pusher:', message);
       setMessages((prev) => {
-        if (!prev.some((msg) => msg.timestamp === message.timestamp && msg.text === message.text)) {
+        // Check for duplicates using tempMessageId, timestamp, and content
+        const isDuplicate = prev.some(
+          (msg) =>
+            (message.tempMessageId && msg.tempMessageId === message.tempMessageId) ||
+            (msg.timestamp === message.timestamp &&
+              msg.sender === message.sender &&
+              msg.text === message.text &&
+              msg.diagnosis === message.diagnosis &&
+              JSON.stringify(msg.prescription) === JSON.stringify(message.prescription))
+        );
+        if (!isDuplicate) {
           const updatedMessages = [...prev, message].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
           if (message.sender === 'patient') {
             setPatientMessageTimestamps((prevTimestamps) => ({
@@ -220,6 +231,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           }
           return updatedMessages;
         }
+        console.log('Duplicate message ignored:', message);
         return prev;
       });
     });
@@ -422,12 +434,10 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           credentials: 'include',
         });
 
-        // Check if the response is successful
         if (!response.ok) {
           const errorText = await response.text();
           let userFriendlyMessage = `Failed to process patient decision: HTTP ${response.status}`;
 
-          // Customize error message based on status code
           if (response.status === 405) {
             userFriendlyMessage = 'The server does not support this action. Please try again later or contact support.';
           } else if (response.status === 403) {
@@ -467,6 +477,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
             timestamp: new Date().toISOString(),
             doctorId,
             patientId: selectedPatientId,
+            tempMessageId: `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`, // Updated tempMessageId
           };
 
           const messageResponse = await fetch(`${apiBaseUrl}/chats/${selectedPatientId}/${doctorId}`, {
@@ -615,6 +626,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           timestamp: new Date().toISOString(),
           doctorId,
           patientId: selectedPatientId,
+          tempMessageId: `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`, // Updated tempMessageId
         };
 
         try {
@@ -631,8 +643,6 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           });
           if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`);
           console.log('Message sent successfully:', message);
-          // Removed local setMessages call to prevent duplication
-          // The message will be added via the Pusher 'new-message' event
         } catch (err) {
           const errorMsg = `Failed to send message: ${err.message}`;
           setError(errorMsg);
@@ -685,6 +695,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
       timestamp: new Date().toISOString(),
       doctorId,
       patientId: selectedPatientId,
+      tempMessageId: `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`, // Updated tempMessageId
     };
 
     try {
@@ -701,8 +712,6 @@ function DoctorChat({ user, role, handleLogout, setError }) {
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`);
       console.log('Message sent successfully:', message);
-      // Removed local setMessages call to prevent duplication
-      // The message will be added via the Pusher 'new-message' event
       setNewMessage('');
     } catch (err) {
       const errorMsg = `Failed to send message: ${err.message}`;
@@ -743,6 +752,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           ? `${prescription.medicine}, ${prescription.dosage}, ${prescription.frequency}, ${prescription.duration} days`
           : undefined;
 
+      const tempMessageId = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`; // Updated tempMessageId
       const message = {
         sender: 'doctor',
         ...(actionType === 'Diagnosis' || actionType === 'Combined' ? { diagnosis } : {}),
@@ -750,6 +760,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
         timestamp: new Date().toISOString(),
         doctorId,
         patientId: selectedPatientId,
+        tempMessageId,
       };
 
       try {
@@ -767,13 +778,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
         });
         if (!chatResponse.ok) throw new Error(`HTTP ${chatResponse.status}: ${await chatResponse.text()}`);
 
-        console.log('Chat action sent successfully, updating messages');
-        setMessages((prev) => {
-          if (!prev.some((msg) => msg.timestamp === message.timestamp)) {
-            return [...prev, message].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-          }
-          return prev;
-        });
+        console.log('Chat action sent successfully');
 
         const recordData = {
           doctorId,
@@ -797,7 +802,6 @@ function DoctorChat({ user, role, handleLogout, setError }) {
         }
         console.log('Record stored successfully:', recordData);
 
-        // Only notify admin if the flag is true
         if (shouldNotifyAdmin) {
           const selectedPatient = patients.find((p) => p.patientId === selectedPatientId);
           const disease = actionType === 'Combined' || actionType === 'Diagnosis' ? diagnosis : 'N/A';
@@ -818,9 +822,9 @@ function DoctorChat({ user, role, handleLogout, setError }) {
               patientName: selectedPatientName || 'Unknown',
               age: selectedPatient?.age || 'N/A',
               sex: selectedPatient?.sex || 'N/A',
-              description: notificationMessage, // Ensure description is meaningful
+              description: notificationMessage,
               disease: disease,
-              message: notificationMessage, // Added message field as required by the endpoint
+              message: notificationMessage,
               medicine: actionType === 'Combined' ? prescriptionString : undefined,
               doctorId,
             }),
@@ -2047,6 +2051,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
         }
 
         .modal-content input,
+        .modal-content select,
         .modal-content textarea {
           width: 100%;
           padding: 12px;
