@@ -418,7 +418,8 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     const time1 = parseTime(time1Str);
     const time2 = parseTime(time2Str);
 
-    const startDate = new Date();
+    const now = new Date();
+    const startDate = new Date(now);
     const endDate = new Date(startDate);
     endDate.setDate(startDate.getDate() + days - 1);
 
@@ -431,7 +432,34 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       // Reminder 1
       const scheduledDate1 = new Date(currentDate);
       scheduledDate1.setHours(time1.hours, time1.minutes, 0, 0);
-      if (scheduledDate1 > new Date()) {
+      if (scheduledDate1 > now) {
+        const reminder1Id = `${medicine}_${dateStr}_${time1Str.replace(/[:.\s]/g, '-')}`; // Deterministic ID
+        const reminder1Ref = doc(db, `patients/${effectivePatientId}/reminders`, reminder1Id);
+        const reminder1 = {
+          medicine,
+          dosage,
+          scheduledTime: scheduledDate1.toISOString(),
+          status: 'pending',
+          snoozeCount: 0,
+          createdAt: new Date().toISOString(),
+          patientId: effectivePatientId,
+        };
+
+        try {
+          const reminder1Snap = await getDoc(reminder1Ref);
+          if (reminder1Snap.exists()) {
+            console.log(`setupMedicationSchedule: Reminder ${reminder1Id} exists, updating`);
+            await setDoc(reminder1Ref, reminder1, { merge: true });
+          } else {
+            console.log(`setupMedicationSchedule: Creating reminder ${reminder1Id}`);
+            await setDoc(reminder1Ref, reminder1);
+          }
+          newReminders.push({ id: reminder1Id, ...reminder1 });
+        } catch (err) {
+          console.error('setupMedicationSchedule: Failed to add reminder1:', err.message);
+          setError(`Failed to add reminder: ${err.message}`);
+        }
+      } else if (scheduledDate1.getDate() === now.getDate() && scheduledDate1.getHours() >= now.getHours() && scheduledDate1.getMinutes() > now.getMinutes()) {
         const reminder1Id = `${medicine}_${dateStr}_${time1Str.replace(/[:.\s]/g, '-')}`; // Deterministic ID
         const reminder1Ref = doc(db, `patients/${effectivePatientId}/reminders`, reminder1Id);
         const reminder1 = {
@@ -463,7 +491,34 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       // Reminder 2
       const scheduledDate2 = new Date(currentDate);
       scheduledDate2.setHours(time2.hours, time2.minutes, 0, 0);
-      if (scheduledDate2 > new Date()) {
+      if (scheduledDate2 > now) {
+        const reminder2Id = `${medicine}_${dateStr}_${time2Str.replace(/[:.\s]/g, '-')}`; // Deterministic ID
+        const reminder2Ref = doc(db, `patients/${effectivePatientId}/reminders`, reminder2Id);
+        const reminder2 = {
+          medicine,
+          dosage,
+          scheduledTime: scheduledDate2.toISOString(),
+          status: 'pending',
+          snoozeCount: 0,
+          createdAt: new Date().toISOString(),
+          patientId: effectivePatientId,
+        };
+
+        try {
+          const reminder2Snap = await getDoc(reminder2Ref);
+          if (reminder2Snap.exists()) {
+            console.log(`setupMedicationSchedule: Reminder ${reminder2Id} exists, updating`);
+            await setDoc(reminder2Ref, reminder2, { merge: true });
+          } else {
+            console.log(`setupMedicationSchedule: Creating reminder ${reminder2Id}`);
+            await setDoc(reminder2Ref, reminder2);
+          }
+          newReminders.push({ id: reminder2Id, ...reminder2 });
+        } catch (err) {
+          console.error('setupMedicationSchedule: Failed to add reminder2:', err.message);
+          setError(`Failed to add reminder: ${err.message}`);
+        }
+      } else if (scheduledDate2.getDate() === now.getDate() && scheduledDate2.getHours() >= now.getHours() && scheduledDate2.getMinutes() > now.getMinutes()) {
         const reminder2Id = `${medicine}_${dateStr}_${time2Str.replace(/[:.\s]/g, '-')}`; // Deterministic ID
         const reminder2Ref = doc(db, `patients/${effectivePatientId}/reminders`, reminder2Id);
         const reminder2 = {
@@ -517,7 +572,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         const timeoutId = setTimeout(() => {
           if ('Notification' in window && Notification.permission === 'granted') {
             const notification = new Notification('Medication Reminder', {
-              body: `Time to take ${reminder.dosage} of ${reminder.medicine}. Tap to confirm or snooze.`,
+              body: `Time to take ${reminder.dosage} of ${reminder.medicine} at ${new Date(reminder.scheduledTime).toLocaleTimeString('en-US', { hour12: true })}. Tap to confirm or snooze.`,
               tag: `reminder-${reminder.id}`,
             });
 
@@ -1426,7 +1481,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                       <div key={reminder.id} className="table-row">
                         <span>{reminder.medicine}</span>
                         <span>{reminder.dosage}</span>
-                        <span>{new Date(reminder.scheduledTime).toLocaleString()}</span>
+                        <span>{new Date(reminder.scheduledTime).toLocaleTimeString('en-US', { hour12: true })}</span>
                         <span>{reminder.status}</span>
                         <span>
                           {reminder.status === 'pending' || reminder.status === 'snoozed' ? (
@@ -1683,7 +1738,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                     )}
                     {msg.imageUrl && <img src={msg.imageUrl} alt="Patient upload" className="chat-image" />}
                     {msg.audioError && <p className="audio-error">{msg.audioError}</p>}
-                    <span className="timestamp">{new Date(msg.timestamp).toLocaleTimeString()}</span>
+                    <span className="timestamp">{new Date(msg.timestamp).toLocaleTimeString('en-US', { hour12: true })}</span>
                   </div>
                 </div>
               ))}
@@ -1860,13 +1915,6 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         .sidebar.open {
           width: 250px;
           padding: 20px;
-        }
-
-        .sidebar-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          margin-bottom: 20px;
         }
 
         .sidebar-header h3 {
