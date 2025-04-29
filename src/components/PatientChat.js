@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Pusher from 'pusher-js';
@@ -1473,84 +1472,69 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                 </div>
               )}
               {messages.filter((msg) => msg.sender === 'doctor' && (msg.diagnosis || msg.prescription)).length > 0 ? (
-                messages
-                  .filter((msg) => msg.sender === 'doctor' && (msg.diagnosis || msg.prescription))
-                  .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
-                  .map((msg, index) => (
-                    <div key={`${msg.timestamp}-${index}`}>
-                      {msg.diagnosis && (
-                        <div className="recommendation-item">
-                          <strong>Diagnosis:</strong>{' '}
-                          {languagePreference === 'kn' ? msg.translatedDiagnosis || msg.diagnosis : msg.diagnosis}
-                          <div className="read-aloud-container">
-                            {languagePreference === 'kn' ? (
-                              <>
-                                <button
-                                  onClick={() =>
-                                    readAloud(
-                                      languagePreference === 'kn' ? msg.translatedDiagnosis || msg.diagnosis : msg.diagnosis,
-                                      'kn'
-                                    )
-                                  }
-                                  className="read-aloud-button kannada"
-                                >
-                                  🔊 Kannada
-                                </button>
-                                <button
-                                  onClick={() =>
-                                    readAloud(
-                                      languagePreference === 'kn' ? msg.translatedDiagnosis || msg.diagnosis : msg.diagnosis,
-                                      'en'
-                                    )
-                                  }
-                                  className="read-aloud-button english"
-                                >
-                                  🔊 English
-                                </button>
-                              </>
-                            ) : (
-                              <button
-                                onClick={() =>
-                                  readAloud(
-                                    languagePreference === 'kn' ? msg.translatedDiagnosis || msg.diagnosis : msg.diagnosis,
-                                    'en'
-                                  )
-                                }
-                                className="read-aloud-button english"
-                              >
-                                🔊 English
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      )}
-                      {msg.prescription && (
-                        <div className="recommendation-item">
-                          <strong>Prescription:</strong>{' '}
-                          {typeof msg.prescription === 'object'
-                            ? `${msg.prescription.medicine}, ${msg.prescription.dosage}, ${msg.prescription.frequency}, ${msg.prescription.duration}`
-                            : msg.prescription}
-                          <button
-                            onClick={() => validatePrescription(msg.diagnosis, msg.prescription, msg.timestamp)}
-                            className="validate-button"
-                          >
-                            ✅ Validate
-                          </button>
-                          {validationResult[msg.timestamp] && (
-                            <span
-                              className={
-                                validationResult[msg.timestamp].includes('valid')
-                                  ? 'validation-success'
-                                  : 'validation-error'
-                              }
-                            >
-                              {validationResult[msg.timestamp]}
-                            </span>
-                          )}
-                        </div>
+                (() => {
+                  // Get all doctor messages with diagnosis or prescription
+                  const doctorMessages = messages
+                    .filter((msg) => msg.sender === 'doctor' && (msg.diagnosis || msg.prescription))
+                    .sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+
+                  // Track the last diagnosis for cases where only prescription is given
+                  let lastDiagnosis = '';
+                  const combinedMessages = [];
+
+                  // Process messages in reverse chronological order
+                  for (let i = 0; i < doctorMessages.length; i++) {
+                    const msg = doctorMessages[i];
+                    if (msg.diagnosis) {
+                      lastDiagnosis = languagePreference === 'kn' ? msg.translatedDiagnosis || msg.diagnosis : msg.diagnosis;
+                    }
+                    if (msg.prescription) {
+                      const prescriptionText = typeof msg.prescription === 'object'
+                        ? `${msg.prescription.medicine}, ${msg.prescription.dosage}, ${msg.prescription.frequency}, ${msg.prescription.duration}`
+                        : msg.prescription;
+
+                      const diagnosisToUse = msg.diagnosis
+                        ? (languagePreference === 'kn' ? msg.translatedDiagnosis || msg.diagnosis : msg.diagnosis)
+                        : lastDiagnosis;
+
+                      const note = msg.diagnosis ? '' : lastDiagnosis ? '(Note: Only prescription was given, using last diagnosis)' : '(Note: No prior diagnosis available)';
+
+                      combinedMessages.push({
+                        timestamp: msg.timestamp,
+                        diagnosis: diagnosisToUse,
+                        prescription: prescriptionText,
+                        note,
+                      });
+                    }
+                  }
+
+                  return combinedMessages.map((entry, index) => (
+                    <div key={`${entry.timestamp}-${index}`} className="recommendation-item">
+                      <div className="recommendation-content">
+                        <p><strong>Diagnosis:</strong> {entry.diagnosis || 'Not specified'}</p>
+                        <p><strong>Prescription:</strong> {entry.prescription}</p>
+                        {entry.note && <p className="recommendation-note">{entry.note}</p>}
+                      </div>
+                      <button
+                        onClick={() => validatePrescription(entry.diagnosis, entry.prescription, entry.timestamp)}
+                        className="validate-button"
+                      >
+                        ✅ Validate
+                      </button>
+                      {validationResult[entry.timestamp] && (
+                        <span
+                          className={
+                            validationResult[entry.timestamp].includes('valid')
+                              ? 'validation-success'
+                              : 'validation-error'
+                          }
+                        >
+                          {validationResult[entry.timestamp]}
+                        </span>
                       )}
                     </div>
-                  ))
+                  ));
+                })()
               ) : (
                 <p>No recommendations from the doctor yet.</p>
               )}
