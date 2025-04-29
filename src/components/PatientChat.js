@@ -12,7 +12,7 @@ import { verifyMedicine, notifyAdmin } from '../services/medicineVerify.js';
 import { doc, getDoc, collection, getDocs, updateDoc, setDoc } from 'firebase/firestore';
 import { db, auth } from '../services/firebase.js';
 import { signOut } from 'firebase/auth';
-import '../components/PatientChat.css';
+import '../components/patient.css';
 
 function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   const { patientId: urlPatientId, doctorId } = useParams();
