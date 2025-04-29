@@ -812,7 +812,7 @@ const setupMedicationSchedule = async (prescription, issuanceTimestamp) => {
 
         if (!saveResponse.ok) {
           const errorData = await saveResponse.json();
-          throw new Error(`Failed to save message: ${saveResponse.status} - ${errorData.message || 'Unknown error'}`);
+          throw new Error(`Failed to save message: ${response.status} - ${errorData.message || 'Unknown error'}`);
         }
         const data = await saveResponse.json();
         setMessages((prev) => {
@@ -1140,7 +1140,7 @@ const setupMedicationSchedule = async (prescription, issuanceTimestamp) => {
     if (!textInput.trim()) return;
 
     const message = {
-      sender: 'patient',
+      sender: 'patient  'patient',
       text: textInput,
       translatedText: null,
       timestamp: new Date().toISOString(),
@@ -1639,9 +1639,7 @@ const setupMedicationSchedule = async (prescription, issuanceTimestamp) => {
                                     🔊 Kannada
                                   </button>
                                   <button
-                                    onClick={() => readAloud(msg.translatedText || msg
-
-.text, 'en')}
+                                    onClick={() => readAloud(msg.translatedText || msg.text, 'en')}
                                     className="read-aloud-button english"
                                   >
                                     🔊 English
@@ -1682,67 +1680,67 @@ const setupMedicationSchedule = async (prescription, issuanceTimestamp) => {
           )}
           {activeMenuOption === null && (
             <div className="controls">
-              <div className="language-buttons">
-                <button
-                  onClick={() => setTranscriptionLanguage('kn')}
-                  className={transcriptionLanguage === 'kn' ? 'active-lang' : ''}
-                >
-                  Kannada
-                </button>
-                <button
-                  onClick={() => setTranscriptionLanguage('en')}
-                  className={transcriptionLanguage === 'en' ? 'active-lang' : ''}
-                >
-                  English
-                </button>
-              </div>
-              <div className="recording-buttons">
-                <button
-                  onClick={startRecording}
-                  disabled={recording}
-                  className={recording ? 'disabled-button' : 'start-button'}
-                >
-                  🎙️ Start Recording
-                </button>
-                <button
-                  onClick={stopRecording}
-                  disabled={!recording}
-                  className={!recording ? 'disabled-button' : 'stop-button'}
-                >
-                  🛑 Stop Recording
-                </button>
-                <label className="image-upload">
-                  📷 Upload Image
+              <div className="controls-row">
+                <div className="language-buttons">
+                  <button
+                    onClick={() => setTranscriptionLanguage('kn')}
+                    className={transcriptionLanguage === 'kn' ? 'active-lang' : ''}
+                  >
+                    Kannada
+                  </button>
+                  <button
+                    onClick={() => setTranscriptionLanguage('en')}
+                    className={transcriptionLanguage === 'en' ? 'active-lang' : ''}
+                  >
+                    English
+                  </button>
+                </div>
+                <div className="recording-buttons">
+                  <button
+                    onClick={startRecording}
+                    disabled={recording}
+                    className={recording ? 'disabled-button' : 'start-button'}
+                  >
+                    🎙️
+                  </button>
+                  <button
+                    onClick={stopRecording}
+                    disabled={!recording}
+                    className={!recording ? 'disabled-button' : 'stop-button'}
+                  >
+                    🛑
+                  </button>
+                  <label className="image-upload">
+                    📷
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/gif"
+                      onChange={handleImageUpload}
+                      style={{ display: 'none' }}
+                    />
+                  </label>
+                </div>
+                <div className="text-input-container">
                   <input
-                    type="file"
-                    accept="image/jpeg,image/png,image/gif"
-                    onChange={handleImageUpload}
-                    style={{ display: 'none' }}
+                    type="text"
+                    value={textInput}
+                    onChange={(e) => setTextInput(e.target.value)}
+                    placeholder="Type your message (English only)..."
+                    onKeyPress={(e) => e.key === 'Enter' && handleSendText()}
                   />
-                </label>
-              </div>
-              <div className="text-input-container">
-                <input
-                  type="text"
-                  value={textInput}
-                  onChange={(e) => setTextInput(e.target.value)}
-                  placeholder="Type your message (English only)..."
-                  onKeyPress={(e) => e.key === 'Enter' && handleSendText()}
-                />
-                <button onClick={handleSendText} className="send-button">
-                  Send
-                </button>
-              </div>
-              <div className="quick-replies">
-                <button onClick={() => handleQuickReply("Let's do it")}>Let's do it</button>
-                <button onClick={() => handleQuickReply('Great!')}>Great!</button>
+                  <button onClick={handleSendText} className="send-button">
+                    ➤
+                  </button>
+                </div>
+                <div className="quick-replies">
+                  <button onClick={() => handleQuickReply("Let's do it")}>Let's do it</button>
+                  <button onClick={() => handleQuickReply('Great!')}>Great!</button>
+                </div>
               </div>
             </div>
           )}
         </div>
       </div>
-
-
     </div>
   );
 }

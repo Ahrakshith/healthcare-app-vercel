@@ -462,18 +462,19 @@
 
 .read-aloud-button {
   padding: 6px 12px;
-  background: rgba(255, 255, 255, 0.1);
+  background: linear-gradient(90deg, #6E48AA, #5A3E8B);
   color: #FFFFFF;
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  border: none;
   border-radius: 20px;
   font-size: 0.9rem;
   cursor: pointer;
-  transition: background 0.3s ease, transform 0.3s ease;
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
 }
 
 .read-aloud-button:hover {
-  background: rgba(255, 255, 255, 0.2);
   transform: scale(1.05);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
 }
 
 .validate-button {
@@ -542,18 +543,19 @@
 
 .retry-button {
   padding: 6px 12px;
-  background: #F39C12;
+  background: linear-gradient(90deg, #F39C12, #E67E22);
   color: #FFFFFF;
   border: none;
   border-radius: 20px;
   font-size: 0.9rem;
   cursor: pointer;
-  transition: background 0.3s ease, transform 0.3s ease;
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
 }
 
 .retry-button:hover {
-  background: #E67E22;
   transform: scale(1.05);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
 }
 
 /* Controls section */
@@ -565,75 +567,82 @@
   border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
+.controls-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
 .language-buttons {
   display: flex;
   gap: 10px;
-  margin-bottom: 15px;
 }
 
 .language-buttons button {
   padding: 8px 20px;
-  background: rgba(255, 255, 255, 0.1);
-  color: #E0E0E0;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 20px;
+  background: linear-gradient(90deg, #6E48AA, #5A3E8B);
+  color: #FFFFFF;
+  border: none;
+  border-radius: 25px;
   font-size: 1rem;
   font-weight: 500;
   cursor: pointer;
-  transition: background 0.3s ease, transform 0.3s ease;
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
 }
 
 .language-buttons .active-lang {
-  background: #6E48AA;
-  color: #FFFFFF;
-  border-color: #6E48AA;
+  background: linear-gradient(90deg, #5A3E8B, #4A2E6B);
   transform: scale(1.05);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
 }
 
 .language-buttons button:hover {
-  background: rgba(255, 255, 255, 0.2);
   transform: scale(1.05);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
 }
 
 .recording-buttons {
   display: flex;
   gap: 10px;
   align-items: center;
-  margin-bottom: 15px;
 }
 
 .start-button {
   padding: 8px 20px;
-  background: #27AE60;
+  background: linear-gradient(90deg, #27AE60, #219653);
   color: #FFFFFF;
   border: none;
-  border-radius: 20px;
+  border-radius: 25px;
   font-size: 1rem;
   font-weight: 500;
   cursor: pointer;
-  transition: background 0.3s ease, transform 0.3s ease;
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
 }
 
 .start-button:hover {
-  background: #219653;
   transform: scale(1.05);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
 }
 
 .stop-button {
   padding: 8px 20px;
-  background: #E74C3C;
+  background: linear-gradient(90deg, #E74C3C, #C0392B);
   color: #FFFFFF;
   border: none;
-  border-radius: 20px;
+  border-radius: 25px;
   font-size: 1rem;
   font-weight: 500;
   cursor: pointer;
-  transition: background 0.3s ease, transform 0.3s ease;
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
 }
 
 .stop-button:hover {
-  background: #C0392B;
   transform: scale(1.05);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
 }
 
 .disabled-button {
@@ -641,7 +650,7 @@
   background: #666;
   color: #A0A0A0;
   border: none;
-  border-radius: 20px;
+  border-radius: 25px;
   font-size: 1rem;
   font-weight: 500;
   cursor: not-allowed;
@@ -649,26 +658,32 @@
 
 .image-upload {
   padding: 8px 20px;
-  background: rgba(255, 255, 255, 0.1);
-  color: #E0E0E0;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 20px;
+  background: linear-gradient(90deg, #6E48AA, #5A3E8B);
+  color: #FFFFFF;
+  border: none;
+  border-radius: 25px;
   font-size: 1rem;
   font-weight: 500;
   cursor: pointer;
-  transition: background 0.3s ease, transform 0.3s ease;
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
 }
 
 .image-upload:hover {
-  background: rgba(255, 255, 255, 0.2);
   transform: scale(1.05);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+}
+
+.image-upload input {
+  display: none;
 }
 
 /* Text input container */
 .text-input-container {
   display: flex;
+  align-items: center;
   gap: 10px;
-  margin-bottom: 15px;
+  flex: 1;
 }
 
 .text-input-container input {
@@ -685,53 +700,55 @@
 .text-input-container input:focus {
   outline: none;
   border-color: #6E48AA;
-  box-shadow: 0 0 8px rgba(110, 72, 170, 0.3);
+  box-shadow: 0 0 10px rgba(110, 72, 170, 0.5);
   background: rgba(255, 255, 255, 0.05);
 }
 
 .text-input-container input::placeholder {
   color: #A0A0A0;
+  font-style: italic;
 }
 
 .send-button {
   padding: 12px 30px;
-  background: #6E48AA;
+  background: linear-gradient(90deg, #6E48AA, #5A3E8B);
   color: #FFFFFF;
   border: none;
   border-radius: 25px;
   font-size: 1rem;
   font-weight: 600;
   cursor: pointer;
-  transition: background 0.3s ease, transform 0.3s ease;
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
 }
 
 .send-button:hover {
-  background: #5A3E8B;
   transform: scale(1.05);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
 }
 
 /* Quick replies */
 .quick-replies {
   display: flex;
   gap: 10px;
-  justify-content: center;
 }
 
 .quick-replies button {
   padding: 8px 20px;
-  background: rgba(255, 255, 255, 0.1);
-  color: #E0E0E0;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 20px;
+  background: linear-gradient(90deg, #6E48AA, #5A3E8B);
+  color: #FFFFFF;
+  border: none;
+  border-radius: 25px;
   font-size: 0.9rem;
   font-weight: 500;
   cursor: pointer;
-  transition: background 0.3s ease, transform 0.3s ease;
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
 }
 
 .quick-replies button:hover {
-  background: rgba(255, 255, 255, 0.2);
   transform: scale(1.05);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
 }
 
 /* Animations */
