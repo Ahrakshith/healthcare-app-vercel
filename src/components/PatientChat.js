@@ -1,11 +1,10 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, memo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Pusher from 'pusher-js';
 import {
   transcribeAudio,
   translateText,
   textToSpeechConvert,
-  detectLanguage,
   playAudio,
 } from '../services/speech.js';
 import { verifyMedicine, notifyAdmin } from '../services/medicineVerify.js';
@@ -13,6 +12,149 @@ import { doc, getDoc, collection, getDocs, updateDoc, setDoc } from 'firebase/fi
 import { db, auth } from '../services/firebase.js';
 import { signOut } from 'firebase/auth';
 import '../components/patient.css';
+
+// Utility to debounce a function
+const debounce = (func, delay) => {
+  let timeoutId;
+  return (...args) => {
+    clearTimeout(timeoutId);
+    timeoutId = setTimeout(() => func(...args), delay);
+  };
+};
+
+// Memoized Message Component
+const MessageItem = memo(({ msg, index, languagePreference, readAloudEnglish, readAloudKannada, setError }) => (
+  <div
+    key={`${msg.timestamp}-${index}`}
+    className={`message ${msg.sender === 'patient' ? 'patient-message' : 'doctor-message'}`}
+  >
+    <div className="message-content">
+      {msg.sender === 'patient' && msg.audioUrl && (
+        <>
+          {msg.recordingLanguage === 'en-US' ? (
+            <div className="message-block">
+              <p className="primary-text">{msg.text || 'No transcription'}</p>
+              <div className="audio-container">
+                <audio controls src={msg.audioUrl} onError={() => setError('Failed to load audio. It may be inaccessible or unsupported.')} />
+                <div className="read-aloud-container">
+                  <button
+                    onClick={() => readAloudEnglish(msg.text)}
+                    className="read-aloud-button english"
+                  >
+                    🔊 English
+                  </button>
+                </div>
+                <a href={msg.audioUrl} download className="download-link">
+                  Download Audio
+                </a>
+              </div>
+            </div>
+          ) : (
+            <div className="message-block">
+              <p className="primary-text">{msg.text || 'No transcription'}</p>
+              {msg.translatedText && <p className="translated-text">English: {msg.translatedText}</p>}
+              <div className="audio-container">
+                <audio controls src={msg.audioUrl} onError={() => setError('Failed to load audio. It may be inaccessible or unsupported.')} />
+                <div className="read-aloud-container">
+                  <button
+                    onClick={() => readAloudKannada(msg.text)}
+                    className="read-aloud-button kannada"
+                  >
+                    🔊 Kannada
+                  </button>
+                  <button
+                    onClick={() => readAloudEnglish(msg.translatedText || msg.text)}
+                    className="read-aloud-button english"
+                  >
+                    🔊 English
+                  </button>
+                </div>
+                <a href={msg.audioUrl} download className="download-link">
+                  Download Audio
+                </a>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+      {msg.sender === 'patient' && !msg.audioUrl && (
+        <div className="message-block">
+          <p className="primary-text">{msg.text || 'No transcription'}</p>
+        </div>
+      )}
+      {msg.sender === 'doctor' && (
+        <div className="message-block">
+          {msg.diagnosis || msg.prescription ? (
+            <>
+              <p className="primary-text">Doctor has provided a recommendation</p>
+              {msg.diagnosis && (
+                <p className="primary-text">
+                  <strong>Diagnosis:</strong>{' '}
+                  {languagePreference === 'kn' ? (msg.translatedDiagnosis || msg.diagnosis) : msg.diagnosis}
+                </p>
+              )}
+              {msg.prescription && (
+                <p className="primary-text">
+                  <strong>Prescription:</strong>{' '}
+                  {typeof msg.prescription === 'object'
+                    ? `${msg.prescription.medicine}, ${msg.prescription.dosage}, ${msg.prescription.frequency}, ${msg.prescription.duration}`
+                    : msg.prescription}
+                </p>
+              )}
+            </>
+          ) : (
+            <>
+              {languagePreference === 'en' ? (
+                <p className="primary-text">{msg.text || 'No message content'}</p>
+              ) : (
+                <>
+                  <p className="primary-text">{msg.text || 'No message content'}</p>
+                  {msg.translatedText && <p className="translated-text">English: {msg.translatedText}</p>}
+                </>
+              )}
+            </>
+          )}
+          {msg.audioUrl && (
+            <div className="audio-container">
+              <audio controls src={msg.audioUrl} onError={() => setError('Failed to load audio. It may be inaccessible or unsupported.')} />
+              <div className="read-aloud-container">
+                {languagePreference === 'en' ? (
+                  <button
+                    onClick={() => readAloudEnglish(msg.text)}
+                    className="read-aloud-button english"
+                  >
+                    🔊 English
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      onClick={() => readAloudKannada(msg.text)}
+                      className="read-aloud-button kannada"
+                    >
+                      🔊 Kannada
+                    </button>
+                    <button
+                      onClick={() => readAloudEnglish(msg.translatedText || msg.text)}
+                      className="read-aloud-button english"
+                    >
+                      🔊 English
+                    </button>
+                  </>
+                )}
+              </div>
+              <a href={msg.audioUrl} download className="download-link">
+                Download Audio
+              </a>
+            </div>
+          )}
+        </div>
+      )}
+      {msg.imageUrl && <img src={msg.imageUrl} alt="Patient upload" className="chat-image" />}
+      {msg.audioError && <p className="audio-error">{msg.audioError}</p>}
+      <span className="timestamp">{new Date(msg.timestamp).toLocaleTimeString('en-US', { hour12: true })}</span>
+    </div>
+  </div>
+));
 
 function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   const { patientId: urlPatientId, doctorId } = useParams();
@@ -39,7 +181,8 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   const pusherRef = useRef(null);
   const messagesEndRef = useRef(null);
   const reminderTimeoutsRef = useRef(new Map());
-  const errorTimeoutRef = useRef(null);
+  const timeoutManagerRef = useRef(new Map());
+  const messageBufferRef = useRef([]);
   const retryTimeoutRef = useRef(null);
   const navigate = useNavigate();
 
@@ -49,10 +192,23 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   const pusherKey = process.env.REACT_APP_PUSHER_KEY || '2ed44c3ce3ef227d9924';
   const pusherCluster = process.env.REACT_APP_PUSHER_CLUSTER || 'ap2';
 
-  // Fetch interceptor for debugging
+  // Centralized Timeout Management
+  const setManagedTimeout = useCallback((key, callback, delay) => {
+    if (timeoutManagerRef.current.has(key)) {
+      clearTimeout(timeoutManagerRef.current.get(key));
+    }
+    const timeoutId = setTimeout(() => {
+      callback();
+      timeoutManagerRef.current.delete(key);
+    }, delay);
+    timeoutManagerRef.current.set(key, timeoutId);
+  }, []);
+
+  // Fetch interceptor cleanup
   useEffect(() => {
     return () => {
-      // Cleanup to remove fetch interceptor
+      timeoutManagerRef.current.forEach(clearTimeout);
+      timeoutManagerRef.current.clear();
     };
   }, []);
 
@@ -66,22 +222,20 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
 
   useEffect(() => {
     if (error) {
-      errorTimeoutRef.current = setTimeout(() => {
+      setManagedTimeout('error', () => {
         setError('');
         setFailedUpload(null);
       }, 5000);
     }
-    return () => clearTimeout(errorTimeoutRef.current);
-  }, [error]);
+  }, [error, setManagedTimeout]);
 
   useEffect(() => {
-    const timers = missedDoseAlerts.map((alert) =>
-      setTimeout(() => {
+    missedDoseAlerts.forEach((alert) => {
+      setManagedTimeout(`alert-${alert.id}`, () => {
         setMissedDoseAlerts((prev) => prev.filter((a) => a.id !== alert.id));
-      }, 5000)
-    );
-    return () => timers.forEach(clearTimeout);
-  }, [missedDoseAlerts]);
+      }, 5000);
+    });
+  }, [missedDoseAlerts, setManagedTimeout]);
 
   // Validate user state and fetch patient and doctor data
   useEffect(() => {
@@ -181,6 +335,20 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     };
   }, [firebaseUser, effectiveUserId, effectivePatientId, doctorId, role, navigate]);
 
+  // Insert messages in order to avoid repeated sorting
+  const insertMessageInOrder = useCallback((messages, newMessage) => {
+    const newMessages = [...messages];
+    const insertIndex = newMessages.findIndex(
+      (msg) => newMessage.timestamp.localeCompare(msg.timestamp) < 0
+    );
+    if (insertIndex === -1) {
+      newMessages.push(newMessage);
+    } else {
+      newMessages.splice(insertIndex, 0, newMessage);
+    }
+    return newMessages;
+  }, []);
+
   // Handle Pusher and message fetching with session handling
   useEffect(() => {
     if (!firebaseUser || !languagePreference) return;
@@ -204,8 +372,8 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         }
 
         const data = await response.json();
-        const fetchedMessages = data.messages || [];
-        setMessages(fetchedMessages.sort((a, b) => a.timestamp.localeCompare(b.timestamp)));
+        const fetchedMessages = (data.messages || []).sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+        setMessages(fetchedMessages);
 
         const doctorMessages = fetchedMessages.filter((msg) => msg.sender === 'doctor');
         const latestDiagnosis = doctorMessages
@@ -219,11 +387,10 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         }
       } catch (err) {
         setError(`Error fetching messages: ${err.message}`);
-        if (err.message.includes('404')) {
-          setTimeout(fetchMessages, 2000);
-        }
       }
     };
+
+    const debounceFetchMessages = debounce(fetchMessages, 2000);
 
     try {
       const pusherConfig = {
@@ -259,23 +426,16 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       const channel = pusherRef.current.subscribe(channelName);
 
       channel.bind('new-message', (message) => {
-        setMessages((prev) => {
-          const isDuplicate = prev.some(
-            (msg) =>
-              msg.timestamp === message.timestamp &&
-              msg.sender === message.sender &&
-              msg.text === message.text &&
-              msg.audioUrl === message.audioUrl &&
-              msg.imageUrl === message.imageUrl
-          );
-          if (isDuplicate) {
-            return prev;
-          }
-          return [...prev, message].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-        });
-
-        if (message.sender === 'doctor' && (message.diagnosis || message.prescription)) {
-          validatePrescription(message.diagnosis, message.prescription, message.timestamp);
+        const isDuplicate = messages.some(
+          (msg) =>
+            msg.timestamp === message.timestamp &&
+            msg.sender === message.sender &&
+            msg.text === message.text &&
+            msg.audioUrl === message.audioUrl &&
+            msg.imageUrl === message.imageUrl
+        );
+        if (!isDuplicate) {
+          messageBufferRef.current.push(message);
         }
       });
 
@@ -283,18 +443,43 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         setMissedDoseAlerts((prev) => [...prev, { ...alert, id: Date.now().toString() }]);
       });
 
-      fetchMessages();
+      // Batch Pusher updates
+      const interval = setInterval(() => {
+        if (messageBufferRef.current.length > 0) {
+          setMessages((prev) => {
+            const newMessages = messageBufferRef.current.reduce((acc, msg) => {
+              const isDuplicate = acc.some(
+                (m) =>
+                  m.timestamp === msg.timestamp &&
+                  m.sender === msg.sender &&
+                  m.text === msg.text &&
+                  m.audioUrl === msg.audioUrl &&
+                  m.imageUrl === msg.imageUrl
+              );
+              if (!isDuplicate) {
+                return insertMessageInOrder(acc, msg);
+              }
+              return acc;
+            }, [...prev]);
+            messageBufferRef.current = [];
+            return newMessages;
+          });
+        }
+      }, 500);
+
+      debounceFetchMessages();
+
+      return () => {
+        clearInterval(interval);
+        if (pusherRef.current) {
+          pusherRef.current.unsubscribe(channelName);
+          pusherRef.current.disconnect();
+        }
+      };
     } catch (err) {
       setError('Failed to initialize real-time messaging. Please refresh the page or check your session.');
     }
-
-    return () => {
-      if (pusherRef.current) {
-        pusherRef.current.unsubscribe(`chat-${effectivePatientId}-${doctorId}`);
-        pusherRef.current.disconnect();
-      }
-    };
-  }, [firebaseUser, effectiveUserId, effectivePatientId, doctorId, languagePreference, apiBaseUrl, pusherKey, pusherCluster]);
+  }, [firebaseUser, effectiveUserId, effectivePatientId, doctorId, languagePreference, apiBaseUrl, pusherKey, pusherCluster, insertMessageInOrder, messages]);
 
   // Process prescriptions
   useEffect(() => {
@@ -451,7 +636,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
               notification.close();
             };
 
-            setTimeout(() => {
+            setManagedTimeout(`snooze-${reminder.id}`, () => {
               if (reminder.status === 'pending') handleSnoozeReminder(reminder.id);
             }, 30000);
           }
@@ -462,7 +647,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         handleMissedReminder(reminder.id);
       }
     });
-  }, []);
+  }, [setManagedTimeout]);
 
   const calculateAdherenceRate = useCallback((remindersList) => {
     if (remindersList.length === 0) {
@@ -545,7 +730,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       setMissedDoseAlerts((prev) => [...prev, { id: alertRef.id, ...alertData }]);
     } catch (err) {
       setError(`Failed to send missed dose alert: ${err.message}. Retrying in 5 seconds...`);
-      setTimeout(sendMissedDoseAlert, 5000);
+      setManagedTimeout('sendMissedDoseAlert', sendMissedDoseAlert, 5000);
     }
   };
 
@@ -674,7 +859,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         [timestamp]: `Error validating prescription: ${error.message}. Retrying in 5 seconds...`,
       }));
       const notificationMessage = `Error validating prescription: ${error.message} (Diagnosis: ${diagnosis}, Medicine: ${medicine}, Patient: ${profileData?.name || 'Unknown Patient'}, Doctor: ${doctorName})`;
-      setTimeout(() => validatePrescription(diagnosis, prescription, timestamp), 5000);
+      setManagedTimeout(`validate-${timestamp}`, () => validatePrescription(diagnosis, prescription, timestamp), 5000);
       await notifyAdmin(
         profileData?.name || 'Unknown Patient',
         doctorName,
@@ -745,19 +930,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           throw new Error(`Failed to save message: ${saveResponse.status} - ${errorData.message || 'Unknown error'}`);
         }
         const data = await saveResponse.json();
-        setMessages((prev) => {
-          const isDuplicate = prev.some(
-            (msg) =>
-              msg.timestamp === data.newMessage.timestamp &&
-              msg.sender === data.newMessage.sender &&
-              msg.text === data.newMessage.text &&
-              msg.audioUrl === data.newMessage.audioUrl
-          );
-          if (isDuplicate) {
-            return prev;
-          }
-          return [...prev, data.newMessage].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-        });
+        setMessages((prev) => insertMessageInOrder(prev, data.newMessage));
       } catch (err) {
         attempts--;
         if (attempts > 0) {
@@ -844,19 +1017,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
             throw new Error(`Failed to save message: ${response.status} - ${errorData.message || 'Unknown error'}`);
           }
           const data = await response.json();
-          setMessages((prev) => {
-            const isDuplicate = prev.some(
-              (msg) =>
-                msg.timestamp === data.newMessage.timestamp &&
-                msg.sender === data.newMessage.sender &&
-                msg.text === data.newMessage.text &&
-                msg.audioUrl === data.newMessage.audioUrl
-            );
-            if (isDuplicate) {
-              return prev;
-            }
-            return [...prev, data.newMessage].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-          });
+          setMessages((prev) => insertMessageInOrder(prev, data.newMessage));
         } catch (err) {
           setError(`Failed to process audio: ${err.message}`);
           setFailedUpload({ audioBlob, language: normalizedTranscriptionLanguage });
@@ -953,16 +1114,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
 
       setMessages((prev) => {
         const filteredMessages = prev.filter((msg) => msg.tempMessageId !== tempMessageId);
-        const isDuplicate = filteredMessages.some(
-          (msg) =>
-            msg.timestamp === data.newMessage.timestamp &&
-            msg.imageUrl === data.newMessage.imageUrl &&
-            msg.sender === data.newMessage.sender
-        );
-        if (isDuplicate) {
-          return filteredMessages;
-        }
-        return [...filteredMessages, data.newMessage].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+        return insertMessageInOrder(filteredMessages, data.newMessage);
       });
     } catch (err) {
       setError(err.message);
@@ -1044,6 +1196,9 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     }
   };
 
+  const readAloudEnglish = useCallback((text) => readAloud(text, 'en'), [readAloud]);
+  const readAloudKannada = useCallback((text) => readAloud(text, 'kn'), [readAloud]);
+
   const handleSendText = async () => {
     if (!firebaseUser) {
       setError('User authentication failed. Please log in again.');
@@ -1064,12 +1219,6 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       userId: effectivePatientId,
     };
 
-    setMessages((prev) => {
-      if (!prev.some((msg) => msg.timestamp === message.timestamp && msg.text === message.text)) {
-        return [...prev, message].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-      }
-      return prev;
-    });
     setTextInput('');
 
     try {
@@ -1090,15 +1239,11 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         throw new Error(`Failed to save text message: ${response.status} - ${errorData.message || 'Unknown error'}`);
       }
       const data = await response.json();
-      setMessages((prev) =>
-        [...prev.filter((msg) => msg.timestamp !== message.timestamp), data.newMessage].sort((a, b) =>
-          a.timestamp.localeCompare(b.timestamp)
-        )
-      );
+      setMessages((prev) => insertMessageInOrder(prev, data.newMessage));
     } catch (err) {
       setError(`Failed to save text message: ${err.message}`);
       if (err.message.includes('404')) {
-        setTimeout(() => handleSendText(), 2000);
+        setManagedTimeout('handleSendText', handleSendText, 2000);
       }
     }
   };
@@ -1121,13 +1266,6 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       userId: effectivePatientId,
     };
 
-    setMessages((prev) => {
-      if (!prev.some((msg) => msg.timestamp === message.timestamp && msg.text === message.text)) {
-        return [...prev, message].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-      }
-      return prev;
-    });
-
     try {
       const postUrl = `${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`;
       const idToken = await firebaseUser.getIdToken(true);
@@ -1146,11 +1284,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         throw new Error(`Failed to save quick reply message: ${response.status} - ${errorData.message || 'Unknown error'}`);
       }
       const data = await response.json();
-      setMessages((prev) =>
-        [...prev.filter((msg) => msg.timestamp !== message.timestamp), data.newMessage].sort((a, b) =>
-          a.timestamp.localeCompare(b.timestamp)
-        )
-      );
+      setMessages((prev) => insertMessageInOrder(prev, data.newMessage));
     } catch (err) {
       setError(`Failed to save quick reply message: ${err.message}`);
     }
@@ -1183,6 +1317,27 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       setError('Failed to log out. Please try again.');
     }
   };
+
+  const setMenuProfile = useCallback(() => {
+    setActiveMenuOption('profile');
+    setMenuOpen(false);
+  }, []);
+
+  const setMenuReminders = useCallback(() => {
+    setActiveMenuOption('reminders');
+    setMenuOpen(false);
+  }, []);
+
+  const setMenuRecommendations = useCallback(() => {
+    setActiveMenuOption('recommendations');
+    setMenuOpen(false);
+  }, []);
+
+  const setLangKannada = useCallback(() => setTranscriptionLanguage('kn'), []);
+  const setLangEnglish = useCallback(() => setTranscriptionLanguage('en'), []);
+
+  const handleQuickReplyLetsDoIt = useCallback(() => handleQuickReply("Let's do it"), [handleQuickReply]);
+  const handleQuickReplyGreat = useCallback(() => handleQuickReply('Great!'), [handleQuickReply]);
 
   if (languagePreference === null || transcriptionLanguage === null) {
     return (
@@ -1228,28 +1383,19 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           </div>
           <ul className="menu-list">
             <li
-              onClick={() => {
-                setActiveMenuOption('profile');
-                setMenuOpen(false);
-              }}
+              onClick={setMenuProfile}
               className={activeMenuOption === 'profile' ? 'active' : ''}
             >
               View Profile
             </li>
             <li
-              onClick={() => {
-                setActiveMenuOption('reminders');
-                setMenuOpen(false);
-              }}
+              onClick={setMenuReminders}
               className={activeMenuOption === 'reminders' ? 'active' : ''}
             >
               Reminders
             </li>
             <li
-              onClick={() => {
-                setActiveMenuOption('recommendations');
-                setMenuOpen(false);
-              }}
+              onClick={setMenuRecommendations}
               className={activeMenuOption === 'recommendations' ? 'active' : ''}
             >
               Doctor's Recommendations
@@ -1435,136 +1581,15 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
               )}
               {messages.length === 0 && <p className="no-messages">No messages yet.</p>}
               {messages.map((msg, index) => (
-                <div
+                <MessageItem
                   key={`${msg.timestamp}-${index}`}
-                  className={`message ${msg.sender === 'patient' ? 'patient-message' : 'doctor-message'}`}
-                >
-                  <div className="message-content">
-                    {msg.sender === 'patient' && msg.audioUrl && (
-                      <>
-                        {msg.recordingLanguage === 'en-US' ? (
-                          <div className="message-block">
-                            <p className="primary-text">{msg.text || 'No transcription'}</p>
-                            <div className="audio-container">
-                              <audio controls src={msg.audioUrl} onError={() => setError('Failed to load audio. It may be inaccessible or unsupported.')} />
-                              <div className="read-aloud-container">
-                                <button
-                                  onClick={() => readAloud(msg.text, 'en')}
-                                  className="read-aloud-button english"
-                                >
-                                  🔊 English
-                                </button>
-                              </div>
-                              <a href={msg.audioUrl} download className="download-link">
-                                Download Audio
-                              </a>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="message-block">
-                            <p className="primary-text">{msg.text || 'No transcription'}</p>
-                            {msg.translatedText && <p className="translated-text">English: {msg.translatedText}</p>}
-                            <div className="audio-container">
-                              <audio controls src={msg.audioUrl} onError={() => setError('Failed to load audio. It may be inaccessible or unsupported.')} />
-                              <div className="read-aloud-container">
-                                <button
-                                  onClick={() => readAloud(msg.text, 'kn')}
-                                  className="read-aloud-button kannada"
-                                >
-                                  🔊 Kannada
-                                </button>
-                                <button
-                                  onClick={() => readAloud(msg.translatedText || msg.text, 'en')}
-                                  className="read-aloud-button english"
-                                >
-                                  🔊 English
-                                </button>
-                              </div>
-                              <a href={msg.audioUrl} download className="download-link">
-                                Download Audio
-                              </a>
-                            </div>
-                          </div>
-                        )}
-                      </>
-                    )}
-                    {msg.sender === 'patient' && !msg.audioUrl && (
-                      <div className="message-block">
-                        <p className="primary-text">{msg.text || 'No transcription'}</p>
-                      </div>
-                    )}
-                    {msg.sender === 'doctor' && (
-                      <div className="message-block">
-                        {msg.diagnosis || msg.prescription ? (
-                          <>
-                            <p className="primary-text">Doctor has provided a recommendation</p>
-                            {msg.diagnosis && (
-                              <p className="primary-text">
-                                <strong>Diagnosis:</strong>{' '}
-                                {languagePreference === 'kn' ? (msg.translatedDiagnosis || msg.diagnosis) : msg.diagnosis}
-                              </p>
-                            )}
-                            {msg.prescription && (
-                              <p className="primary-text">
-                                <strong>Prescription:</strong>{' '}
-                                {typeof msg.prescription === 'object'
-                                  ? `${msg.prescription.medicine}, ${msg.prescription.dosage}, ${msg.prescription.frequency}, ${msg.prescription.duration}`
-                                  : msg.prescription}
-                              </p>
-                            )}
-                          </>
-                        ) : (
-                          <>
-                            {languagePreference === 'en' ? (
-                              <p className="primary-text">{msg.text || 'No message content'}</p>
-                            ) : (
-                              <>
-                                <p className="primary-text">{msg.text || 'No message content'}</p>
-                                {msg.translatedText && <p className="translated-text">English: {msg.translatedText}</p>}
-                              </>
-                            )}
-                          </>
-                        )}
-                        {msg.audioUrl && (
-                          <div className="audio-container">
-                            <audio controls src={msg.audioUrl} onError={() => setError('Failed to load audio. It may be inaccessible or unsupported.')} />
-                            <div className="read-aloud-container">
-                              {languagePreference === 'en' ? (
-                                <button
-                                  onClick={() => readAloud(msg.text, 'en')}
-                                  className="read-aloud-button english"
-                                >
-                                  🔊 English
-                                </button>
-                              ) : (
-                                <>
-                                  <button
-                                    onClick={() => readAloud(msg.text, 'kn')}
-                                    className="read-aloud-button kannada"
-                                  >
-                                    🔊 Kannada
-                                  </button>
-                                  <button
-                                    onClick={() => readAloud(msg.translatedText || msg.text, 'en')}
-                                    className="read-aloud-button english"
-                                  >
-                                    🔊 English
-                                  </button>
-                                </>
-                              )}
-                            </div>
-                            <a href={msg.audioUrl} download className="download-link">
-                              Download Audio
-                            </a>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                    {msg.imageUrl && <img src={msg.imageUrl} alt="Patient upload" className="chat-image" />}
-                    {msg.audioError && <p className="audio-error">{msg.audioError}</p>}
-                    <span className="timestamp">{new Date(msg.timestamp).toLocaleTimeString('en-US', { hour12: true })}</span>
-                  </div>
-                </div>
+                  msg={msg}
+                  index={index}
+                  languagePreference={languagePreference}
+                  readAloudEnglish={readAloudEnglish}
+                  readAloudKannada={readAloudKannada}
+                  setError={setError}
+                />
               ))}
               <div ref={messagesEndRef} />
             </div>
@@ -1589,13 +1614,13 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
               <div className="controls-row">
                 <div className="language-buttons">
                   <button
-                    onClick={() => setTranscriptionLanguage('kn')}
+                    onClick={setLangKannada}
                     className={transcriptionLanguage === 'kn' ? 'active-lang' : ''}
                   >
                     Kannada
                   </button>
                   <button
-                    onClick={() => setTranscriptionLanguage('en')}
+                    onClick={setLangEnglish}
                     className={transcriptionLanguage === 'en' ? 'active-lang' : ''}
                   >
                     English
@@ -1639,8 +1664,8 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                   </button>
                 </div>
                 <div className="quick-replies">
-                  <button onClick={() => handleQuickReply("Let's do it")}>Let's do it</button>
-                  <button onClick={() => handleQuickReply('Great!')}>Great!</button>
+                  <button onClick={handleQuickReplyLetsDoIt}>Let's do it</button>
+                  <button onClick={handleQuickReplyGreat}>Great!</button>
                 </div>
               </div>
             </div>
