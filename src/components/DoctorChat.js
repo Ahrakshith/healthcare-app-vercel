@@ -587,15 +587,16 @@ function DoctorChat({ user, role, handleLogout, setError }) {
         setLoadingAudio(true);
         let transcriptionResult;
         let transcribedText;
-        let translatedText = null;
+        let translatedTextKn = null;
+        let translatedTextEn = null;
         let audioUrl;
         let audioUrlEn;
         let audioUrlKn = null;
 
         try {
           const idToken = await getIdToken();
-          // Transcribe based on the recording language (default to 'en-US' but allow detection)
-          transcriptionResult = await transcribeAudio(audioBlob, 'auto', user.uid, idToken); // 'auto' to detect language
+          // Transcribe with language detection
+          transcriptionResult = await transcribeAudio(audioBlob, 'auto', user.uid, idToken);
           audioUrl = transcriptionResult.audioUrl;
           if (!audioUrl) {
             const errorMsg = 'Transcription succeeded, but no audio URL was returned.';
@@ -606,17 +607,18 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           }
 
           transcribedText = transcriptionResult.transcription || 'Transcription failed';
-          const recordingLanguage = transcriptionResult.detectedLanguage || 'en'; // Assume 'en' if not detected
+          const recordingLanguage = transcriptionResult.detectedLanguage || 'en';
           console.log('Transcription result:', { transcribedText, recordingLanguage });
 
-          // Translate based on patient's language preference
-          if (languagePreference === 'kn') {
-            translatedText = await translateText(transcribedText, recordingLanguage, 'kn', user.uid, idToken);
-            audioUrlKn = await textToSpeechConvert(translatedText, 'kn-IN', user.uid, idToken);
-            audioUrlEn = await textToSpeechConvert(transcribedText, 'en-US', user.uid, idToken);
+          // Translate based on recording language and patient preference
+          if (recordingLanguage === 'kn' || languagePreference === 'kn') {
+            translatedTextKn = await translateText(transcribedText, recordingLanguage, 'kn', user.uid, idToken);
+            translatedTextEn = await translateText(transcribedText, recordingLanguage, 'en', user.uid, idToken);
+            audioUrlKn = await textToSpeechConvert(translatedTextKn, 'kn-IN', user.uid, idToken);
+            audioUrlEn = await textToSpeechConvert(translatedTextEn, 'en-US', user.uid, idToken);
           } else {
-            translatedText = transcribedText; // No translation needed for 'en'
-            audioUrlEn = await textToSpeechConvert(transcribedText, 'en-US', user.uid, idToken);
+            translatedTextEn = transcribedText; // No translation needed for English recording
+            audioUrlEn = await textToSpeechConvert(translatedTextEn, 'en-US', user.uid, idToken);
           }
         } catch (err) {
           const errorMsg = `Failed to process audio: ${err.message}`;
@@ -628,11 +630,11 @@ function DoctorChat({ user, role, handleLogout, setError }) {
         }
 
         const message = {
-          sender: 'doctor',
-          text: languagePreference === 'kn' ? translatedText : transcribedText,
-          translatedText: languagePreference === 'kn' ? transcribedText : null,
+          sender: msg.sender || 'doctor',
+          text: languagePreference === 'en' && recordingLanguage === 'en' ? translatedTextEn : translatedTextKn,
+          translatedText: languagePreference === 'en' && recordingLanguage === 'en' ? null : translatedTextEn,
           language: 'en', // Doctor's fixed language
-          recordingLanguage: transcriptionResult.detectedLanguage || 'en',
+          recordingLanguage: recordingLanguage,
           audioUrl,
           audioUrlEn,
           audioUrlKn,
@@ -699,7 +701,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
     const message = {
       sender: 'doctor',
       text: newMessage,
-      translatedText: null,
+      translatedText: languagePreference === 'kn' ? await translateText(newMessage, 'en', 'kn', user.uid, await getIdToken()) : null,
       language: 'en',
       recordingLanguage: 'en',
       audioUrl: null,
@@ -734,7 +736,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
       setLoadingAudio(false);
       console.log('Finished sending message');
     }
-  }, [newMessage, selectedPatientId, user?.uid, doctorId, apiBaseUrl, setError]);
+  }, [newMessage, selectedPatientId, user?.uid, doctorId, apiBaseUrl, languagePreference, setError]);
 
   const sendAction = useCallback(
     async () => {
@@ -1092,10 +1094,8 @@ function DoctorChat({ user, role, handleLogout, setError }) {
                                       onError={() => console.error(`Failed to load image: ${msg.imageUrl}`)}
                                     />
                                   )}
-                                  <p className="primary-text">{msg.translatedText || msg.text || 'No transcription'}</p>
-                                  {msg.text !== msg.translatedText && msg.text && (
-                                    <p className="translated-text">English: {msg.text}</p>
-                                  )}
+                                  <p className="primary-text">{msg.translatedTextKn || msg.text || 'No transcription'}</p>
+                                  <p className="translated-text">English: {msg.translatedTextEn || msg.text || 'No translation'}</p>
                                   {msg.audioUrl && (
                                     <div className="audio-container">
                                       <audio controls aria-label="Patient audio message">
@@ -1104,20 +1104,20 @@ function DoctorChat({ user, role, handleLogout, setError }) {
                                       </audio>
                                     </div>
                                   )}
-                                  {(msg.text || msg.translatedText) && (
+                                  {(msg.translatedTextKn || msg.translatedTextEn) && (
                                     <div className="read-aloud-buttons">
-                                      {msg.translatedText && (
+                                      {msg.translatedTextKn && (
                                         <button
-                                          onClick={() => readAloud(msg.translatedText, 'kn', msg.sender)}
+                                          onClick={() => readAloud(msg.translatedTextKn, 'kn', msg.sender)}
                                           className="read-aloud-button"
                                           aria-label="Read aloud in Kannada"
                                         >
                                           🔊 (Kannada)
                                         </button>
                                       )}
-                                      {(msg.text || msg.translatedText) && (
+                                      {msg.translatedTextEn && (
                                         <button
-                                          onClick={() => readAloud(msg.text || msg.translatedText, 'en', msg.sender)}
+                                          onClick={() => readAloud(msg.translatedTextEn, 'en', msg.sender)}
                                           className="read-aloud-button"
                                           aria-label="Read aloud in English"
                                         >
@@ -1141,10 +1141,8 @@ function DoctorChat({ user, role, handleLogout, setError }) {
                                 <>
                                   {languagePreference === 'kn' ? (
                                     <>
-                                      <p className="primary-text">{msg.translatedText || msg.text}</p>
-                                      {msg.text !== msg.translatedText && msg.text && (
-                                        <p className="translated-text">English: {msg.text}</p>
-                                      )}
+                                      <p className="primary-text">{msg.translatedTextKn || msg.text}</p>
+                                      <p className="translated-text">English: {msg.translatedTextEn || msg.text}</p>
                                     </>
                                   ) : (
                                     <p className="primary-text">{msg.text}</p>
@@ -1159,9 +1157,9 @@ function DoctorChat({ user, role, handleLogout, setError }) {
                                   )}
                                   {msg.text && (
                                     <div className="read-aloud-buttons">
-                                      {languagePreference === 'kn' && msg.translatedText && (
+                                      {languagePreference === 'kn' && msg.translatedTextKn && (
                                         <button
-                                          onClick={() => readAloud(msg.translatedText, 'kn', msg.sender)}
+                                          onClick={() => readAloud(msg.translatedTextKn, 'kn', msg.sender)}
                                           className="read-aloud-button"
                                           aria-label="Read aloud in Kannada"
                                         >
