@@ -1389,7 +1389,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                   {reminders
                     .sort((a, b) => new Date(a.scheduledTime) - new Date(b.scheduledTime))
                     .map((reminder) => (
-                      <div key={reminder.id} className="message-row">
+                      <div key={reminder.id} className="table-row">
                         <span>{reminder.medicine}</span>
                         <span>{reminder.dosage}</span>
                         <span>{new Date(reminder.scheduledTime).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) + ' ' + new Date(reminder.scheduledTime).toLocaleTimeString('en-US', { hour12: true })}</span>
