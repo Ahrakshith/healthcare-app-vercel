@@ -34,7 +34,6 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   const [missedDoseAlerts, setMissedDoseAlerts] = useState([]);
   const [doctorPrompt, setDoctorPrompt] = useState(null);
   const [doctorName, setDoctorName] = useState('Unknown Doctor');
-  const [recordingLanguage, setRecordingLanguage] = useState(null); // Handles toggled recording language
   const audioChunksRef = useRef([]);
   const streamRef = useRef(null);
   const pusherRef = useRef(null);
@@ -130,7 +129,6 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           const pref = data.languagePreference || 'en';
           setLanguagePreference(pref);
           setTranscriptionLanguage(pref);
-          setRecordingLanguage(pref); // Initialize recording language with preference
           setProfileData({
             name: data.name || 'Unknown Patient',
             patientId: effectivePatientId,
@@ -339,6 +337,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   useEffect(() => {
     const doctorMessages = messages.filter((msg) => msg.sender === 'doctor' && msg.prescription);
     if (doctorMessages.length > 0) {
+      // Process all prescriptions, not just the latest
       doctorMessages.forEach((msg) => {
         console.log('Processing prescription:', msg.prescription, 'at timestamp:', msg.timestamp);
         setupMedicationSchedule(msg.prescription, msg.timestamp);
@@ -368,6 +367,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       return;
     }
 
+    // Step 1: Parse the Prescription
     let medicine, dosage, times, durationDays, timesStr;
 
     if (typeof prescription === 'object') {
@@ -400,6 +400,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       return;
     }
 
+    // Convert times to 24-hour format
     const parseTime = (timeStr) => {
       const cleanTimeStr = timeStr.replace('.', ':');
       const [time, period] = cleanTimeStr.split(/\s*(AM|PM)/i);
@@ -411,33 +412,37 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
 
     const timeSchedules = times.map(parseTime);
 
+    // Step 2: Generate Reminder Schedule
     const issuanceTime = new Date(issuanceTimestamp);
     let startDate = new Date(issuanceTime);
 
+    // Always start from the next day for consistency with UI behavior
     startDate.setDate(startDate.getDate() + 1);
-    startDate.setHours(0, 0, 0, 0);
+    startDate.setHours(0, 0, 0, 0); // Reset to midnight for consistent date handling
 
     const newReminders = [];
     let dosesScheduled = 0;
 
+    // Loop for the number of days in duration
     for (let dayOffset = 0; dayOffset < days; dayOffset++) {
       const currentDate = new Date(startDate);
       currentDate.setDate(startDate.getDate() + dayOffset);
-      const dateStr = currentDate.toISOString().split('T')[0];
+      const dateStr = currentDate.toISOString().split('T')[0]; // e.g., '2025-04-30'
 
       for (let i = 0; i < timeSchedules.length; i++) {
         const time = timeSchedules[i];
-        const timeStr = times[i];
+        const timeStr = times[i]; // Original time string for ID generation
 
         const scheduledDate = new Date(currentDate);
         scheduledDate.setHours(time.hours, time.minutes, 0, 0);
 
+        // Only include doses that are in the future relative to the current time
         const now = new Date();
         if (scheduledDate <= now) {
           continue;
         }
 
-        const reminderId = `${medicine}_${dateStr}_${timeStr.replace(/[:.\s]/g, '-')}`;
+        const reminderId = `${medicine}_${dateStr}_${timeStr.replace(/[:.\s]/g, '-')}`; // Deterministic ID
         const reminderRef = doc(db, `patients/${effectivePatientId}/reminders`, reminderId);
         const reminder = {
           medicine,
@@ -469,6 +474,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
 
     if (newReminders.length > 0) {
       setReminders((prev) => {
+        // Filter out existing reminders for this medicine to avoid duplicates, then append new ones
         const otherReminders = prev.filter((r) => !r.id.startsWith(medicine));
         const updatedReminders = [...otherReminders, ...newReminders];
         return updatedReminders.sort((a, b) => new Date(a.scheduledTime) - new Date(b.scheduledTime));
@@ -631,7 +637,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       if (!reminder) return;
 
       const newSnoozeCount = (reminder.snoozeCount || 0) + 1;
-      const snoozeTime = new Date(new Date(reminder.scheduledTime).getTime() + 10 * 60 * 1000);
+      const snoozeTime = new Date(new Date(reminder.scheduledTime).getTime() + 10 * 60 * 1000); // 10 minutes as per algorithm
 
       const updatedReminders = reminders.map((r) =>
         r.id === id
@@ -865,46 +871,33 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           return;
         }
 
-        const normalizedRecordingLanguage = normalizeLanguageCode(recordingLanguage);
+        const normalizedTranscriptionLanguage = normalizeLanguageCode(transcriptionLanguage);
         let text, translatedText = null;
-        let audioUrlEn = null, audioUrlKn = null;
 
         try {
           const idToken = await firebaseUser.getIdToken(true);
           if (!idToken || typeof idToken !== 'string' || idToken.trim() === '') {
             throw new Error('Invalid idToken: Must be a non-empty string.');
           }
-          const transcriptionResult = await transcribeAudio(audioBlob, normalizedRecordingLanguage, effectiveUserId, idToken);
-          if (!transcriptionResult.audioUrl) {
-            throw new Error('Transcription succeeded, but no audio URL was returned.');
-          }
-
+          const transcriptionResult = await transcribeAudio(audioBlob, normalizedTranscriptionLanguage, effectiveUserId, idToken);
           text = transcriptionResult.transcription || 'Transcription failed';
 
-          if (normalizedRecordingLanguage === 'kn-IN') {
-            translatedText = transcriptionResult.translatedText || await translateText(text, 'kn', 'en', effectiveUserId, idToken);
-            audioUrlKn = await textToSpeechConvert(text, 'kn-IN', effectiveUserId, idToken);
-            audioUrlEn = await textToSpeechConvert(translatedText, 'en-US', effectiveUserId, idToken);
-          } else {
-            translatedText = languagePreference === 'kn' ? await translateText(text, 'en', 'kn', effectiveUserId, idToken) : null;
-            audioUrlEn = await textToSpeechConvert(text, 'en-US', effectiveUserId, idToken);
-            if (languagePreference === 'kn') {
-              audioUrlKn = await textToSpeechConvert(translatedText, 'kn-IN', effectiveUserId, idToken);
-            }
+          if (normalizedTranscriptionLanguage === 'kn-IN') {
+            translatedText = transcriptionResult.translatedText || await translateText(text, 'kn-IN', 'en-US', effectiveUserId);
+          } else if (normalizedTranscriptionLanguage === 'en-US' && languagePreference === 'kn') {
+            translatedText = await translateText(text, 'en-US', 'kn-IN', effectiveUserId);
           }
 
           const message = {
             sender: 'patient',
-            text: text,
-            translatedText: translatedText,
+            text,
+            translatedText,
             timestamp: new Date().toISOString(),
-            language: languagePreference,
-            recordingLanguage: normalizedRecordingLanguage,
+            language: normalizedTranscriptionLanguage,
+            recordingLanguage: normalizedTranscriptionLanguage,
             doctorId,
             userId: effectivePatientId,
             audioUrl: transcriptionResult.audioUrl,
-            audioUrlEn,
-            audioUrlKn,
           };
 
           const formData = new FormData();
@@ -944,7 +937,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         } catch (err) {
           console.error('Audio processing failed:', err);
           setError(`Failed to process audio: ${err.message}`);
-          setFailedUpload({ audioBlob, language: normalizedRecordingLanguage });
+          setFailedUpload({ audioBlob, language: normalizedTranscriptionLanguage });
         }
 
         if (streamRef.current) {
@@ -1148,16 +1141,10 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
 
     if (!textInput.trim()) return;
 
-    let translatedText = null;
-    if (languagePreference === 'kn') {
-      const idToken = await firebaseUser.getIdToken(true);
-      translatedText = await translateText(textInput, 'en', 'kn', effectiveUserId, idToken);
-    }
-
     const message = {
       sender: 'patient',
       text: textInput,
-      translatedText: translatedText,
+      translatedText: null,
       timestamp: new Date().toISOString(),
       language: 'en',
       recordingLanguage: 'en',
@@ -1214,16 +1201,10 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       return;
     }
 
-    let translatedText = null;
-    if (languagePreference === 'kn') {
-      const idToken = await firebaseUser.getIdToken(true);
-      translatedText = await translateText(replyText, 'en', 'kn', effectiveUserId, idToken);
-    }
-
     const message = {
       sender: 'patient',
       text: replyText,
-      translatedText: translatedText,
+      translatedText: null,
       timestamp: new Date().toISOString(),
       language: 'en',
       recordingLanguage: 'en',
@@ -1299,7 +1280,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     }
   };
 
-  if (languagePreference === null || recordingLanguage === null) {
+  if (languagePreference === null || transcriptionLanguage === null) {
     return (
       <div className="loading-container">
         <p>Loading language preference...</p>
@@ -1557,89 +1538,57 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                   className={`message ${msg.sender === 'patient' ? 'patient-message' : 'doctor-message'}`}
                 >
                   <div className="message-content">
-                    {msg.sender === 'patient' && (
+                    {msg.sender === 'patient' && msg.audioUrl && (
                       <>
-                        {msg.imageUrl && <img src={msg.imageUrl} alt="Patient upload" className="chat-image" />}
                         {msg.recordingLanguage === 'en-US' ? (
                           <div className="message-block">
                             <p className="primary-text">{msg.text || 'No transcription'}</p>
-                            {msg.audioUrl && (
-                              <div className="audio-container">
-                                <audio controls src={msg.audioUrl} onError={() => setError('Failed to load audio. It may be inaccessible or unsupported.')} />
-                                {(msg.audioUrlEn || msg.text) && (
-                                  <div className="read-aloud-container">
-                                    <button
-                                      onClick={() => readAloud(msg.text, 'en')}
-                                      className="read-aloud-button english"
-                                    >
-                                      🔊 English
-                                    </button>
-                                  </div>
-                                )}
-                                <a href={msg.audioUrl} download className="download-link">
-                                  Download Audio
-                                </a>
+                            <div className="audio-container">
+                              <audio controls src={msg.audioUrl} onError={() => setError('Failed to load audio. It may be inaccessible or unsupported.')} />
+                              <div className="read-aloud-container">
+                                <button
+                                  onClick={() => readAloud(msg.text, 'en')}
+                                  className="read-aloud-button english"
+                                >
+                                  🔊 English
+                                </button>
                               </div>
-                            )}
+                              <a href={msg.audioUrl} download className="download-link">
+                                Download Audio
+                              </a>
+                            </div>
                           </div>
                         ) : (
                           <div className="message-block">
                             <p className="primary-text">{msg.text || 'No transcription'}</p>
                             {msg.translatedText && <p className="translated-text">English: {msg.translatedText}</p>}
-                            {msg.audioUrl && (
-                              <div className="audio-container">
-                                <audio controls src={msg.audioUrl} onError={() => setError('Failed to load audio. It may be inaccessible or unsupported.')} />
-                                <div className="read-aloud-container">
-                                  {(msg.audioUrlKn || msg.text) && (
-                                    <button
-                                      onClick={() => readAloud(msg.text, 'kn')}
-                                      className="read-aloud-button kannada"
-                                    >
-                                      🔊 Kannada
-                                    </button>
-                                  )}
-                                  {(msg.audioUrlEn || msg.translatedText) && (
-                                    <button
-                                      onClick={() => readAloud(msg.translatedText || msg.text, 'en')}
-                                      className="read-aloud-button english"
-                                    >
-                                      🔊 English
-                                    </button>
-                                  )}
-                                </div>
-                                <a href={msg.audioUrl} download className="download-link">
-                                  Download Audio
-                                </a>
+                            <div className="audio-container">
+                              <audio controls src={msg.audioUrl} onError={() => setError('Failed to load audio. It may be inaccessible or unsupported.')} />
+                              <div className="read-aloud-container">
+                                <button
+                                  onClick={() => readAloud(msg.text, 'kn')}
+                                  className="read-aloud-button kannada"
+                                >
+                                  🔊 Kannada
+                                </button>
+                                <button
+                                  onClick={() => readAloud(msg.translatedText || msg.text, 'en')}
+                                  className="read-aloud-button english"
+                                >
+                                  🔊 English
+                                </button>
                               </div>
-                            )}
+                              <a href={msg.audioUrl} download className="download-link">
+                                Download Audio
+                              </a>
+                            </div>
                           </div>
                         )}
                       </>
                     )}
-                    {msg.sender === 'patient' && !msg.audioUrl && !msg.imageUrl && (
+                    {msg.sender === 'patient' && !msg.audioUrl && (
                       <div className="message-block">
                         <p className="primary-text">{msg.text || 'No transcription'}</p>
-                        {languagePreference === 'kn' && msg.translatedText && (
-                          <p className="translated-text">Kannada: {msg.translatedText}</p>
-                        )}
-                        {(msg.text || msg.translatedText) && (
-                          <div className="read-aloud-container">
-                            {languagePreference === 'kn' && msg.translatedText && (
-                              <button
-                                onClick={() => readAloud(msg.translatedText, 'kn')}
-                                className="read-aloud-button kannada"
-                              >
-                                🔊 Kannada
-                              </button>
-                            )}
-                            <button
-                              onClick={() => readAloud(msg.text, 'en')}
-                              className="read-aloud-button english"
-                            >
-                              🔊 English
-                            </button>
-                          </div>
-                        )}
                       </div>
                     )}
                     {msg.sender === 'doctor' && (
@@ -1651,88 +1600,65 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                               <p className="primary-text">
                                 <strong>Diagnosis:</strong>{' '}
                                 {languagePreference === 'kn' ? (msg.translatedDiagnosis || msg.diagnosis) : msg.diagnosis}
-                                <button
-                                  onClick={() => readAloud(languagePreference === 'kn' ? (msg.translatedDiagnosis || msg.diagnosis) : msg.diagnosis, languagePreference === 'kn' ? 'kn' : 'en')}
-                                  className="read-aloud-button"
-                                >
-                                  🔊
-                                </button>
                               </p>
                             )}
                             {msg.prescription && (
                               <p className="primary-text">
                                 <strong>Prescription:</strong>{' '}
-                                {languagePreference === 'kn' ? (msg.translatedPrescription || `${msg.prescription.medicine}, ${msg.prescription.dosage}, ${msg.prescription.frequency}, ${msg.prescription.duration}`) : `${msg.prescription.medicine}, ${msg.prescription.dosage}, ${msg.prescription.frequency}, ${msg.prescription.duration}`}
-                                <button
-                                  onClick={() => readAloud(languagePreference === 'kn' ? (msg.translatedPrescription || `${msg.prescription.medicine}, ${msg.prescription.dosage}, ${msg.prescription.frequency}, ${msg.prescription.duration}`) : `${msg.prescription.medicine}, ${msg.prescription.dosage}, ${msg.prescription.frequency}, ${msg.prescription.duration}`, languagePreference === 'kn' ? 'kn' : 'en')}
-                                  className="read-aloud-button"
-                                >
-                                  🔊
-                                </button>
+                                {typeof msg.prescription === 'object'
+                                  ? `${msg.prescription.medicine}, ${msg.prescription.dosage}, ${msg.prescription.frequency}, ${msg.prescription.duration}`
+                                  : msg.prescription}
                               </p>
                             )}
                           </>
                         ) : (
                           <>
                             {languagePreference === 'en' ? (
-                              <>
-                                <p className="primary-text">{msg.text || 'No message content'}</p>
-                                {msg.audioUrl && (
-                                  <div className="audio-container">
-                                    <audio controls src={msg.audioUrl} onError={() => setError('Failed to load audio. It may be inaccessible or unsupported.')} />
-                                    <div className="read-aloud-container">
-                                      {(msg.audioUrlEn || msg.text) && (
-                                        <button
-                                          onClick={() => readAloud(msg.text, 'en')}
-                                          className="read-aloud-button english"
-                                        >
-                                          🔊 English
-                                        </button>
-                                      )}
-                                    </div>
-                                    <a href={msg.audioUrl} download className="download-link">
-                                      Download Audio
-                                    </a>
-                                  </div>
-                                )}
-                              </>
+                              <p className="primary-text">{msg.text || 'No message content'}</p>
                             ) : (
                               <>
-                                <p className="primary-text">{msg.translatedText || msg.text || 'No message content'}</p>
-                                {msg.text && <p className="translated-text">English: {msg.text}</p>}
-                                {msg.audioUrl && (
-                                  <div className="audio-container">
-                                    <audio controls src={msg.audioUrl} onError={() => setError('Failed to load audio. It may be inaccessible or unsupported.')} />
-                                    <div className="read-aloud-container">
-                                      {(msg.audioUrlKn || msg.translatedText) && (
-                                        <button
-                                          onClick={() => readAloud(msg.translatedText || msg.text, 'kn')}
-                                          className="read-aloud-button kannada"
-                                        >
-                                          🔊 Kannada
-                                        </button>
-                                      )}
-                                      {(msg.audioUrlEn || msg.text) && (
-                                        <button
-                                          onClick={() => readAloud(msg.text || msg.translatedText, 'en')}
-                                          className="read-aloud-button english"
-                                        >
-                                          🔊 English
-                                        </button>
-                                      )}
-                                    </div>
-                                    <a href={msg.audioUrl} download className="download-link">
-                                      Download Audio
-                                    </a>
-                                  </div>
-                                )}
+                                <p className="primary-text">{msg.text || 'No message content'}</p>
+                                {msg.translatedText && <p className="translated-text">English: {msg.translatedText}</p>}
                               </>
                             )}
                           </>
                         )}
+                        {msg.audioUrl && (
+                          <div className="audio-container">
+                            <audio controls src={msg.audioUrl} onError={() => setError('Failed to load audio. It may be inaccessible or unsupported.')} />
+                            <div className="read-aloud-container">
+                              {languagePreference === 'en' ? (
+                                <button
+                                  onClick={() => readAloud(msg.text, 'en')}
+                                  className="read-aloud-button english"
+                                >
+                                  🔊 English
+                                </button>
+                              ) : (
+                                <>
+                                  <button
+                                    onClick={() => readAloud(msg.text, 'kn')}
+                                    className="read-aloud-button kannada"
+                                  >
+                                    🔊 Kannada
+                                  </button>
+                                  <button
+                                    onClick={() => readAloud(msg.translatedText || msg.text, 'en')}
+                                    className="read-aloud-button english"
+                                  >
+                                    🔊 English
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                            <a href={msg.audioUrl} download className="download-link">
+                              Download Audio
+                            </a>
+                          </div>
+                        )}
                       </div>
                     )}
-                    {msg.imageUrl && !msg.audioUrl && <img src={msg.imageUrl} alt="Patient upload" className="chat-image" />}
+                    {msg.imageUrl && <img src={msg.imageUrl} alt="Patient upload" className="chat-image" />}
                     {msg.audioError && <p className="audio-error">{msg.audioError}</p>}
                     <span className="timestamp">{new Date(msg.timestamp).toLocaleTimeString('en-US', { hour12: true })}</span>
                   </div>
@@ -1761,14 +1687,14 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
               <div className="controls-row">
                 <div className="language-buttons">
                   <button
-                    onClick={() => setRecordingLanguage('kn')}
-                    className={recordingLanguage === 'kn' ? 'active-lang' : ''}
+                    onClick={() => setTranscriptionLanguage('kn')}
+                    className={transcriptionLanguage === 'kn' ? 'active-lang' : ''}
                   >
                     Kannada
                   </button>
                   <button
-                    onClick={() => setRecordingLanguage('en')}
-                    className={recordingLanguage === 'en' ? 'active-lang' : ''}
+                    onClick={() => setTranscriptionLanguage('en')}
+                    className={transcriptionLanguage === 'en' ? 'active-lang' : ''}
                   >
                     English
                   </button>
