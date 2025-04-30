@@ -524,20 +524,30 @@
 .controls {
   background: rgba(44, 26, 61, 0.8);
   backdrop-filter: blur(10px);
-  padding: 20px;
+  padding: 10px 20px;
   border-radius: 15px;
   border: 1px solid rgba(255, 255, 255, 0.1);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.control-bar {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  width: 100%;
+  gap: 10px;
 }
 
 .recording-buttons {
   display: flex;
   gap: 10px;
   align-items: center;
-  margin-bottom: 15px;
 }
 
 .start-button {
-  padding: 8px 20px;
+  padding: 8px 15px;
   background: #27AE60;
   color: #FFFFFF;
   border: none;
@@ -554,7 +564,7 @@
 }
 
 .stop-button {
-  padding: 8px 20px;
+  padding: 8px 15px;
   background: #E74C3C;
   color: #FFFFFF;
   border: none;
@@ -571,7 +581,7 @@
 }
 
 .action-button {
-  padding: 8px 20px;
+  padding: 8px 15px;
   background: #F39C12;
   color: #FFFFFF;
   border: none;
@@ -588,7 +598,7 @@
 }
 
 .disabled-button {
-  padding: 8px 20px;
+  padding: 8px 15px;
   background: #666;
   color: #A0A0A0;
   border: none;
@@ -600,12 +610,14 @@
 
 .text-input-container {
   display: flex;
+  flex: 1;
   gap: 10px;
+  align-items: center;
 }
 
 .text-input-container input {
   flex: 1;
-  padding: 12px 20px;
+  padding: 8px 15px;
   background: rgba(255, 255, 255, 0.1);
   border: 1px solid rgba(255, 255, 255, 0.2);
   border-radius: 25px;
@@ -631,7 +643,7 @@
 }
 
 .send-button {
-  padding: 12px 30px;
+  padding: 8px 20px;
   background: #6E48AA;
   color: #FFFFFF;
   border: none;
@@ -796,6 +808,18 @@
   }
   .message {
     max-width: 85%;
+  }
+  .control-bar {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .recording-buttons {
+    margin-bottom: 10px;
+    justify-content: center;
+  }
+  .text-input-container {
+    width: 100%;
+    justify-content: center;
   }
   .text-input-container input {
     padding: 10px 15px;

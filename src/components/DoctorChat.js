@@ -5,7 +5,7 @@ import { db } from '../services/firebase.js';
 import { getAuth, signOut } from 'firebase/auth';
 import Pusher from 'pusher-js';
 import { transcribeAudio, translateText, textToSpeechConvert, playAudio } from '../services/speech.js';
-import '../components/DoctorChat.css'
+import './DoctorChat.css';
 
 function DoctorChat({ user, role, handleLogout, setError }) {
   const [selectedPatientId, setSelectedPatientId] = useState(null);
@@ -15,7 +15,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
   const [missedDoseAlerts, setMissedDoseAlerts] = useState([]);
   const [newMessage, setNewMessage] = useState('');
   const [diagnosis, setDiagnosis] = useState('');
-  const [lastDiagnosis, setLastDiagnosis] = useState(null); // New state to track last diagnosis
+  const [lastDiagnosis, setLastDiagnosis] = useState(null);
   const [prescription, setPrescription] = useState({
     medicine: '',
     dosage: '',
@@ -227,7 +227,6 @@ function DoctorChat({ user, role, handleLogout, setError }) {
               },
             }));
           }
-          // Update last diagnosis if the message contains a diagnosis
           if (message.diagnosis) {
             setLastDiagnosis(message.diagnosis);
           }
@@ -282,7 +281,6 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           console.log('Updated patient message timestamps:', patientMessages);
         }
 
-        // Find the most recent message with a diagnosis
         const lastDiagnosisMessage = fetchedMessages
           .filter((msg) => msg.diagnosis)
           .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0];
@@ -600,7 +598,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           transcriptionResult = await transcribeAudio(audioBlob, 'en-US', user.uid, idToken);
           audioUrl = transcriptionResult.audioUrl;
           if (!audioUrl) {
-            const errorMsg = 'Transcription succeeded, but no audio URL was returned.';
+            const errorMsg = 'Transcription succeeded, but no audio partially succeeded, but no audio URL was returned.';
             setError(errorMsg);
             setLoadingAudio(false);
             console.error(errorMsg);
@@ -774,7 +772,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
         sender: 'doctor',
         ...(actionType === 'Diagnosis' || actionType === 'Combined' ? { diagnosis } : {}),
         ...(actionType === 'Prescription' || actionType === 'Combined' ? { prescription: { ...prescription } } : {}),
-        ...(actionType === 'Prescription' && lastDiagnosis ? { diagnosis: lastDiagnosis } : {}), // Include last diagnosis if Prescription Only
+        ...(actionType === 'Prescription' && lastDiagnosis ? { diagnosis: lastDiagnosis } : {}),
         timestamp: new Date().toISOString(),
         doctorId,
         patientId: selectedPatientId,
@@ -1233,49 +1231,51 @@ function DoctorChat({ user, role, handleLogout, setError }) {
                 )}
                 {loadingAudio && <p className="loading-audio">Processing audio...</p>}
                 <div className="controls">
-                  <div className="recording-buttons">
-                    <button
-                      onClick={startRecording}
-                      disabled={recording || loadingAudio || newMessage.trim().length > 0}
-                      className={recording || loadingAudio || newMessage.trim().length > 0 ? 'disabled-button' : 'start-button'}
-                      aria-label="Start recording"
-                    >
-                      🎙️ Record
-                    </button>
-                    <button
-                      onClick={stopRecording}
-                      disabled={!recording}
-                      className={!recording ? 'disabled-button' : 'stop-button'}
-                      aria-label="Stop recording"
-                    >
-                      🛑 Stop
-                    </button>
-                    <button
-                      onClick={() => setShowActionModal(true)}
-                      className="action-button"
-                      aria-label="Open diagnosis/prescription modal"
-                    >
-                      ⚕️ Diagnosis/Prescription
-                    </button>
-                  </div>
-                  <div className="text-input-container">
-                    <input
-                      type="text"
-                      value={newMessage}
-                      onChange={(e) => setNewMessage(e.target.value)}
-                      placeholder="Type a message (English only)..."
-                      onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
-                      aria-label="Type a message to the patient"
-                      disabled={loadingAudio || recording}
-                    />
-                    <button
-                      onClick={sendMessage}
-                      className="send-button"
-                      disabled={loadingAudio || recording}
-                      aria-label="Send message"
-                    >
-                      Send
-                    </button>
+                  <div className="control-bar">
+                    <div className="recording-buttons">
+                      <button
+                        onClick={startRecording}
+                        disabled={recording || loadingAudio || newMessage.trim().length > 0}
+                        className={recording || loadingAudio || newMessage.trim().length > 0 ? 'disabled-button' : 'start-button'}
+                        aria-label="Start recording"
+                      >
+                        🎙️ Record
+                      </button>
+                      <button
+                        onClick={stopRecording}
+                        disabled={!recording}
+                        className={!recording ? 'disabled-button' : 'stop-button'}
+                        aria-label="Stop recording"
+                      >
+                        🛑 Stop
+                      </button>
+                      <button
+                        onClick={() => setShowActionModal(true)}
+                        className="action-button"
+                        aria-label="Open diagnosis/prescription modal"
+                      >
+                        ⚕️ Diagnosis/Prescription
+                      </button>
+                    </div>
+                    <div className="text-input-container">
+                      <input
+                        type="text"
+                        value={newMessage}
+                        onChange={(e) => setNewMessage(e.target.value)}
+                        placeholder="Type a message (English only)..."
+                        onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
+                        aria-label="Type a message to the patient"
+                        disabled={loadingAudio || recording}
+                      />
+                      <button
+                        onClick={sendMessage}
+                        className="send-button"
+                        disabled={loadingAudio || recording}
+                        aria-label="Send message"
+                      >
+                        Send
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1371,8 +1371,6 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           </div>
         </div>
       )}
-
-
     </div>
   );
 }
