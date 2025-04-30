@@ -110,14 +110,6 @@
   padding: 20px;
 }
 
-.sidebar-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding-bottom: 15px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-}
-
 .sidebar-header h3 {
   font-size: 1.5rem;
   color: #FFFFFF;
@@ -139,7 +131,6 @@
 .menu-list {
   list-style: none;
   padding: 0;
-  margin-top: 15px;
 }
 
 .menu-list li {
@@ -177,11 +168,6 @@
   border-radius: 10px;
   margin-bottom: 20px;
   text-align: center;
-}
-
-.doctor-prompt p {
-  margin: 0 0 10px;
-  font-size: 1rem;
 }
 
 .doctor-prompt button {
@@ -353,12 +339,12 @@
 .recommendation-item {
   background: rgba(255, 255, 255, 0.1);
   border-radius: 10px;
-  padding: 15px 0; /* Reduce horizontal padding to bring content closer to edges */
+  padding: 10px 15px;
   margin-bottom: 10px;
   display: flex;
-  justify-content: space-between; /* Ensure maximum separation */
+  flex-direction: row;
   align-items: center;
-  gap: 15px;
+  gap: 10px;
   font-size: 1rem;
   color: #E0E0E0;
 }
@@ -367,23 +353,11 @@
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  text-align: left; /* Align text to the leftmost */
-  padding-left: 15px; /* Small padding to avoid sticking to the edge */
+  gap: 5px;
 }
 
 .recommendation-content p {
   margin: 0;
-  line-height: 1.5;
-}
-
-.recommendation-actions {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end; /* Push to the rightmost */
-  gap: 10px;
-  min-width: 150px;
-  padding-right: 15px; /* Small padding to avoid sticking to the edge */
 }
 
 .recommendation-item strong {
@@ -539,13 +513,11 @@
 .validation-success {
   font-size: 0.9rem;
   color: #27AE60;
-  text-align: right;
 }
 
 .validation-error {
   font-size: 0.9rem;
   color: #E74C3C;
-  text-align: right;
 }
 
 .chat-image {
