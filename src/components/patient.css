@@ -252,15 +252,15 @@
 /* Reminders table styling */
 .reminders-table {
   width: 100%;
-  border-collapse: collapse;
 }
 
 .table-header,
 .table-row {
   display: flex;
+  justify-content: space-between;
+  align-items: center;
   padding: 10px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-  text-align: left;
 }
 
 .table-header {
@@ -277,46 +277,24 @@
 .table-header span,
 .table-row span {
   flex: 1;
-  padding: 0 5px;
-  white-space: nowrap;
+  text-align: center;
+  min-width: 0; /* Prevent overflow */
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-/* Define minimum widths for each column to prevent misalignment */
-.table-header span:nth-child(1),
-.table-row span:nth-child(1) {
-  min-width: 120px; /* Medicine */
+.table-header span {
+  min-width: 100px; /* Ensure minimum width for headers */
 }
 
-.table-header span:nth-child(2),
-.table-row span:nth-child(2) {
-  min-width: 80px; /* Dosage */
+.table-row span {
+  min-width: 100px; /* Ensure minimum width for data cells */
 }
 
-.table-header span:nth-child(3),
-.table-row span:nth-child(3) {
-  min-width: 200px; /* Time */
-}
-
-.table-header span:nth-child(4),
-.table-row span:nth-child(4) {
-  min-width: 80px; /* Status */
-}
-
-.table-header span:nth-child(5),
-.table-row span:nth-child(5) {
-  min-width: 150px; /* Actions */
-  display: flex;
-  justify-content: flex-start;
-  align-items: center;
-  gap: 10px;
-}
-
-/* Ensure the Actions column buttons are aligned properly */
 .table-row span:last-child {
   display: flex;
-  justify-content: flex-start;
+  justify-content: center;
   align-items: center;
   gap: 10px;
 }
@@ -376,9 +354,8 @@
   padding: 10px 15px;
   margin-bottom: 10px;
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 15px;
+  flex-direction: row;
+  gap: 10px;
   font-size: 1rem;
   color: #E0E0E0;
 }
@@ -388,17 +365,10 @@
   display: flex;
   flex-direction: column;
   gap: 5px;
-  text-align: left;
 }
 
 .recommendation-content p {
   margin: 0;
-}
-
-.recommendation-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
 }
 
 .recommendation-item strong {
