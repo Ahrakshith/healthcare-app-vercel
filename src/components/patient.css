@@ -353,10 +353,10 @@
 .recommendation-item {
   background: rgba(255, 255, 255, 0.1);
   border-radius: 10px;
-  padding: 15px;
+  padding: 15px 0; /* Reduce horizontal padding to bring content closer to edges */
   margin-bottom: 10px;
   display: flex;
-  justify-content: space-between;
+  justify-content: space-between; /* Ensure maximum separation */
   align-items: center;
   gap: 15px;
   font-size: 1rem;
@@ -368,6 +368,8 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+  text-align: left; /* Align text to the leftmost */
+  padding-left: 15px; /* Small padding to avoid sticking to the edge */
 }
 
 .recommendation-content p {
@@ -378,9 +380,10 @@
 .recommendation-actions {
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
+  align-items: flex-end; /* Push to the rightmost */
   gap: 10px;
   min-width: 150px;
+  padding-right: 15px; /* Small padding to avoid sticking to the edge */
 }
 
 .recommendation-item strong {
