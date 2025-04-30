@@ -1,4 +1,4 @@
-current   patientchat.js--> import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Pusher from 'pusher-js';
 import {
