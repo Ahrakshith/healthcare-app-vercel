@@ -1630,13 +1630,13 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                                     <audio controls src={msg.audioUrl} onError={() => setError('Failed to load audio. It may be inaccessible or unsupported.')} />
                                     <div className="read-aloud-container">
                                       <button
-                                        onClick={() => readAloud(msg.text, 'kn')}
+                                        onClick={() => readAloud(msg.text, 'en')} // Fixed: Play Kannada text in English
                                         className="read-aloud-button"
                                       >
                                         🔊 Kannada
                                       </button>
                                       <button
-                                        onClick={() => readAloud(msg.translatedText || msg.text, 'en')}
+                                        onClick={() => readAloud(msg.translatedText || msg.text, 'kn')} // Fixed: Play English text in Kannada
                                         className="read-aloud-button"
                                       >
                                         🔊 English
