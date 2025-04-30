@@ -339,18 +339,35 @@
 .recommendation-item {
   background: rgba(255, 255, 255, 0.1);
   border-radius: 10px;
-  padding: 15px;
+  padding: 10px 15px;
   margin-bottom: 10px;
   display: flex;
-  justify-content: space-between;
+  flex-direction: row;
   align-items: center;
+  gap: 10px;
   font-size: 1rem;
   color: #E0E0E0;
-  flex-wrap: wrap;
+}
+
+.recommendation-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.recommendation-content p {
+  margin: 0;
 }
 
 .recommendation-item strong {
   color: #FFFFFF;
+}
+
+.recommendation-note {
+  font-style: italic;
+  font-size: 0.9rem;
+  color: #B0B0B0;
 }
 
 /* Messages container */
@@ -494,13 +511,11 @@
 }
 
 .validation-success {
-  margin-left: 10px;
   font-size: 0.9rem;
   color: #27AE60;
 }
 
 .validation-error {
-  margin-left: 10px;
   font-size: 0.9rem;
   color: #E74C3C;
 }
