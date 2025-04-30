@@ -611,7 +611,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           if (languagePreference === 'kn') {
             translatedText = await translateText(transcribedText, 'en-US', 'kn-IN', user.uid, idToken);
             audioUrlKn = await textToSpeechConvert(translatedText, 'kn-IN', user.uid, idToken);
-            console.log('Translated text to Kannada:', translatedText);
+            console.log('Translated text:', translatedText);
           }
         } catch (err) {
           const errorMsg = `Failed to process audio: ${err.message}`;
@@ -628,7 +628,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           translatedText,
           language: 'en-US',
           recordingLanguage: 'en-US',
-          audioUrl: audioUrlEn, // Use audioUrlEn as the primary audio URL for playback
+          audioUrl,
           audioUrlEn,
           audioUrlKn,
           timestamp: new Date().toISOString(),
@@ -697,11 +697,11 @@ function DoctorChat({ user, role, handleLogout, setError }) {
 
     try {
       const idToken = await getIdToken();
-      audioUrlEn = await textToSpeechConvert(newMessage, 'en-US', user.uid, idToken);
       if (languagePreference === 'kn') {
         translatedText = await translateText(newMessage, 'en-US', 'kn-IN', user.uid, idToken);
         audioUrlKn = await textToSpeechConvert(translatedText, 'kn-IN', user.uid, idToken);
       }
+      audioUrlEn = await textToSpeechConvert(newMessage, 'en-US', user.uid, idToken);
 
       const message = {
         sender: 'doctor',
@@ -709,7 +709,6 @@ function DoctorChat({ user, role, handleLogout, setError }) {
         translatedText,
         language: 'en-US',
         recordingLanguage: 'en-US',
-        audioUrl: audioUrlEn, // Use audioUrlEn as the primary audio URL for playback
         audioUrlEn,
         audioUrlKn,
         timestamp: new Date().toISOString(),
@@ -794,7 +793,6 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           ...(actionType === 'Prescription' || actionType === 'Combined' ? { prescription: { ...prescription } } : {}),
           ...(actionType === 'Prescription' && lastDiagnosis ? { diagnosis: lastDiagnosis } : {}),
           ...(languagePreference === 'kn' ? { translatedDiagnosis, translatedPrescription } : {}),
-          language: 'en-US',
           timestamp: new Date().toISOString(),
           doctorId,
           patientId: selectedPatientId,
@@ -1069,126 +1067,41 @@ function DoctorChat({ user, role, handleLogout, setError }) {
                                   onError={() => console.error(`Failed to load image: ${msg.imageUrl}`)}
                                 />
                               )}
-                              {msg.recordingLanguage === 'en-US' ? (
-                                <>
-                                  <p className="primary-text">{msg.text || 'No transcription'}</p>
-                                  {msg.audioUrl && (
-                                    <div className="audio-container">
-                                      <audio controls aria-label="Patient audio message">
-                                        <source src={msg.audioUrl} type="audio/webm" />
-                                        Your browser does not support the audio element.
-                                      </audio>
-                                      <div className="read-aloud-container">
-                                        <button
-                                          onClick={() => readAloud(msg.text || 'No transcription', 'en', msg.sender)}
-                                          className="read-aloud-button"
-                                        >
-                                          🔊 English
-                                        </button>
-                                      </div>
-                                      <a href={msg.audioUrl} download className="download-link">
-                                        Download Audio
-                                      </a>
-                                    </div>
-                                  )}
-                                </>
-                              ) : (
-                                <>
-                                  <p className="primary-text">{msg.text || 'No transcription'}</p>
-                                  {msg.translatedText && <p className="translated-text">English: {msg.translatedText}</p>}
-                                  {msg.audioUrl && (
-                                    <div className="audio-container">
-                                      <audio controls aria-label="Patient audio message">
-                                        <source src={msg.audioUrl} type="audio/webm" />
-                                        Your browser does not support the audio element.
-                                      </audio>
-                                      <div className="read-aloud-container">
-                                        <button
-                                          onClick={() => readAloud(msg.text || 'No transcription', 'kn', msg.sender)}
-                                          className="read-aloud-button"
-                                        >
-                                          🔊 Kannada
-                                        </button>
-                                        <button
-                                          onClick={() => readAloud(msg.translatedText || msg.text || 'No transcription', 'en', msg.sender)}
-                                          className="read-aloud-button"
-                                        >
-                                          🔊 English
-                                        </button>
-                                      </div>
-                                      <a href={msg.audioUrl} download className="download-link">
-                                        Download Audio
-                                      </a>
-                                    </div>
-                                  )}
-                                </>
+                              <p className="primary-text">{msg.text || 'No transcription'}</p>
+                              {msg.translatedText && <p className="translated-text">English: {msg.translatedText}</p>}
+                              {msg.audioUrl && (
+                                <div className="audio-container">
+                                  <audio controls aria-label="Patient audio message">
+                                    <source src={msg.audioUrl} type="audio/webm" />
+                                    Your browser does not support the audio element.
+                                  </audio>
+                                  <div className="read-aloud-container">
+                                    <button
+                                      onClick={() => readAloud(msg.text || msg.translatedText || '', 'en', msg.sender)}
+                                      className="read-aloud-button"
+                                    >
+                                      🔊 English
+                                    </button>
+                                  </div>
+                                  <a href={msg.audioUrl} download className="download-link">
+                                    Download Audio
+                                  </a>
+                                </div>
                               )}
                             </div>
                           )}
                           {msg.sender === 'doctor' && (
                             <div className="message-block">
-                              {(msg.diagnosis || msg.prescription) ? (
-                                <div className="recommendation-item">
-                                  {msg.diagnosis ? (
-                                    <div>
-                                      <strong>Diagnosis:</strong> {msg.diagnosis}
-                                      <button
-                                        onClick={() => readAloud(msg.diagnosis, 'en', msg.sender)}
-                                        className="read-aloud-button"
-                                      >
-                                        🔊 English
-                                      </button>
-                                      {languagePreference === 'kn' && msg.translatedDiagnosis && (
-                                        <>
-                                          <p className="translated-text">Kannada: {msg.translatedDiagnosis}</p>
-                                          <button
-                                            onClick={() => readAloud(msg.translatedDiagnosis, 'kn', msg.sender)}
-                                            className="read-aloud-button"
-                                          >
-                                            🔊 Kannada
-                                          </button>
-                                        </>
-                                      )}
-                                    </div>
-                                  ) : (
-                                    <p className="missing-field">Diagnosis not provided.</p>
-                                  )}
-                                  {msg.prescription ? (
-                                    <div>
-                                      <strong>Prescription:</strong>{' '}
-                                      {`${msg.prescription.medicine}, ${msg.prescription.dosage}, ${msg.prescription.frequency}, ${msg.prescription.duration}`}
-                                      <button
-                                        onClick={() => readAloud(`${msg.prescription.medicine}, ${msg.prescription.dosage}, ${msg.prescription.frequency}, ${msg.prescription.duration}`, 'en', msg.sender)}
-                                        className="read-aloud-button"
-                                      >
-                                        🔊 English
-                                      </button>
-                                      {languagePreference === 'kn' && msg.translatedPrescription && (
-                                        <>
-                                          <p className="translated-text">Kannada: {msg.translatedPrescription}</p>
-                                          <button
-                                            onClick={() => readAloud(msg.translatedPrescription, 'kn', msg.sender)}
-                                            className="read-aloud-button"
-                                          >
-                                            🔊 Kannada
-                                          </button>
-                                        </>
-                                      )}
-                                    </div>
-                                  ) : (
-                                    <p className="missing-field">Prescription not provided.</p>
-                                  )}
-                                </div>
-                              ) : (
+                              {msg.text && (
                                 <>
-                                  <p className="primary-text">{msg.text || 'No message content'}</p>
+                                  <p className="primary-text">{msg.text}</p>
                                   {languagePreference === 'kn' && msg.translatedText && (
                                     <p className="translated-text">Kannada: {msg.translatedText}</p>
                                   )}
                                   {(msg.audioUrlEn || msg.audioUrlKn) && (
                                     <div className="audio-container">
                                       <audio controls aria-label="Doctor audio message">
-                                        <source src={msg.audioUrl} type="audio/webm" />
+                                        <source src={msg.audioUrlEn || msg.audioUrlKn} type="audio/webm" />
                                         Your browser does not support the audio element.
                                       </audio>
                                       <div className="read-aloud-container">
@@ -1207,12 +1120,59 @@ function DoctorChat({ user, role, handleLogout, setError }) {
                                           </button>
                                         )}
                                       </div>
-                                      <a href={msg.audioUrl} download className="download-link">
+                                      <a href={msg.audioUrlEn || msg.audioUrlKn} download className="download-link">
                                         Download Audio
                                       </a>
                                     </div>
                                   )}
                                 </>
+                              )}
+                              {(msg.diagnosis || msg.prescription) && (
+                                <div className="recommendation-item">
+                                  {msg.diagnosis ? (
+                                    <div>
+                                      <strong>Diagnosis:</strong> {msg.diagnosis}
+                                      <button
+                                        onClick={() => readAloud(msg.diagnosis, 'en', msg.sender)}
+                                        className="read-aloud-button"
+                                      >
+                                        🔊
+                                      </button>
+                                      {languagePreference === 'kn' && msg.translatedDiagnosis && (
+                                        <>
+                                          <p className="translated-text">Kannada: {msg.translatedDiagnosis}</p>
+                                          <button
+                                            onClick={() => readAloud(msg.translatedDiagnosis, 'kn', msg.sender)}
+                                            className="read-aloud-button"
+                                          >
+                                            🔊
+                                          </button>
+                                        </>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <p className="missing-field">Diagnosis not provided.</p>
+                                  )}
+                                  {msg.prescription ? (
+                                    <div>
+                                      <strong>Prescription:</strong>{' '}
+                                      {`${msg.prescription.medicine}, ${msg.prescription.dosage}, ${msg.prescription.frequency}, ${msg.prescription.duration}`}
+                                      {languagePreference === 'kn' && msg.translatedPrescription && (
+                                        <>
+                                          <p className="translated-text">Kannada: {msg.translatedPrescription}</p>
+                                          <button
+                                            onClick={() => readAloud(msg.translatedPrescription, 'kn', msg.sender)}
+                                            className="read-aloud-button"
+                                          >
+                                            🔊
+                                          </button>
+                                        </>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <p className="missing-field">Prescription not provided.</p>
+                                  )}
+                                </div>
                               )}
                               <span className="timestamp">{new Date(msg.timestamp).toLocaleTimeString()}</span>
                             </div>
