@@ -1490,23 +1490,25 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                         <p><strong>Prescription:</strong> {entry.prescription}</p>
                         {entry.note && <p className="recommendation-note">{entry.note}</p>}
                       </div>
-                      <button
-                        onClick={() => validatePrescription(entry.diagnosis, entry.prescription, entry.timestamp)}
-                        className="validate-button"
-                      >
-                        ✅ Validate
-                      </button>
-                      {validationResult[entry.timestamp] && (
-                        <span
-                          className={
-                            validationResult[entry.timestamp].includes('valid')
-                              ? 'validation-success'
-                              : 'validation-error'
-                          }
+                      <div className="recommendation-actions">
+                        <button
+                          onClick={() => validatePrescription(entry.diagnosis, entry.prescription, entry.timestamp)}
+                          className="validate-button"
                         >
-                          {validationResult[entry.timestamp]}
-                        </span>
-                      )}
+                          ✅ Validate
+                        </button>
+                        {validationResult[entry.timestamp] && (
+                          <span
+                            className={
+                              validationResult[entry.timestamp].includes('valid')
+                                ? 'validation-success'
+                                : 'validation-error'
+                            }
+                          >
+                            {validationResult[entry.timestamp]}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   ));
                 })()

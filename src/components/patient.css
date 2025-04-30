@@ -110,6 +110,14 @@
   padding: 20px;
 }
 
+.sidebar-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: 15px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
 .sidebar-header h3 {
   font-size: 1.5rem;
   color: #FFFFFF;
@@ -131,6 +139,7 @@
 .menu-list {
   list-style: none;
   padding: 0;
+  margin-top: 15px;
 }
 
 .menu-list li {
@@ -168,6 +177,11 @@
   border-radius: 10px;
   margin-bottom: 20px;
   text-align: center;
+}
+
+.doctor-prompt p {
+  margin: 0 0 10px;
+  font-size: 1rem;
 }
 
 .doctor-prompt button {
@@ -339,12 +353,12 @@
 .recommendation-item {
   background: rgba(255, 255, 255, 0.1);
   border-radius: 10px;
-  padding: 10px 15px;
+  padding: 15px;
   margin-bottom: 10px;
   display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 10px;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 15px;
   font-size: 1rem;
   color: #E0E0E0;
 }
@@ -358,6 +372,14 @@
 
 .recommendation-content p {
   margin: 0;
+}
+
+.recommendation-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  min-width: 150px;
 }
 
 .recommendation-item strong {
@@ -513,11 +535,13 @@
 .validation-success {
   font-size: 0.9rem;
   color: #27AE60;
+  text-align: right;
 }
 
 .validation-error {
   font-size: 0.9rem;
   color: #E74C3C;
+  text-align: right;
 }
 
 .chat-image {
