@@ -30,7 +30,8 @@ function DoctorChat({ user, role, handleLogout, setError }) {
   const [doctorId, setDoctorId] = useState(null);
   const [recording, setRecording] = useState(false);
   const [mediaRecorder, setMediaRecorder] = useState(null);
-  const [languagePreference, setLanguagePreference] = useState('en');
+  const [languagePreference, setLanguagePreference] = useState('en'); // Patient's preferred language
+  const [recordingLanguage, setRecordingLanguage] = useState('en'); // Toggled recording language
   const [menuOpen, setMenuOpen] = useState(false);
   const [showActionModal, setShowActionModal] = useState(false);
   const [actionType, setActionType] = useState('');
@@ -303,6 +304,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
         const patientRef = doc(db, 'patients', selectedPatientId);
         const patientDoc = await getDoc(patientRef);
         setLanguagePreference(patientDoc.exists() ? patientDoc.data().languagePreference || 'en' : 'en');
+        setRecordingLanguage(patientDoc.exists() ? patientDoc.data().languagePreference || 'en' : 'en'); // Default to preference
         console.log('Language preference fetched:', patientDoc.data()?.languagePreference || 'en');
       } catch (err) {
         const errorMsg = `Failed to fetch language preference: ${err.message}`;
@@ -595,7 +597,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
 
         try {
           const idToken = await getIdToken();
-          // Transcribe with language detection
+          // Transcribe with detected language
           transcriptionResult = await transcribeAudio(audioBlob, 'auto', user.uid, idToken);
           audioUrl = transcriptionResult.audioUrl;
           if (!audioUrl) {
@@ -607,13 +609,13 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           }
 
           transcribedText = transcriptionResult.transcription || 'Transcription failed';
-          const recordingLanguage = transcriptionResult.detectedLanguage || 'en';
-          console.log('Transcription result:', { transcribedText, recordingLanguage });
+          const detectedLanguage = transcriptionResult.detectedLanguage || 'en';
+          console.log('Transcription result:', { transcribedText, detectedLanguage });
 
-          // Translate based on recording language and patient preference
-          if (recordingLanguage === 'kn' || languagePreference === 'kn') {
-            translatedTextKn = await translateText(transcribedText, recordingLanguage, 'kn', user.uid, idToken);
-            translatedTextEn = await translateText(transcribedText, recordingLanguage, 'en', user.uid, idToken);
+          // Translate based on toggled recording language
+          if (recordingLanguage === 'kn' || detectedLanguage === 'kn') {
+            translatedTextKn = await translateText(transcribedText, detectedLanguage, 'kn', user.uid, idToken);
+            translatedTextEn = await translateText(transcribedText, detectedLanguage, 'en', user.uid, idToken);
             audioUrlKn = await textToSpeechConvert(translatedTextKn, 'kn-IN', user.uid, idToken);
             audioUrlEn = await textToSpeechConvert(translatedTextEn, 'en-US', user.uid, idToken);
           } else {
@@ -630,9 +632,9 @@ function DoctorChat({ user, role, handleLogout, setError }) {
         }
 
         const message = {
-          sender: msg.sender || 'doctor',
-          text: languagePreference === 'en' && recordingLanguage === 'en' ? translatedTextEn : translatedTextKn,
-          translatedText: languagePreference === 'en' && recordingLanguage === 'en' ? null : translatedTextEn,
+          sender: 'doctor',
+          text: recordingLanguage === 'kn' ? translatedTextKn : translatedTextEn,
+          translatedText: recordingLanguage === 'kn' ? translatedTextEn : null,
           language: 'en', // Doctor's fixed language
           recordingLanguage: recordingLanguage,
           audioUrl,
@@ -676,7 +678,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
       setError(errorMsg);
       console.error('Recording error:', err);
     }
-  }, [selectedPatientId, languagePreference, user?.uid, apiBaseUrl, doctorId, setError]);
+  }, [selectedPatientId, recordingLanguage, languagePreference, user?.uid, apiBaseUrl, doctorId, setError]);
 
   const stopRecording = useCallback(() => {
     console.log('Stopping recording');
@@ -1048,7 +1050,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
                         <div className="message-content">
                           {msg.sender === 'patient' && (
                             <div className="message-block">
-                              {languagePreference === 'en' ? (
+                              {msg.recordingLanguage === 'en' ? (
                                 <>
                                   {msg.imageUrl && (
                                     <img
@@ -1094,8 +1096,8 @@ function DoctorChat({ user, role, handleLogout, setError }) {
                                       onError={() => console.error(`Failed to load image: ${msg.imageUrl}`)}
                                     />
                                   )}
-                                  <p className="primary-text">{msg.translatedTextKn || msg.text || 'No transcription'}</p>
-                                  <p className="translated-text">English: {msg.translatedTextEn || msg.text || 'No translation'}</p>
+                                  <p className="primary-text">{msg.text || 'No transcription'}</p>
+                                  <p className="translated-text">English: {msg.translatedText || 'No translation'}</p>
                                   {msg.audioUrl && (
                                     <div className="audio-container">
                                       <audio controls aria-label="Patient audio message">
@@ -1104,20 +1106,20 @@ function DoctorChat({ user, role, handleLogout, setError }) {
                                       </audio>
                                     </div>
                                   )}
-                                  {(msg.translatedTextKn || msg.translatedTextEn) && (
+                                  {(msg.text || msg.translatedText) && (
                                     <div className="read-aloud-buttons">
-                                      {msg.translatedTextKn && (
+                                      {msg.text && (
                                         <button
-                                          onClick={() => readAloud(msg.translatedTextKn, 'kn', msg.sender)}
+                                          onClick={() => readAloud(msg.text, 'kn', msg.sender)}
                                           className="read-aloud-button"
                                           aria-label="Read aloud in Kannada"
                                         >
                                           🔊 (Kannada)
                                         </button>
                                       )}
-                                      {msg.translatedTextEn && (
+                                      {msg.translatedText && (
                                         <button
-                                          onClick={() => readAloud(msg.translatedTextEn, 'en', msg.sender)}
+                                          onClick={() => readAloud(msg.translatedText, 'en', msg.sender)}
                                           className="read-aloud-button"
                                           aria-label="Read aloud in English"
                                         >
@@ -1238,6 +1240,14 @@ function DoctorChat({ user, role, handleLogout, setError }) {
                 <div className="controls">
                   <div className="control-bar">
                     <div className="recording-buttons">
+                      <select
+                        value={recordingLanguage}
+                        onChange={(e) => setRecordingLanguage(e.target.value)}
+                        aria-label="Select recording language"
+                      >
+                        <option value="en">English</option>
+                        <option value="kn">Kannada</option>
+                      </select>
                       <button
                         onClick={startRecording}
                         disabled={recording || loadingAudio || newMessage.trim().length > 0}

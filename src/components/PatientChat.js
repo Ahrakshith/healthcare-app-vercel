@@ -34,6 +34,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   const [missedDoseAlerts, setMissedDoseAlerts] = useState([]);
   const [doctorPrompt, setDoctorPrompt] = useState(null);
   const [doctorName, setDoctorName] = useState('Unknown Doctor');
+  const [recordingLanguage, setRecordingLanguage] = useState(null); // Added to handle toggled recording language
   const audioChunksRef = useRef([]);
   const streamRef = useRef(null);
   const pusherRef = useRef(null);
@@ -129,6 +130,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           const pref = data.languagePreference || 'en';
           setLanguagePreference(pref);
           setTranscriptionLanguage(pref);
+          setRecordingLanguage(pref); // Initialize recording language with preference
           setProfileData({
             name: data.name || 'Unknown Patient',
             patientId: effectivePatientId,
@@ -871,7 +873,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           return;
         }
 
-        const normalizedTranscriptionLanguage = normalizeLanguageCode(transcriptionLanguage);
+        const normalizedRecordingLanguage = normalizeLanguageCode(recordingLanguage);
         let text, translatedText = null;
 
         try {
@@ -879,22 +881,22 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           if (!idToken || typeof idToken !== 'string' || idToken.trim() === '') {
             throw new Error('Invalid idToken: Must be a non-empty string.');
           }
-          const transcriptionResult = await transcribeAudio(audioBlob, normalizedTranscriptionLanguage, effectiveUserId, idToken);
+          const transcriptionResult = await transcribeAudio(audioBlob, normalizedRecordingLanguage, effectiveUserId, idToken);
           text = transcriptionResult.transcription || 'Transcription failed';
 
-          if (normalizedTranscriptionLanguage === 'kn-IN') {
-            translatedText = transcriptionResult.translatedText || await translateText(text, 'kn-IN', 'en-US', effectiveUserId);
-          } else if (normalizedTranscriptionLanguage === 'en-US' && languagePreference === 'kn') {
-            translatedText = await translateText(text, 'en-US', 'kn-IN', effectiveUserId);
+          if (normalizedRecordingLanguage === 'kn-IN') {
+            translatedText = transcriptionResult.translatedText || await translateText(text, 'kn-IN', 'en-US', effectiveUserId, idToken);
+          } else if (normalizedRecordingLanguage === 'en-US' && languagePreference === 'kn') {
+            translatedText = await translateText(text, 'en-US', 'kn-IN', effectiveUserId, idToken);
           }
 
           const message = {
             sender: 'patient',
-            text,
-            translatedText,
+            text: normalizedRecordingLanguage === 'kn-IN' ? text : translatedText || text,
+            translatedText: normalizedRecordingLanguage === 'kn-IN' ? translatedText : null,
             timestamp: new Date().toISOString(),
-            language: normalizedTranscriptionLanguage,
-            recordingLanguage: normalizedTranscriptionLanguage,
+            language: normalizedRecordingLanguage,
+            recordingLanguage: normalizedRecordingLanguage,
             doctorId,
             userId: effectivePatientId,
             audioUrl: transcriptionResult.audioUrl,
@@ -937,7 +939,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         } catch (err) {
           console.error('Audio processing failed:', err);
           setError(`Failed to process audio: ${err.message}`);
-          setFailedUpload({ audioBlob, language: normalizedTranscriptionLanguage });
+          setFailedUpload({ audioBlob, language: normalizedRecordingLanguage });
         }
 
         if (streamRef.current) {
@@ -1280,7 +1282,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     }
   };
 
-  if (languagePreference === null || transcriptionLanguage === null) {
+  if (languagePreference === null || recordingLanguage === null) {
     return (
       <div className="loading-container">
         <p>Loading language preference...</p>
@@ -1617,8 +1619,8 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                               <p className="primary-text">{msg.text || 'No message content'}</p>
                             ) : (
                               <>
-                                <p className="primary-text">{msg.text || 'No message content'}</p>
-                                {msg.translatedText && <p className="translated-text">English: {msg.translatedText}</p>}
+                                <p className="primary-text">{msg.translatedText || msg.text || 'No message content'}</p>
+                                {msg.text && <p className="translated-text">English: {msg.text}</p>}
                               </>
                             )}
                           </>
@@ -1637,13 +1639,13 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                               ) : (
                                 <>
                                   <button
-                                    onClick={() => readAloud(msg.text, 'kn')}
+                                    onClick={() => readAloud(msg.translatedText || msg.text, 'kn')}
                                     className="read-aloud-button kannada"
                                   >
                                     🔊 Kannada
                                   </button>
                                   <button
-                                    onClick={() => readAloud(msg.translatedText || msg.text, 'en')}
+                                    onClick={() => readAloud(msg.text || msg.translatedText, 'en')}
                                     className="read-aloud-button english"
                                   >
                                     🔊 English
@@ -1687,14 +1689,14 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
               <div className="controls-row">
                 <div className="language-buttons">
                   <button
-                    onClick={() => setTranscriptionLanguage('kn')}
-                    className={transcriptionLanguage === 'kn' ? 'active-lang' : ''}
+                    onClick={() => setRecordingLanguage('kn')}
+                    className={recordingLanguage === 'kn' ? 'active-lang' : ''}
                   >
                     Kannada
                   </button>
                   <button
-                    onClick={() => setTranscriptionLanguage('en')}
-                    className={transcriptionLanguage === 'en' ? 'active-lang' : ''}
+                    onClick={() => setRecordingLanguage('en')}
+                    className={recordingLanguage === 'en' ? 'active-lang' : ''}
                   >
                     English
                   </button>
