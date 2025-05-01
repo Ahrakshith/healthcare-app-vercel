@@ -1281,6 +1281,51 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     }
   };
 
+  // Translate doctor's messages (diagnosis and prescription) to patient's preferred language
+  const translateDoctorMessages = async () => {
+    if (!firebaseUser || !languagePreference || languagePreference !== 'kn') return;
+
+    const doctorMessages = messages.filter((msg) => msg.sender === 'doctor' && (msg.diagnosis || msg.prescription));
+    if (doctorMessages.length === 0) return;
+
+    const updatedMessages = [...messages];
+    let hasChanges = false;
+
+    try {
+      const idToken = await firebaseUser.getIdToken(true);
+      for (let i = 0; i < updatedMessages.length; i++) {
+        const msg = updatedMessages[i];
+        if (msg.sender === 'doctor' && (msg.diagnosis || msg.prescription)) {
+          if (msg.diagnosis && !msg.translatedDiagnosis) {
+            const translatedDiagnosis = await translateText(msg.diagnosis, 'en-US', 'kn-IN', effectiveUserId, idToken);
+            updatedMessages[i] = { ...msg, translatedDiagnosis };
+            hasChanges = true;
+          }
+          if (msg.prescription && !msg.translatedPrescription) {
+            const prescriptionText = typeof msg.prescription === 'object'
+              ? `${msg.prescription.medicine}, ${msg.prescription.dosage}, ${msg.prescription.frequency}, ${msg.prescription.duration}`
+              : msg.prescription;
+            const translatedPrescription = await translateText(prescriptionText, 'en-US', 'kn-IN', effectiveUserId, idToken);
+            updatedMessages[i] = { ...updatedMessages[i], translatedPrescription };
+            hasChanges = true;
+          }
+        }
+      }
+
+      if (hasChanges) {
+        setMessages(updatedMessages);
+      }
+    } catch (err) {
+      console.error('Failed to translate doctor messages:', err.message);
+      setError(`Failed to translate doctor's messages: ${err.message}`);
+    }
+  };
+
+  // Call the translation function whenever messages or languagePreference changes
+  useEffect(() => {
+    translateDoctorMessages();
+  }, [messages, languagePreference, firebaseUser]);
+
   if (languagePreference === null || transcriptionLanguage === null) {
     return (
       <div className="loading-container">
@@ -1465,6 +1510,8 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                         diagnosis: diagnosisToUse,
                         prescription: prescriptionText,
                         note,
+                        translatedDiagnosis: msg.translatedDiagnosis,
+                        translatedPrescription: msg.translatedPrescription,
                       });
                     }
                   }
@@ -1472,8 +1519,16 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                   return combinedMessages.map((entry, index) => (
                     <div key={`${entry.timestamp}-${index}`} className="recommendation-item">
                       <div className="recommendation-content">
-                        <p><strong>Diagnosis:</strong> {entry.diagnosis}</p>
-                        <p><strong>Prescription:</strong> {entry.prescription}</p>
+                        {languagePreference === 'kn' && entry.translatedDiagnosis ? (
+                          <p><strong>Diagnosis:</strong> {entry.translatedDiagnosis}</p>
+                        ) : (
+                          <p><strong>Diagnosis:</strong> {entry.diagnosis}</p>
+                        )}
+                        {languagePreference === 'kn' && entry.translatedPrescription ? (
+                          <p><strong>Prescription:</strong> {entry.translatedPrescription}</p>
+                        ) : (
+                          <p><strong>Prescription:</strong> {entry.prescription}</p>
+                        )}
                         {entry.note && <p className="recommendation-note">{entry.note}</p>}
                       </div>
                       <div className="recommendation-actions">
@@ -1586,9 +1641,9 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                                 <p className="primary-text">Doctor has provided a recommendation</p>
                                 {msg.diagnosis && (
                                   <p className="primary-text">
-                                    <strong>Diagnosis:</strong> {msg.diagnosis}
+                                    <strong>Diagnosis:</strong> {msg.translatedDiagnosis || msg.diagnosis}
                                     <button
-                                      onClick={() => readAloud(msg.diagnosis, 'kn')}
+                                      onClick={() => readAloud(msg.translatedDiagnosis || msg.diagnosis, 'kn')}
                                       className="read-aloud-button"
                                     >
                                       🔊 Kannada
@@ -1598,9 +1653,17 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                                 {msg.prescription && (
                                   <p className="primary-text">
                                     <strong>Prescription:</strong>{' '}
-                                    {typeof msg.prescription === 'object'
+                                    {msg.translatedPrescription || (typeof msg.prescription === 'object'
                                       ? `${msg.prescription.medicine}, ${msg.prescription.dosage}, ${msg.prescription.frequency}, ${msg.prescription.duration}`
-                                      : msg.prescription}
+                                      : msg.prescription)}
+                                    <button
+                                      onClick={() => readAloud(msg.translatedPrescription || (typeof msg.prescription === 'object'
+                                        ? `${msg.prescription.medicine}, ${msg.prescription.dosage}, ${msg.prescription.frequency}, ${msg.prescription.duration}`
+                                        : msg.prescription), 'kn')}
+                                      className="read-aloud-button"
+                                    >
+                                      🔊 Kannada
+                                    </button>
                                   </p>
                                 )}
                               </>
@@ -1625,6 +1688,16 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                                     {typeof msg.prescription === 'object'
                                       ? `${msg.prescription.medicine}, ${msg.prescription.dosage}, ${msg.prescription.frequency}, ${msg.prescription.duration}`
                                       : msg.prescription}
+                                    {languagePreference === 'en' && (
+                                      <button
+                                        onClick={() => readAloud(typeof msg.prescription === 'object'
+                                          ? `${msg.prescription.medicine}, ${msg.prescription.dosage}, ${msg.prescription.frequency}, ${msg.prescription.duration}`
+                                          : msg.prescription, 'en')}
+                                        className="read-aloud-button"
+                                      >
+                                        🔊 English
+                                      </button>
+                                    )}
                                   </p>
                                 )}
                               </>
