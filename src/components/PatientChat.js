@@ -1775,6 +1775,4 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   );
 }
 
-//
-
 export default PatientChat;
