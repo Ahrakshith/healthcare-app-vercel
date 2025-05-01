@@ -1581,27 +1581,53 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                       <div className="message-block">
                         {msg.diagnosis || msg.prescription ? (
                           <>
-                            <p className="primary-text">Doctor has provided a recommendation</p>
-                            {msg.diagnosis && (
-                              <p className="primary-text">
-                                <strong>Diagnosis:</strong> {msg.diagnosis} {/* Always show diagnosis in English */}
-                                {languagePreference === 'kn' && (
-                                  <button
-                                    onClick={() => readAloud(msg.diagnosis, 'kn')}
-                                    className="read-aloud-button"
-                                  >
-                                    🔊 Kannada
-                                  </button>
+                            {languagePreference === 'kn' ? (
+                              <>
+                                <p className="primary-text">Doctor has provided a recommendation</p>
+                                {msg.diagnosis && (
+                                  <p className="primary-text">
+                                    <strong>Diagnosis:</strong> {msg.diagnosis}
+                                    <button
+                                      onClick={() => readAloud(msg.diagnosis, 'kn')}
+                                      className="read-aloud-button"
+                                    >
+                                      🔊 Kannada
+                                    </button>
+                                  </p>
                                 )}
-                              </p>
-                            )}
-                            {msg.prescription && (
-                              <p className="primary-text">
-                                <strong>Prescription:</strong>{' '}
-                                {typeof msg.prescription === 'object'
-                                  ? `${msg.prescription.medicine}, ${msg.prescription.dosage}, ${msg.prescription.frequency}, ${msg.prescription.duration}`
-                                  : msg.prescription}
-                              </p>
+                                {msg.prescription && (
+                                  <p className="primary-text">
+                                    <strong>Prescription:</strong>{' '}
+                                    {typeof msg.prescription === 'object'
+                                      ? `${msg.prescription.medicine}, ${msg.prescription.dosage}, ${msg.prescription.frequency}, ${msg.prescription.duration}`
+                                      : msg.prescription}
+                                  </p>
+                                )}
+                              </>
+                            ) : (
+                              <>
+                                {msg.diagnosis && (
+                                  <p className="primary-text">
+                                    <strong>Diagnosis:</strong> {msg.diagnosis}
+                                    {languagePreference === 'en' && (
+                                      <button
+                                        onClick={() => readAloud(msg.diagnosis, 'en')}
+                                        className="read-aloud-button"
+                                      >
+                                        🔊 English
+                                      </button>
+                                    )}
+                                  </p>
+                                )}
+                                {msg.prescription && (
+                                  <p className="primary-text">
+                                    <strong>Prescription:</strong>{' '}
+                                    {typeof msg.prescription === 'object'
+                                      ? `${msg.prescription.medicine}, ${msg.prescription.dosage}, ${msg.prescription.frequency}, ${msg.prescription.duration}`
+                                      : msg.prescription}
+                                  </p>
+                                )}
+                              </>
                             )}
                           </>
                         ) : (
