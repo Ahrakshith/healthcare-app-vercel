@@ -968,7 +968,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       };
 
       recorder.start();
-      set�: true);
+      set: true);
     } catch (err) {
       console.error('Error starting recording:', err);
       setError(`Error starting recording: ${err.message}`);
