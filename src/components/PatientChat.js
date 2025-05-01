@@ -696,13 +696,19 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       return;
     }
 
+    // Ensure diagnosis is in English
+    let englishDiagnosis = diagnosis;
+    if (languagePreference === 'kn' && messages.find(msg => msg.timestamp === timestamp)?.translatedDiagnosis) {
+      englishDiagnosis = messages.find(msg => msg.timestamp === timestamp)?.diagnosis || diagnosis;
+    }
+
     const medicine = typeof prescription === 'object' ? prescription.medicine : prescription;
     console.log('Extracted medicine:', medicine);
 
     try {
       const idToken = await firebaseUser.getIdToken(true);
       const isValid = await verifyMedicine(
-        diagnosis, // Ensure diagnosis is in English
+        englishDiagnosis, // Use English diagnosis only
         medicine,
         effectiveUserId,
         idToken,
@@ -715,14 +721,14 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       if (isValid.success) {
         setValidationResult((prev) => ({
           ...prev,
-          [timestamp]: `Prescription "${medicine}" is valid for diagnosis "${diagnosis}".`,
+          [timestamp]: `Prescription "${medicine}" is valid for diagnosis "${englishDiagnosis}".`,
         }));
       } else {
         setValidationResult((prev) => ({
           ...prev,
-          [timestamp]: `Invalid prescription "${medicine}" for diagnosis "${diagnosis}".`,
+          [timestamp]: `Invalid prescription "${medicine}" for diagnosis "${englishDiagnosis}".`,
         }));
-        const notificationMessage = `Invalid prescription: "${medicine}" for diagnosis "${diagnosis}" (Patient: ${profileData?.name || 'Unknown Patient'}, Doctor: ${doctorName})`;
+        const notificationMessage = `Invalid prescription: "${medicine}" for diagnosis "${englishDiagnosis}" (Patient: ${profileData?.name || 'Unknown Patient'}, Doctor: ${doctorName})`;
         const notificationResponse = await notifyAdmin(
           profileData?.name || 'Unknown Patient',
           doctorName,
@@ -742,8 +748,8 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         ...prev,
         [timestamp]: `Error validating prescription: ${error.message}. Retrying in 5 seconds...`,
       }));
-      const notificationMessage = `Error validating prescription: ${error.message} (Diagnosis: ${diagnosis}, Medicine: ${medicine}, Patient: ${profileData?.name || 'Unknown Patient'}, Doctor: ${doctorName})`;
-      setTimeout(() => validatePrescription(diagnosis, prescription, timestamp), 5000);
+      const notificationMessage = `Error validating prescription: ${error.message} (Diagnosis: ${englishDiagnosis}, Medicine: ${medicine}, Patient: ${profileData?.name || 'Unknown Patient'}, Doctor: ${doctorName})`;
+      setTimeout(() => validatePrescription(englishDiagnosis, prescription, timestamp), 5000);
       await notifyAdmin(
         profileData?.name || 'Unknown Patient',
         doctorName,
@@ -1546,7 +1552,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                                 : 'validation-error'
                             }
                           >
-                            {validationResult[entry.timestamp]}
+                            {validationResult[entry.timestamp]} {/* Display in English */}
                           </span>
                         )}
                       </div>
