@@ -387,26 +387,34 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
 
     let medicine, dosage, times, durationDays, timesStr;
 
-    if (typeof prescription === 'object') {
-      medicine = prescription.medicine;
-      dosage = prescription.dosage;
-      const frequency = prescription.frequency || '';
-      durationDays = prescription.duration || '5';
+    // Use translatedPrescription if languagePreference is 'kn'
+    const msg = messages.find(m => m.timestamp === issuanceTimestamp && m.sender === 'doctor' && m.prescription);
+    const prescriptionText = languagePreference === 'kn' && msg?.translatedPrescription
+      ? msg.translatedPrescription
+      : typeof prescription === 'object'
+        ? `${prescription.medicine}, ${prescription.dosage}, ${prescription.frequency || ''}, ${prescription.duration || '5'}`
+        : prescription;
+
+    if (typeof prescriptionText === 'object') {
+      medicine = prescriptionText.medicine;
+      dosage = prescriptionText.dosage;
+      const frequency = prescriptionText.frequency || '';
+      durationDays = prescriptionText.duration || '5';
       timesStr = frequency;
       times = frequency.split(' and ').map((t) => t.trim());
-    } else if (typeof prescription === 'string') {
+    } else if (typeof prescriptionText === 'string') {
       const regex = /(.+?),\s*(\d+mg),\s*(\d{1,2}[:.]\d{2}\s*(?:AM|PM)(?:\s*and\s*\d{1,2}[:.]\d{2}\s*(?:AM|PM))?),?\s*(\d+)\s*days?/i;
-      const match = prescription.match(regex);
+      const match = prescriptionText.match(regex);
       if (!match) {
         setError('Invalid prescription string format.');
-        console.error('setupMedicationSchedule: Invalid prescription string:', prescription);
+        console.error('setupMedicationSchedule: Invalid prescription string:', prescriptionText);
         return;
       }
       [, medicine, dosage, timesStr, durationDays] = match;
       times = timesStr.split(' and ').map((t) => t.trim());
     } else {
       setError('Unsupported prescription format.');
-      console.error('setupMedicationSchedule: Unsupported prescription type:', typeof prescription);
+      console.error('setupMedicationSchedule: Unsupported prescription type:', typeof prescriptionText);
       return;
     }
 
@@ -1861,5 +1869,6 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     </div>
   );
 }
+
 
 export default PatientChat;
