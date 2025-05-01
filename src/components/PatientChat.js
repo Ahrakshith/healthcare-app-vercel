@@ -702,7 +702,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     try {
       const idToken = await firebaseUser.getIdToken(true);
       const isValid = await verifyMedicine(
-        diagnosis,
+        diagnosis, // Ensure diagnosis is in English
         medicine,
         effectiveUserId,
         idToken,
@@ -1449,16 +1449,14 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                   for (let i = 0; i < doctorMessages.length; i++) {
                     const msg = doctorMessages[i];
                     if (msg.diagnosis) {
-                      lastDiagnosis = languagePreference === 'kn' ? msg.translatedDiagnosis || msg.diagnosis : msg.diagnosis;
+                      lastDiagnosis = msg.diagnosis; // Store diagnosis in English only
                     }
                     if (msg.prescription) {
                       const prescriptionText = typeof msg.prescription === 'object'
                         ? `${msg.prescription.medicine}, ${msg.prescription.dosage}, ${msg.prescription.frequency}, ${msg.prescription.duration}`
                         : msg.prescription;
 
-                      const diagnosisToUse = msg.diagnosis
-                        ? (languagePreference === 'kn' ? msg.translatedDiagnosis || msg.diagnosis : msg.diagnosis)
-                        : lastDiagnosis;
+                      const diagnosisToUse = lastDiagnosis || 'Not specified';
 
                       const note = msg.diagnosis ? '' : lastDiagnosis ? '(Note: Only prescription was given, using last diagnosis)' : '(Note: No prior diagnosis available)';
 
@@ -1474,7 +1472,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                   return combinedMessages.map((entry, index) => (
                     <div key={`${entry.timestamp}-${index}`} className="recommendation-item">
                       <div className="recommendation-content">
-                        <p><strong>Diagnosis:</strong> {entry.diagnosis || 'Not specified'}</p>
+                        <p><strong>Diagnosis:</strong> {entry.diagnosis}</p>
                         <p><strong>Prescription:</strong> {entry.prescription}</p>
                         {entry.note && <p className="recommendation-note">{entry.note}</p>}
                       </div>
@@ -1586,8 +1584,15 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                             <p className="primary-text">Doctor has provided a recommendation</p>
                             {msg.diagnosis && (
                               <p className="primary-text">
-                                <strong>Diagnosis:</strong>{' '}
-                                {languagePreference === 'kn' ? (msg.translatedDiagnosis || msg.diagnosis) : msg.diagnosis}
+                                <strong>Diagnosis:</strong> {msg.diagnosis} {/* Always show diagnosis in English */}
+                                {languagePreference === 'kn' && (
+                                  <button
+                                    onClick={() => readAloud(msg.diagnosis, 'kn')}
+                                    className="read-aloud-button"
+                                  >
+                                    🔊 Kannada
+                                  </button>
+                                )}
                               </p>
                             )}
                             {msg.prescription && (
@@ -1630,13 +1635,13 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                                     <audio controls src={msg.audioUrl} onError={() => setError('Failed to load audio. It may be inaccessible or unsupported.')} />
                                     <div className="read-aloud-container">
                                       <button
-                                        onClick={() => readAloud(msg.text, 'en')} // Fixed: Play Kannada text in English
+                                        onClick={() => readAloud(msg.text, 'en')}
                                         className="read-aloud-button"
                                       >
                                         🔊 Kannada
                                       </button>
                                       <button
-                                        onClick={() => readAloud(msg.translatedText || msg.text, 'kn')} // Fixed: Play English text in Kannada
+                                        onClick={() => readAloud(msg.translatedText || msg.text, 'kn')}
                                         className="read-aloud-button"
                                       >
                                         🔊 English
