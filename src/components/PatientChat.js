@@ -387,7 +387,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
 
     let medicine, dosage, times, durationDays, timesStr;
 
-    // Always use the original English prescription, regardless of languagePreference
+    // Always use the English version of the prescription for processing
     const prescriptionText = typeof prescription === 'object'
       ? `${prescription.medicine}, ${prescription.dosage}, ${prescription.frequency || ''}, ${prescription.duration || '5'}`
       : prescription;
@@ -968,7 +968,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       };
 
       recorder.start();
-      set: true);
+      setRecording(true);
     } catch (err) {
       console.error('Error starting recording:', err);
       setError(`Error starting recording: ${err.message}`);
@@ -1867,4 +1867,4 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   );
 }
 
-export default PatientChat;
+export default PatientChat
