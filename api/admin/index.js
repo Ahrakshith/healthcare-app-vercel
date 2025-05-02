@@ -738,10 +738,10 @@ const handleRegisterPatientRequest = async (req, res, userId) => {
         return res.status(403).json({ success: false, message: 'Only admins can register patients' });
       }
 
-      const { name, dateOfBirth, age, languagePreference, password, aadhaarNumber, phoneNumber } = req.body;
+      const { name, email, dateOfBirth, age, languagePreference, password, aadhaarNumber, phoneNumber } = req.body;
 
       // Validate required fields
-      if (!name || !dateOfBirth || !age || !languagePreference || !password || !aadhaarNumber || !phoneNumber) {
+      if (!name || !email || !dateOfBirth || !age || !languagePreference || !password || !aadhaarNumber || !phoneNumber) {
         return res.status(400).json({ error: { code: 400, message: 'All fields are required' } });
       }
 
@@ -759,10 +759,17 @@ const handleRegisterPatientRequest = async (req, res, userId) => {
         return res.status(400).json({ error: { code: 400, message: 'Password must be at least 6 characters long' } });
       }
 
+      // Check if email is already registered
+      const emailQuery = await db.collection('users')
+        .where('email', '==', email)
+        .get();
+      if (!emailQuery.empty) {
+        return res.status(400).json({ error: { code: 400, message: 'Email already registered' } });
+      }
+
       // Check if Aadhaar number is already registered
-      const hashedAadhaar = await bcrypt.hash(aadhaarNumber, 10);
       const aadhaarQuery = await db.collection('patients')
-        .where('aadhaarNumber', '==', hashedAadhaar)
+        .where('aadhaarNumber', '==', aadhaarNumber)
         .get();
       if (!aadhaarQuery.empty) {
         return res.status(400).json({ error: { code: 400, message: 'Aadhaar number already registered' } });
@@ -808,11 +815,12 @@ const handleRegisterPatientRequest = async (req, res, userId) => {
         uid: patientUid,
         patientId,
         name,
+        email,
         dateOfBirth,
         age: parseInt(age),
         languagePreference,
         password: hashedPassword,
-        aadhaarNumber: hashedAadhaar,
+        aadhaarNumber, // Store as plaintext to match Register.js and enable recovery
         phoneNumber,
         createdAt: new Date().toISOString(),
       };
