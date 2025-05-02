@@ -1,0 +1,153 @@
+/* src/components/PatientProfile.css */
+
+/* Import Poppins font */
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap');
+
+/* Base styles */
+.patient-profile-container {
+  width: 100vw;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(135deg, #2C1A3D, #3E2A5A);
+  font-family: 'Poppins', sans-serif;
+  color: #E0E0E0;
+  padding: 20px;
+}
+
+.profile-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 15px 30px;
+  background: rgba(44, 26, 61, 0.8);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  margin-bottom: 20px;
+}
+
+.profile-header h2 {
+  font-size: 1.8rem;
+  font-weight: 600;
+  color: #FFFFFF;
+}
+
+.close-profile-button {
+  background: none;
+  border: none;
+  color: #FFFFFF;
+  font-size: 1.5rem;
+  cursor: pointer;
+  transition: transform 0.3s ease;
+}
+
+.close-profile-button:hover {
+  transform: scale(1.1);
+}
+
+.profile-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 0 30px;
+}
+
+.patient-details,
+.patient-records {
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(10px);
+  border-radius: 15px;
+  padding: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.patient-details h3,
+.patient-records h3 {
+  font-size: 1.5rem;
+  color: #FFFFFF;
+  margin-bottom: 15px;
+}
+
+.details-card {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  padding: 15px;
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.details-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+}
+
+.details-card p {
+  font-size: 1rem;
+  margin-bottom: 10px;
+}
+
+.details-card strong {
+  color: #FFFFFF;
+  font-weight: 500;
+}
+
+.records-list {
+  list-style: none;
+}
+
+.record-item {
+  padding: 15px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  margin-bottom: 10px;
+  transition: background 0.3s ease, transform 0.3s ease;
+}
+
+.record-item:hover {
+  background: rgba(255, 255, 255, 0.2);
+  transform: translateX(5px);
+}
+
+.record-item p {
+  font-size: 1rem;
+  margin-bottom: 8px;
+}
+
+.record-item strong {
+  color: #FFFFFF;
+  font-weight: 500;
+}
+
+.loading-text,
+.no-data {
+  color: #A0A0A0;
+  font-size: 1rem;
+  text-align: center;
+  margin-top: 20px;
+}
+
+/* Media Queries */
+@media (max-width: 768px) {
+  .profile-header h2 {
+    font-size: 1.5rem;
+  }
+
+  .profile-content {
+    padding: 0 15px;
+  }
+
+  .patient-details,
+  .patient-records {
+    padding: 15px;
+  }
+
+  .details-card,
+  .record-item {
+    padding: 10px;
+  }
+
+  .patient-details h3,
+  .patient-records h3 {
+    font-size: 1.3rem;
+  }
+}
