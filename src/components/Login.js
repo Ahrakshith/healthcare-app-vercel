@@ -7,7 +7,7 @@ import { auth, db } from '../services/firebase.js';
 function Login({ setUser, setRole, setPatientId, user, setError: setParentError }) {
   const [userType, setUserType] = useState(''); // New state for user type
   const [email, setEmail] = useState('');
-  const [patientId, setPatientId] = useState(''); // New state for patientId
+  const [patientId, setLocalPatientId] = useState(''); // Renamed to avoid conflict with prop
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -384,7 +384,7 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
                 onChange={(e) => {
                   setUserType(e.target.value);
                   setError('');
-                  setPatientId('');
+                  setLocalPatientId(''); // Updated to use renamed setter
                   setEmail('');
                 }}
                 required
@@ -402,7 +402,7 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
                   type="text"
                   id="patientId"
                   value={patientId}
-                  onChange={handleInputChange(setPatientId)}
+                  onChange={handleInputChange(setLocalPatientId)} // Updated to use renamed setter
                   required
                   placeholder="Enter your Patient ID"
                 />
