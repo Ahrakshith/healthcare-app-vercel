@@ -2,7 +2,7 @@ import admin from 'firebase-admin';
 import Pusher from 'pusher';
 import { Storage } from '@google-cloud/storage';
 import busboy from 'busboy';
-import bcrypt from 'bcrypt';
+import bcryptjs from 'bcryptjs';
 import twilio from 'twilio';
 
 // Initialize Firebase Admin
@@ -810,7 +810,7 @@ const handleRegisterPatientRequest = async (req, res, userId) => {
         }
 
         // Hash the password
-        const hashedPassword = await bcrypt.hash(password, 10);
+        const hashedPassword = await bcryptjs.hash(password, 10);
 
         // Create patient UID
         const patientUid = `patient-${patientId}`;
