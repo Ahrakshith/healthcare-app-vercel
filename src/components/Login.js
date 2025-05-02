@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { signInWithEmailAndPassword, onAuthStateChanged } from 'firebase/auth';
+import { signInWithEmailAndPassword, onAuthStateChanged, signOut } from 'firebase/auth';
 import { doc, getDoc, query, collection, where, getDocs } from 'firebase/firestore';
 import { auth, db } from '../services/firebase.js';
 
@@ -50,12 +50,12 @@ function PatientIdRecovery({ setError }) {
 
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.error.message || 'Recovery failed');
+        throw new Error(errorData.error?.message || 'Recovery failed');
       }
 
       setSuccess('Your Patient ID has been sent to your phone number via SMS.');
     } catch (err) {
-      setError(err.message);
+      setError(`Recovery failed: ${err.message}`);
     } finally {
       setIsLoading(false);
     }
@@ -120,7 +120,7 @@ function PatientIdRecovery({ setError }) {
 }
 
 function Login({ setUser, setRole, setPatientId, user, setError: setParentError }) {
-  const [loginType, setLoginType] = useState('patient'); // 'patient' or 'doctorAdmin'
+  const [loginType, setLoginType] = useState('patient');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [patientId, setPatientIdInput] = useState('');
@@ -143,47 +143,34 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
         console.log('User already authenticated:', { uid: firebaseUser.uid, email: firebaseUser.email });
 
         try {
-          const idToken = await firebaseUser.getIdToken(true);
-          const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
-          const response = await fetch(`${apiUrl}/users/${firebaseUser.uid}`, {
-            method: 'GET',
-            headers: {
-              'Authorization': `Bearer ${idToken}`,
-              'x-user-uid': firebaseUser.uid,
-              'Content-Type': 'application/json',
-              'Accept': 'application/json',
-            },
-            credentials: 'include',
-          });
-
-          const responseText = await response.text();
-          console.log('API response for auth state:', {
-            status: response.status,
-            ok: response.ok,
-            rawResponse: responseText.substring(0, 100) + (responseText.length > 100 ? '...' : ''),
-          });
-
+          const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
           let userData;
-          if (response.ok) {
-            try {
-              userData = JSON.parse(responseText);
-              if (!userData || typeof userData !== 'object' || !userData.role) {
-                throw new Error('Invalid user data structure or missing role');
-              }
-            } catch (parseError) {
-              console.error('JSON parsing failed during auth state change:', parseError.message, 'Raw response:', responseText);
-              throw new Error('Invalid JSON response from server');
-            }
-          } else {
-            console.warn('API request failed, falling back to Firestore', { status: response.status });
-            const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
-            if (!userDoc.exists()) {
-              throw new Error('User not found in Firestore');
-            }
+          if (userDoc.exists()) {
             userData = userDoc.data();
-            if (!userData.role) {
-              throw new Error('Missing role in Firestore user data');
+          } else {
+            // If not in 'users', check 'patients' collection
+            const patientQuery = await getDocs(
+              query(collection(db, 'patients'), where('uid', '==', firebaseUser.uid))
+            );
+            if (!patientQuery.empty) {
+              userData = patientQuery.docs[0].data();
+              userData.role = 'patient';
+            } else {
+              // Check 'doctors' collection
+              const doctorQuery = await getDocs(
+                query(collection(db, 'doctors'), where('uid', '==', firebaseUser.uid))
+              );
+              if (!doctorQuery.empty) {
+                userData = doctorQuery.docs[0].data();
+                userData.role = 'doctor';
+              } else {
+                throw new Error('User data not found in Firestore');
+              }
             }
+          }
+
+          if (!userData.role) {
+            throw new Error('Missing role in Firestore user data');
           }
 
           const updatedUser = {
@@ -194,6 +181,8 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
             name: userData.name || null,
             sex: userData.sex || null,
             age: userData.age || null,
+            dateOfBirth: userData.dateOfBirth || null,
+            languagePreference: userData.languagePreference || 'en',
           };
 
           setUser(updatedUser);
@@ -203,6 +192,15 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
             localStorage.setItem('patientId', userData.patientId);
           }
           localStorage.setItem('userId', firebaseUser.uid);
+
+          // Redirect based on role
+          if (userData.role === 'patient') {
+            navigate('/patient/select-doctor');
+          } else if (userData.role === 'doctor') {
+            navigate('/doctor');
+          } else if (userData.role === 'admin') {
+            navigate('/admin');
+          }
         } catch (error) {
           console.error('Error during auth state change:', error.message);
           setError(`Authentication error: ${error.message}`);
@@ -281,6 +279,8 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
         email: patientEmail,
         sex: patientData.sex,
         age: patientData.age,
+        dateOfBirth: patientData.dateOfBirth,
+        languagePreference: patientData.languagePreference,
       };
 
       setUser(updatedUser);
@@ -318,113 +318,61 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
     if (!email.trim()) {
       setError('Email is required.');
       setIsLoading(false);
-      console.error('Login validation error: Email is empty');
       return;
     }
-
-    if (!email.endsWith('@gmail.com')) {
-      setError('Please enter a valid Gmail address (e.g., example@gmail.com).');
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      setError('Please enter a valid email address.');
       setIsLoading(false);
-      console.error('Login validation error: Invalid email domain, must end with @gmail.com');
       return;
     }
-
-    console.log('Attempting login with:', { email, password });
+    if (!password) {
+      setError('Password is required.');
+      setIsLoading(false);
+      return;
+    }
 
     try {
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       const firebaseUser = userCredential.user;
-      console.log('User logged in successfully:', { uid: firebaseUser.uid, email: firebaseUser.email });
 
-      const idToken = await firebaseUser.getIdToken(true);
-      console.log('Firebase ID token:', idToken.substring(0, 10) + '...');
-
-      const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
-      console.log('Fetching user data from:', `${apiUrl}/users/${firebaseUser.uid}`);
-
-      let response;
-      let attempt = 0;
-      const maxAttempts = 3;
+      // Check if the user is a doctor or admin in Firestore
+      const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
       let userData;
-      while (attempt < maxAttempts) {
-        response = await fetch(`${apiUrl}/users/${firebaseUser.uid}`, {
-          method: 'GET',
-          headers: {
-            'Authorization': `Bearer ${idToken}`,
-            'x-user-uid': firebaseUser.uid,
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-          },
-          credentials: 'include',
-        });
+      let role;
 
-        const responseText = await response.text();
-        console.log(`API response (attempt ${attempt + 1}/${maxAttempts}):`, {
-          status: response.status,
-          ok: response.ok,
-          rawResponse: responseText.substring(0, 100) + (responseText.length > 100 ? '...' : ''),
-        });
-
-        if (!response.ok) {
-          console.warn('API request failed, falling back to Firestore', { status: response.status });
-          const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
-          if (!userDoc.exists()) {
-            throw new Error('User not found in Firestore');
-          }
-          userData = userDoc.data();
-          if (!userData.role) {
-            throw new Error('Missing role in Firestore user data');
-          }
-          break;
-        }
-
-        try {
-          userData = JSON.parse(responseText);
-          if (!userData || typeof userData !== 'object' || !userData.role) {
-            throw new Error('Invalid user data structure or missing role');
-          }
-          break;
-        } catch (parseError) {
-          console.error('JSON parsing failed:', parseError.message, 'Raw response:', responseText);
-          if (attempt === maxAttempts - 1) {
-            console.warn('Falling back to Firestore after failed retries');
-            const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
-            if (!userDoc.exists()) {
-              throw new Error('User not found in Firestore');
-            }
-            userData = userDoc.data();
-            if (!userData.role) {
-              throw new Error('Missing role in Firestore user data');
-            }
-            break;
-          }
-          attempt++;
-          await new Promise((resolve) => setTimeout(resolve, 1000 * attempt));
+      if (userDoc.exists()) {
+        userData = userDoc.data();
+        role = userData.role;
+      } else {
+        const doctorQuery = await getDocs(
+          query(collection(db, 'doctors'), where('uid', '==', firebaseUser.uid))
+        );
+        if (!doctorQuery.empty) {
+          userData = doctorQuery.docs[0].data();
+          role = 'doctor';
+        } else {
+          throw new Error('User data not found in Firestore');
         }
       }
 
       const updatedUser = {
         uid: firebaseUser.uid,
         email,
-        role: userData.role,
-        patientId: userData.patientId || null,
+        role: role,
         name: userData.name || null,
-        sex: userData.sex || null,
-        age: userData.age || null,
       };
 
-      console.log('Setting user state:', updatedUser);
       setUser(updatedUser);
-      setRole(userData.role);
-      if (userData.role === 'patient' && userData.patientId) {
-        setPatientId(userData.patientId);
-        localStorage.setItem('patientId', userData.patientId);
-        console.log('Set patientId in localStorage:', userData.patientId);
-      }
+      setRole(role);
       localStorage.setItem('userId', firebaseUser.uid);
-      console.log('Set userId in localStorage:', firebaseUser.uid);
+
+      if (role === 'doctor') {
+        navigate('/doctor');
+      } else if (role === 'admin') {
+        navigate('/admin');
+      }
     } catch (error) {
-      console.error('Login process error:', { message: error.message, code: error.code, stack: error.stack });
       let errorMessage = 'Login failed. Please try again.';
       if (error.code === 'auth/invalid-credential') {
         errorMessage = 'Invalid email or password. Please try again.';
@@ -432,19 +380,12 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
         errorMessage = 'User not found. Please register first.';
       } else if (error.code === 'auth/wrong-password') {
         errorMessage = 'Incorrect password. Please try again.';
-      } else if (error.message.includes('User not found in Firestore')) {
-        errorMessage = 'User data not found. Please register or contact support.';
-      } else if (error.message.includes('Missing role')) {
-        errorMessage = 'User role not configured. Please contact support.';
-      } else if (error.message.includes('HTTP error') || error.message.includes('invalid JSON')) {
-        errorMessage = 'Server error: Unable to fetch user data. Please try again later or contact support.';
-      } else {
-        errorMessage = `Login failed: ${error.message}`;
+      } else if (error.message.includes('User data not found')) {
+        errorMessage = 'User data not found. Please contact support.';
       }
       setError(errorMessage);
       setParentError(errorMessage);
     } finally {
-      console.log('Login process completed, isLoading set to false');
       setIsLoading(false);
     }
   };
@@ -458,8 +399,22 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
   };
 
   const goToRegister = () => {
-    console.log('First Time Login clicked, redirecting to /register');
     navigate('/register');
+  };
+
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      setUser(null);
+      setRole(null);
+      setPatientId(null);
+      localStorage.removeItem('userId');
+      localStorage.removeItem('patientId');
+      navigate('/login');
+    } catch (error) {
+      setError('Failed to log out. Please try again.');
+      setParentError('Failed to log out. Please try again.');
+    }
   };
 
   return (
@@ -516,7 +471,7 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
                   value={email}
                   onChange={handleInputChange(setEmail)}
                   required
-                  placeholder="Enter your Gmail address (e.g., example@gmail.com)"
+                  placeholder="Enter your email address"
                 />
               </div>
               <div className="form-group">
@@ -574,6 +529,11 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
             Register here
           </span>
         </p>
+        {user && (
+          <button onClick={handleLogout} className="logout-button">
+            Logout
+          </button>
+        )}
         {showRecovery && <PatientIdRecovery setError={setError} />}
       </div>
 
@@ -704,7 +664,9 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
           margin-bottom: 20px;
         }
 
-        .login-button, .recover-button {
+        .login-button,
+        .recover-button,
+        .logout-button {
           width: 100%;
           padding: 12px;
           border: none;
@@ -717,46 +679,60 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
           overflow: hidden;
           background: #6E48AA;
           color: #FFFFFF;
+          margin-top: 10px;
         }
 
-        .login-button:disabled, .recover-button:disabled {
+        .logout-button {
+          background: #ff4d4d;
+        }
+
+        .login-button:disabled,
+        .recover-button:disabled,
+        .logout-button:disabled {
           background: #666;
           color: #A0A0A0;
           cursor: not-allowed;
         }
 
-        .login-button:hover:not(:disabled), .recover-button:hover:not(:disabled) {
+        .login-button:hover:not(:disabled),
+        .recover-button:hover:not(:disabled) {
           transform: scale(1.05);
           background: #5A3E8B;
         }
 
-        .login-button::before, .recover-button::before {
+        .logout-button:hover:not(:disabled) {
+          transform: scale(1.05);
+          background: #e43c3c;
+        }
+
+        .login-button::before,
+        .recover-button::before,
+        .logout-button::before {
           content: '';
           position: absolute;
           top: 0;
           left: -100%;
           width: 100%;
           height: 100%;
-          background: linear-gradient(
-            90deg,
-            transparent,
-            rgba(255, 255, 255, 0.2),
-            transparent
-          );
+          background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
           transition: 0.5s;
         }
 
-        .login-button:hover::before, .recover-button:hover::before {
+        .login-button:hover::before,
+        .recover-button:hover::before,
+        .logout-button:hover::before {
           left: 100%;
         }
 
-        .recovery-prompt, .register-prompt {
+        .recovery-prompt,
+        .register-prompt {
           margin-top: 20px;
           font-size: 0.95rem;
           color: #E0E0E0;
         }
 
-        .recovery-link, .register-link {
+        .recovery-link,
+        .register-link {
           color: #6E48AA;
           font-weight: 600;
           cursor: pointer;
@@ -764,7 +740,8 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
           display: inline-block;
         }
 
-        .recovery-link:hover, .register-link:hover {
+        .recovery-link:hover,
+        .register-link:hover {
           color: #5A3E8B;
           transform: translateX(5px);
         }
@@ -801,13 +778,21 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
         }
 
         @keyframes shake {
-          0%, 100% {
+          0%,
+          100% {
             transform: translateX(0);
           }
-          10%, 30%, 50%, 70%, 90% {
+          10%,
+          30%,
+          50%,
+          70%,
+          90% {
             transform: translateX(-5px);
           }
-          20%, 40%, 60%, 80% {
+          20%,
+          40%,
+          60%,
+          80% {
             transform: translateX(5px);
           }
         }

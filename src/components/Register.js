@@ -1,16 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { doc, setDoc, getDocs, query, collection, where } from 'firebase/firestore';
 import { getAuth, createUserWithEmailAndPassword } from 'firebase/auth';
 import { db } from '../services/firebase.js';
 
 function Register({ setUser, setRole, user }) {
   const [name, setName] = useState('');
-  const [email, setEmail] = useState(''); // Added email state
+  const [email, setEmail] = useState('');
   const [sex, setSex] = useState('');
+  const [dateOfBirth, setDateOfBirth] = useState(''); // Added dateOfBirth field
   const [age, setAge] = useState('');
   const [address, setAddress] = useState('');
-  const [patientId, setPatientId] = useState('');
+  const [languagePreference, setLanguagePreference] = useState('en'); // Added languagePreference
   const [password, setPassword] = useState('');
   const [aadhaarNumber, setAadhaarNumber] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
@@ -23,41 +23,9 @@ function Register({ setUser, setRole, user }) {
 
   const { username: initialEmail, password: initialPassword } = location.state || {};
 
-  // Generate a unique 6-character alphanumeric patientId
-  const generatePatientId = async () => {
-    const characters = 'abcdefghijklmnopqrstuvwxyz0123456789';
-    let generatedId = '';
-    const patientIdsRef = collection(db, 'patients');
-
-    while (true) {
-      generatedId = '';
-      for (let i = 0; i < 6; i++) {
-        const randomIndex = Math.floor(Math.random() * characters.length);
-        generatedId += characters[randomIndex];
-      }
-
-      const q = query(patientIdsRef, where('patientId', '==', generatedId));
-      const querySnapshot = await getDocs(q);
-      if (querySnapshot.empty) break;
-      console.log(`Register.js: Generated patientId ${generatedId} already exists, regenerating...`);
-    }
-
-    return generatedId;
-  };
-
   useEffect(() => {
     if (initialEmail) setEmail(initialEmail);
     if (initialPassword) setPassword(initialPassword);
-
-    generatePatientId()
-      .then((uniqueId) => {
-        setPatientId(uniqueId);
-        console.log('Register.js: Generated unique patientId:', uniqueId);
-      })
-      .catch((err) => {
-        console.error('Register.js: Error generating patientId:', err);
-        setError('Failed to generate patient ID. Please try again.');
-      });
   }, [initialEmail, initialPassword]);
 
   const handleRegister = async (e) => {
@@ -71,7 +39,6 @@ function Register({ setUser, setRole, user }) {
       setIsLoading(false);
       return;
     }
-
     if (!name.trim()) {
       setError('Name is required.');
       setIsLoading(false);
@@ -93,6 +60,11 @@ function Register({ setUser, setRole, user }) {
       setIsLoading(false);
       return;
     }
+    if (!dateOfBirth) {
+      setError('Date of Birth is required.');
+      setIsLoading(false);
+      return;
+    }
     if (!age || isNaN(age) || age <= 0 || age > 120) {
       setError('Please enter a valid age (1-120).');
       setIsLoading(false);
@@ -103,8 +75,8 @@ function Register({ setUser, setRole, user }) {
       setIsLoading(false);
       return;
     }
-    if (!patientId) {
-      setError('Patient ID generation failed. Please try again.');
+    if (!languagePreference) {
+      setError('Language preference is required.');
       setIsLoading(false);
       return;
     }
@@ -141,7 +113,18 @@ function Register({ setUser, setRole, user }) {
       return;
     }
 
-    console.log('Register.js: Attempting registration with:', { name, email, patientId, password, aadhaarNumber, phoneNumber });
+    console.log('Register.js: Attempting registration with:', {
+      name,
+      email,
+      sex,
+      dateOfBirth,
+      age,
+      address,
+      languagePreference,
+      password,
+      aadhaarNumber,
+      phoneNumber,
+    });
 
     try {
       // Create a Firebase Auth user with the provided email and password
@@ -155,14 +138,14 @@ function Register({ setUser, setRole, user }) {
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${await firebaseUser.getIdToken()}`,
-          'x-user-uid': 'admin-uid', // Replace with actual admin UID or fetch dynamically
+          'x-user-uid': firebaseUser.uid, // Use the Firebase UID as the user ID
         },
         body: JSON.stringify({
           name,
-          email, // Include email in the request
-          dateOfBirth: '1990-01-15', // Add a field in the form if needed
+          email,
+          dateOfBirth,
           age: parseInt(age),
-          languagePreference: 'en',
+          languagePreference,
           password, // Backend will hash this
           aadhaarNumber,
           phoneNumber,
@@ -171,7 +154,7 @@ function Register({ setUser, setRole, user }) {
 
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.error.message || 'Registration failed');
+        throw new Error(errorData.error?.message || 'Registration failed');
       }
 
       const data = await response.json();
@@ -185,8 +168,10 @@ function Register({ setUser, setRole, user }) {
         name,
         email,
         sex,
+        dateOfBirth,
         age: parseInt(age),
         address,
+        languagePreference,
       };
       setUser(updatedUser);
       setRole('patient');
@@ -204,6 +189,7 @@ function Register({ setUser, setRole, user }) {
 
   const handleLogout = async () => {
     try {
+      await auth.signOut();
       setUser(null);
       setRole(null);
       localStorage.removeItem('userId');
@@ -276,17 +262,22 @@ function Register({ setUser, setRole, user }) {
           <h3>Additional Details</h3>
           <div className="form-group">
             <label htmlFor="sex">Sex</label>
-            <select
-              id="sex"
-              value={sex}
-              onChange={(e) => setSex(e.target.value)}
-              required
-            >
+            <select id="sex" value={sex} onChange={(e) => setSex(e.target.value)} required>
               <option value="" disabled>Select sex</option>
               <option value="Male">Male</option>
               <option value="Female">Female</option>
               <option value="Other">Other</option>
             </select>
+          </div>
+          <div className="form-group">
+            <label htmlFor="dateOfBirth">Date of Birth</label>
+            <input
+              type="date"
+              id="dateOfBirth"
+              value={dateOfBirth}
+              onChange={(e) => setDateOfBirth(e.target.value)}
+              required
+            />
           </div>
           <div className="form-group">
             <label htmlFor="age">Age</label>
@@ -313,6 +304,19 @@ function Register({ setUser, setRole, user }) {
             />
           </div>
           <div className="form-group">
+            <label htmlFor="languagePreference">Language Preference</label>
+            <select
+              id="languagePreference"
+              value={languagePreference}
+              onChange={(e) => setLanguagePreference(e.target.value)}
+              required
+            >
+              <option value="en">English</option>
+              <option value="hi">Hindi</option>
+              <option value="es">Spanish</option>
+            </select>
+          </div>
+          <div className="form-group">
             <label htmlFor="phoneNumber">Phone Number</label>
             <input
               type="text"
@@ -321,16 +325,6 @@ function Register({ setUser, setRole, user }) {
               onChange={(e) => setPhoneNumber(e.target.value)}
               required
               placeholder="Enter your phone number (e.g., +919876543210)"
-            />
-          </div>
-          <div className="form-group">
-            <label htmlFor="patientId">Patient ID</label>
-            <input
-              type="text"
-              id="patientId"
-              value={patientId}
-              readOnly
-              placeholder="Auto-generated Patient ID"
             />
           </div>
           {error && <p className="error-message">{error}</p>}
@@ -345,11 +339,7 @@ function Register({ setUser, setRole, user }) {
               I accept the terms and conditions of this site.
             </label>
           </div>
-          <button
-            onClick={handleRegister}
-            disabled={isLoading}
-            className="register-button"
-          >
+          <button onClick={handleRegister} disabled={isLoading} className="register-button">
             {isLoading ? (
               <svg
                 className="spinner"
@@ -504,12 +494,6 @@ function Register({ setUser, setRole, user }) {
 
         select:invalid {
           color: #bbb;
-        }
-
-        input[readonly] {
-          background: #e9ecef;
-          cursor: not-allowed;
-          color: #333;
         }
 
         .error-message {
