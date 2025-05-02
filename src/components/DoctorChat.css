@@ -94,6 +94,83 @@
   padding: 20px;
 }
 
+.records-sidebar {
+  width: 0;
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(10px);
+  padding: 0;
+  border-right: 1px solid rgba(255, 255, 255, 0.1);
+  overflow-y: auto;
+  transition: width 0.3s ease, padding 0.3s ease;
+}
+
+.records-sidebar.open {
+  width: 300px;
+  padding: 20px;
+}
+
+.records-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.records-header h3 {
+  font-size: 1.5rem;
+  color: #FFFFFF;
+}
+
+.close-records {
+  background: none;
+  border: none;
+  color: #FFFFFF;
+  font-size: 1.5rem;
+  cursor: pointer;
+  transition: transform 0.3s ease;
+}
+
+.close-records:hover {
+  transform: scale(1.1);
+}
+
+.records-list {
+  list-style: none;
+}
+
+.record-item {
+  padding: 15px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  margin-bottom: 10px;
+  transition: background 0.3s ease, transform 0.3s ease;
+}
+
+.record-item:hover {
+  background: rgba(255, 255, 255, 0.2);
+  transform: translateX(5px);
+}
+
+.record-item div {
+  margin-bottom: 8px;
+}
+
+.record-item strong {
+  color: #FFFFFF;
+  font-weight: 500;
+}
+
+.record-item span {
+  font-size: 0.95rem;
+  color: #E0E0E0;
+}
+
+.record-item .prescription {
+  font-style: italic;
+  color: #B0B0B0;
+  font-size: 0.9rem;
+}
+
 .sidebar-header {
   display: flex;
   justify-content: space-between;
@@ -272,7 +349,7 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  background:#e74c3c;
+  background: #e74c3c;
   padding: 15px;
   border-radius: 10px;
   margin-bottom: 10px;
@@ -445,7 +522,6 @@
 
 .recommendation-item div {
   display: flex;
-
   gap: 10px;
   flex-wrap: wrap;
 }
@@ -805,6 +881,9 @@
   }
   .patient-sidebar.open {
     width: 200px;
+  }
+  .records-sidebar.open {
+    width: 250px;
   }
   .message {
     max-width: 85%;
