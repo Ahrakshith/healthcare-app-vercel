@@ -10,6 +10,7 @@ import DoctorChat from './components/DoctorChat.js';
 import AdminDashboard from './components/AdminDashboard.js';
 import SelectDoctor from './components/SelectDoctor.js';
 import LanguagePreference from './components/LanguagePreference.js';
+import PatientProfile from './components/PatientProfile.js'; // Added import for PatientProfile
 import './components/patient.css';
 
 // Custom 404 Component
@@ -365,6 +366,16 @@ function App() {
           element={
             user && role === 'doctor' && !isLoggingOut ? (
               <DoctorChat user={user} role={role} handleLogout={handleLogout} setError={setError} />
+            ) : (
+              <Navigate to="/login" replace />
+            )
+          }
+        />
+        <Route
+          path="/patient-profile/:patientId"
+          element={
+            user && role === 'doctor' && !isLoggingOut ? (
+              <PatientProfile user={user} setError={setError} />
             ) : (
               <Navigate to="/login" replace />
             )
