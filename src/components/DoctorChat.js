@@ -36,6 +36,8 @@ function DoctorChat({ user, role, handleLogout, setError }) {
   const [actionType, setActionType] = useState('');
   const [patientMessageTimestamps, setPatientMessageTimestamps] = useState({});
   const [acceptedPatients, setAcceptedPatients] = useState({});
+  const [showPatientProfile, setShowPatientProfile] = useState(false);
+  const [patientRecords, setPatientRecords] = useState([]);
   const audioRef = useRef(new Audio());
   const messagesEndRef = useRef(null);
   const audioChunksRef = useRef([]);
@@ -175,6 +177,74 @@ function DoctorChat({ user, role, handleLogout, setError }) {
       throw error;
     }
   };
+
+  const fetchPatientRecords = useCallback(async () => {
+    console.log('Fetching patient records for patient:', selectedPatientId);
+    if (!selectedPatientId || !user?.uid) return;
+
+    try {
+      // Step 1: Fetch all doctors assigned to this patient
+      const doctorAssignmentsQuery = query(collection(db, 'doctor_assignments'), where('patientId', '==', selectedPatientId));
+      const doctorAssignmentsSnapshot = await getDocs(doctorAssignmentsQuery);
+      const doctorIds = doctorAssignmentsSnapshot.docs.map(doc => doc.data().doctorId);
+      console.log('Doctor IDs assigned to patient:', doctorIds);
+
+      // Step 2: Fetch chat messages for each doctor and extract diagnosis/prescription
+      const records = [];
+      const idToken = await getIdToken();
+
+      for (const docId of doctorIds) {
+        try {
+          const response = await fetch(`${apiBaseUrl}/chats/${selectedPatientId}/${docId}`, {
+            method: 'GET',
+            headers: {
+              'x-user-uid': user.uid,
+              'Authorization': `Bearer ${idToken}`,
+              'Content-Type': 'application/json',
+            },
+            credentials: 'include',
+          });
+
+          console.log(`Fetch chat messages response status for doctor ${docId}:`, response.status);
+          if (!response.ok) {
+            console.warn(`Failed to fetch messages for doctor ${docId}: HTTP ${response.status}`);
+            continue;
+          }
+
+          const data = await response.json();
+          const messages = data.messages || [];
+          console.log(`Messages fetched for doctor ${docId}:`, messages.length);
+
+          // Filter messages for diagnosis or prescription
+          const doctorRecords = messages
+            .filter(msg => msg.sender === 'doctor' && (msg.diagnosis || msg.prescription))
+            .map(msg => ({
+              doctorId: docId,
+              timestamp: msg.timestamp,
+              diagnosis: msg.diagnosis || 'Not specified',
+              prescription: msg.prescription
+                ? (typeof msg.prescription === 'object'
+                  ? `${msg.prescription.medicine}, ${msg.prescription.dosage}, ${msg.prescription.frequency}, ${msg.prescription.duration} days`
+                  : msg.prescription)
+                : 'None',
+            }));
+
+          records.push(...doctorRecords);
+        } catch (err) {
+          console.error(`Error fetching messages for doctor ${docId}:`, err.message);
+        }
+      }
+
+      // Sort records by timestamp (most recent first)
+      records.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+      console.log('Aggregated patient records:', records);
+      setPatientRecords(records);
+    } catch (err) {
+      const errorMsg = `Error fetching patient records: ${err.message}`;
+      setError(errorMsg);
+      console.error('Fetch patient records error:', err);
+    }
+  }, [selectedPatientId, user?.uid, apiBaseUrl, setError]);
 
   useEffect(() => {
     console.log('Setting up Pusher and fetching data for patient:', selectedPatientId);
@@ -960,6 +1030,8 @@ function DoctorChat({ user, role, handleLogout, setError }) {
             setSelectedPatientName(patient.patientName);
             setMissedDoseAlerts([]);
             setMenuOpen(false);
+            setPatientRecords([]);
+            setShowPatientProfile(false);
             console.log('Selected patient:', patient);
           }}
           tabIndex={0}
@@ -981,6 +1053,17 @@ function DoctorChat({ user, role, handleLogout, setError }) {
         </button>
         <h2>{selectedPatientId ? `Chat with ${selectedPatientName}` : 'Doctor Dashboard'}</h2>
         <div className="header-actions">
+          <button
+            onClick={() => {
+              setShowPatientProfile(true);
+              fetchPatientRecords();
+            }}
+            className="patient-profile-button"
+            disabled={!selectedPatientId}
+            aria-label="View patient profile"
+          >
+            Patient Profile
+          </button>
           <button onClick={onLogout} className="logout-button" aria-label="Log out">
             Logout
           </button>
@@ -1002,7 +1085,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
             patientList
           )}
         </div>
-        <div className="chat-content">
+        <decoratediv className="chat-content">
           {selectedPatientId ? (
             diagnosisPrompt === selectedPatientId ? (
               <div className="diagnosis-prompt">
@@ -1032,6 +1115,34 @@ function DoctorChat({ user, role, handleLogout, setError }) {
               </div>
             ) : (
               <div className="chat-main">
+                {showPatientProfile && (
+                  <div className="patient-profile-modal">
+                    <div className="modal-content">
+                      <h3>Patient Records for {selectedPatientName} (ID: {selectedPatientId})</h3>
+                      {patientRecords.length > 0 ? (
+                        <div className="records-list">
+                          {patientRecords.map((record, index) => (
+                            <div key={index} className="record-item">
+                              <p><strong>Doctor ID:</strong> {record.doctorId}</p>
+                              <p><strong>Timestamp:</strong> {new Date(record.timestamp).toLocaleString()}</p>
+                              <p><strong>Diagnosis:</strong> {record.diagnosis}</p>
+                              <p><strong>Prescription:</strong> {record.prescription}</p>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p>No records found for this patient.</p>
+                      )}
+                      <button
+                        onClick={() => setShowPatientProfile(false)}
+                        className="close-modal-button"
+                        aria-label="Close patient profile modal"
+                      >
+                        Close
+                      </button>
+                    </div>
+                  </div>
+                )}
                 {missedDoseAlerts.length > 0 && (
                   <div className="missed-dose-alerts">
                     <h3>Missed Dose Alerts</h3>
