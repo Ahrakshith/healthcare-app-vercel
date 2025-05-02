@@ -111,7 +111,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           timestamp: doc.data().timestamp,
           patientName: doc.data().patientName || `Patient ${doc.data().patientId}`,
           age: doc.data().age || 'N/A',
-          sex: doc.data().sex || 'N/A',
+          suppsex: doc.data().sex || 'N/A',
         }));
         setPatients(assignedPatients);
         setLoadingPatients(false);
@@ -189,7 +189,27 @@ function DoctorChat({ user, role, handleLogout, setError }) {
       const doctorIds = doctorAssignmentsSnapshot.docs.map(doc => doc.data().doctorId);
       console.log('Doctor IDs assigned to patient:', doctorIds);
 
-      // Step 2: Fetch chat messages for each doctor and extract diagnosis/prescription
+      // Step 2: Fetch doctor names for each doctorId
+      const doctorNames = {};
+      for (const docId of doctorIds) {
+        try {
+          const doctorQuery = query(collection(db, 'doctors'), where('doctorId', '==', docId));
+          const doctorSnapshot = await getDocs(doctorQuery);
+          if (!doctorSnapshot.empty) {
+            const doctorData = doctorSnapshot.docs[0].data();
+            doctorNames[docId] = doctorData.name || `Doctor ${docId}`;
+            console.log(`Doctor name fetched for ${docId}:`, doctorNames[docId]);
+          } else {
+            doctorNames[docId] = `Doctor ${docId}`;
+            console.log(`No name found for doctor ${docId}, using default name`);
+          }
+        } catch (err) {
+          console.error(`Error fetching name for doctor ${docId}:`, err.message);
+          doctorNames[docId] = `Doctor ${docId}`;
+        }
+      }
+
+      // Step 3: Fetch chat messages for each doctor and extract diagnosis/prescription
       const records = [];
       const idToken = await getIdToken();
 
@@ -220,6 +240,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
             .filter(msg => msg.sender === 'doctor' && (msg.diagnosis || msg.prescription))
             .map(msg => ({
               doctorId: docId,
+              doctorName: doctorNames[docId],
               timestamp: msg.timestamp,
               diagnosis: msg.diagnosis || 'Not specified',
               prescription: msg.prescription
@@ -1123,6 +1144,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
                         <div className="records-list">
                           {patientRecords.map((record, index) => (
                             <div key={index} className="record-item">
+                              <p><strong>Doctor Name:</strong> {record.doctorName}</p>
                               <p><strong>Doctor ID:</strong> {record.doctorId}</p>
                               <p><strong>Timestamp:</strong> {new Date(record.timestamp).toLocaleString()}</p>
                               <p><strong>Diagnosis:</strong> {record.diagnosis}</p>
