@@ -127,6 +127,21 @@ const initializeDoctorAssignment = async (patientId, doctorId) => {
   }
 };
 
+// Check if the doctor is assigned to the patient
+const isDoctorAssignedToPatient = async (doctorId, patientId) => {
+  try {
+    const assignmentId = `${patientId}_${doctorId}`;
+    const assignmentRef = db.collection('doctor_assignments').doc(assignmentId);
+    const assignmentDoc = await assignmentRef.get();
+    const isAssigned = assignmentDoc.exists;
+    console.log(`Doctor ${doctorId} assignment check for patient ${patientId}: ${isAssigned}`);
+    return isAssigned;
+  } catch (error) {
+    console.error(`Error checking doctor assignment for doctor ${doctorId} and patient ${patientId}:`, error.message);
+    throw error;
+  }
+};
+
 export default async function handler(req, res) {
   // CORS headers
   res.setHeader('Access-Control-Allow-Origin', 'https://healthcare-app-vercel.vercel.app');
@@ -170,7 +185,7 @@ export default async function handler(req, res) {
 
     const userData = userDoc.data();
     const isPatient = userData.role === 'patient' && userData.patientId === patientId;
-    const isDoctor = userData.role === 'doctor' && userData.doctorId === doctorId;
+    const isDoctor = userData.role === 'doctor';
     let isAuthorized = false;
     let userRole = null;
 
@@ -179,9 +194,16 @@ export default async function handler(req, res) {
       userRole = 'patient';
       console.log(`User ${userId} authorized as patient ${patientId}`);
     } else if (isDoctor) {
-      isAuthorized = true;
-      userRole = 'doctor';
-      console.log(`User ${userId} authorized as doctor ${doctorId}`);
+      // Check if the doctor is assigned to the patient
+      const doctorIdFromUser = userData.doctorId;
+      const isAssigned = await isDoctorAssignedToPatient(doctorIdFromUser, patientId);
+      if (isAssigned) {
+        isAuthorized = true;
+        userRole = 'doctor';
+        console.log(`User ${userId} authorized as doctor ${doctorIdFromUser} for patient ${patientId}`);
+      } else {
+        console.log(`User ${userId} (doctor ${doctorIdFromUser}) is not assigned to patient ${patientId}`);
+      }
     }
 
     if (!isAuthorized) {
