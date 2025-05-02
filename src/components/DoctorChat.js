@@ -1085,7 +1085,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
             patientList
           )}
         </div>
-        <decoratediv className="chat-content">
+        <div className="chat-content">
           {selectedPatientId ? (
             diagnosisPrompt === selectedPatientId ? (
               <div className="diagnosis-prompt">
