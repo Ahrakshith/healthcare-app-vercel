@@ -133,12 +133,62 @@ function Register({ setUser, setRole, user }) {
     console.log('Register.js: Attempting registration with:', { email, password, role: 'patient' });
 
     try {
-      // Step 1: Register user with Firebase Authentication
+      // Step 1: Check email uniqueness against Aadhaar number and patient ID in Firestore
+      const patientsRef = collection(db, 'patients');
+
+      // Check if email is already in use
+      const emailQuery = query(patientsRef, where('email', '==', email));
+      const emailSnapshot = await getDocs(emailQuery);
+
+      if (!emailSnapshot.empty) {
+        // Email is already in use, check Aadhaar number and patient ID
+        const existingPatient = emailSnapshot.docs[0].data();
+
+        // Check email against Aadhaar number
+        if (existingPatient.aadhaarNumber !== aadhaarNumber) {
+          setError('This email is already associated with a different Aadhaar number.');
+          setIsLoading(false);
+          return;
+        }
+
+        // Check email against patient ID
+        if (existingPatient.patientId !== patientId) {
+          setError('This email is already associated with a different patient ID.');
+          setIsLoading(false);
+          return;
+        }
+
+        // If we reach here, the email is already in use with the same Aadhaar number and patient ID,
+        // which shouldn't happen due to Firebase Auth, but we'll let the auth step handle it
+      }
+
+      // Step 2: Check Aadhaar number uniqueness (already in patients collection)
+      const aadhaarQuery = query(patientsRef, where('aadhaarNumber', '==', aadhaarNumber));
+      const aadhaarSnapshot = await getDocs(aadhaarQuery);
+      if (!aadhaarSnapshot.empty) {
+        const existingAadhaarPatient = aadhaarSnapshot.docs[0].data();
+        if (existingAadhaarPatient.email !== email) {
+          setError('This Aadhaar number is already associated with a different email.');
+          setIsLoading(false);
+          return;
+        }
+      }
+
+      // Step 3: Check phone number uniqueness (already in patients collection)
+      const phoneQuery = query(patientsRef, where('phoneNumber', '==', phoneNumber));
+      const phoneSnapshot = await getDocs(phoneQuery);
+      if (!phoneSnapshot.empty) {
+        setError('This phone number is already registered.');
+        setIsLoading(false);
+        return;
+      }
+
+      // Step 4: Register user with Firebase Authentication
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
       const firebaseUser = userCredential.user;
       console.log('Register.js: User registered in Firebase Auth:', firebaseUser.uid);
 
-      // Step 2: Store user data in Firestore (users collection)
+      // Step 5: Store user data in Firestore (users collection)
       const userData = {
         uid: firebaseUser.uid,
         email,
@@ -155,7 +205,7 @@ function Register({ setUser, setRole, user }) {
       await setDoc(doc(db, 'users', firebaseUser.uid), userData);
       console.log('Register.js: User data stored in Firestore (users):', firebaseUser.uid);
 
-      // Step 3: Store patient data in Firestore (patients collection)
+      // Step 6: Store patient data in Firestore (patients collection)
       const patientData = {
         uid: firebaseUser.uid,
         patientId,
@@ -174,7 +224,7 @@ function Register({ setUser, setRole, user }) {
       await setDoc(doc(db, 'patients', patientId), patientData);
       console.log('Register.js: Patient data stored in Firestore (patients):', patientId);
 
-      // Step 4: Call the backend to send SMS
+      // Step 7: Call the backend to notify admin via SMS
       const token = await firebaseUser.getIdToken();
       const response = await fetch(`${process.env.REACT_APP_API_URL}/admin/register-patient`, {
         method: 'POST',
@@ -200,9 +250,9 @@ function Register({ setUser, setRole, user }) {
       if (!response.ok || !result.success) {
         throw new Error(result.message || 'Failed to send SMS via backend');
       }
-      console.log('Register.js: SMS sent via backend:', result);
+      console.log('Register.js: Admin notified via backend:', result);
 
-      // Step 5: Update application state and redirect
+      // Step 8: Update application state and redirect
       const updatedUser = {
         uid: firebaseUser.uid,
         email,
@@ -716,5 +766,6 @@ function Register({ setUser, setRole, user }) {
     </div>
   );
 }
+
 
 export default Register;
