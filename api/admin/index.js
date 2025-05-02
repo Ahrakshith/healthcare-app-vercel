@@ -2,7 +2,7 @@ import admin from 'firebase-admin';
 import Pusher from 'pusher';
 import { Storage } from '@google-cloud/storage';
 import busboy from 'busboy';
-import bcrypt from 'bcrypt';
+import bcryptjs from 'bcryptjs';
 import twilio from 'twilio';
 
 // Initialize Firebase Admin
@@ -378,13 +378,12 @@ const handleChatRequest = async (req, res, patientId, doctorId, userId) => {
   }
 };
 
-// Handler for missed dose alerts (Updated with detailed logging and error handling)
+// Handler for missed dose alerts
 const handleMissedDoseAlertsRequest = async (req, res, patientId, doctorId, userId) => {
   if (req.method === 'GET') {
     try {
       console.log(`[DEBUG] Starting handleMissedDoseAlertsRequest for user ${userId}, patient ${patientId}, doctor ${doctorId}`);
 
-      // Step 1: Verify the user is a doctor and matches the doctorId
       console.log(`[DEBUG] Fetching doctor profile for user ${userId}`);
       const doctorQuery = await db.collection('doctors').where('uid', '==', userId).get();
       if (doctorQuery.empty) {
@@ -398,7 +397,6 @@ const handleMissedDoseAlertsRequest = async (req, res, patientId, doctorId, user
         return res.status(403).json({ success: false, message: 'You are not authorized to access alerts for this doctor' });
       }
 
-      // Step 2: Check if there is an assignment between the patient and doctor
       console.log(`[DEBUG] Checking assignment for patient ${patientId} and doctor ${doctorId}`);
       const assignmentQuery = await db.collection('doctor_assignments')
         .where('patientId', '==', patientId)
@@ -410,14 +408,12 @@ const handleMissedDoseAlertsRequest = async (req, res, patientId, doctorId, user
       }
       console.log(`[DEBUG] Assignment found:`, assignmentQuery.docs[0].data());
 
-      // Step 3: Fetch missed dose alerts
       console.log(`[DEBUG] Fetching missed dose alerts for patient ${patientId} and doctor ${doctorId}`);
       const alertsQuery = await db.collection('missed_dose_alerts')
         .where('patientId', '==', patientId)
         .where('doctorId', '==', doctorId)
         .get();
 
-      // Step 4: Map the alerts data
       const alerts = alertsQuery.docs.map((doc) => {
         const data = doc.data();
         console.log(`[DEBUG] Alert data for doc ${doc.id}:`, data);
@@ -454,7 +450,6 @@ const handleAdminNotifyRequest = async (req, res, userId) => {
         return res.status(400).json({ success: false, message: 'patientId, doctorId, and message are required' });
       }
 
-      // Verify the user is authorized (either patient or doctor)
       const patientQuery = await db.collection('patients').where('uid', '==', userId).get();
       const doctorQuery = await db.collection('doctors').where('uid', '==', userId).get();
       let isAuthorized = false;
@@ -472,7 +467,6 @@ const handleAdminNotifyRequest = async (req, res, userId) => {
         return res.status(403).json({ success: false, message: 'You are not authorized to send this notification' });
       }
 
-      // Store the notification in Firestore
       const notificationRef = db.collection('notifications').doc();
       await notificationRef.set({
         patientId,
@@ -483,7 +477,6 @@ const handleAdminNotifyRequest = async (req, res, userId) => {
       });
       console.log(`[DEBUG] Notification stored in Firestore with ID: ${notificationRef.id}`);
 
-      // Trigger Pusher event to notify the doctor
       await pusher.trigger(`chat-${patientId}-${doctorId}`, 'admin-notification', {
         id: notificationRef.id,
         patientId,
@@ -500,7 +493,6 @@ const handleAdminNotifyRequest = async (req, res, userId) => {
       return res.status(500).json({ success: false, message: 'Failed to send notification', details: error.message });
     }
   } else {
-    console.log(`[DEBUG] Method ${req.method} not allowed for /admin/notify`);
     res.setHeader('Allow', ['POST']);
     return res.status(405).json({ success: false, message: `Method ${req.method} Not Allowed for /admin/notify` });
   }
@@ -516,7 +508,6 @@ const handleAcceptPatientRequest = async (req, res, userId) => {
         return res.status(400).json({ success: false, message: 'doctorId, patientId, and accept (boolean) are required' });
       }
 
-      // Verify the user is the doctor
       const doctorQuery = await db.collection('doctors').where('uid', '==', userId).get();
       if (doctorQuery.empty) {
         return res.status(404).json({ success: false, message: 'Doctor profile not found for this user' });
@@ -526,7 +517,6 @@ const handleAcceptPatientRequest = async (req, res, userId) => {
         return res.status(403).json({ success: false, message: 'You are not authorized to perform this action as this doctor' });
       }
 
-      // Check if the patient is assigned to this doctor
       const assignmentQuery = await db.collection('doctor_assignments')
         .where('patientId', '==', patientId)
         .where('doctorId', '==', doctorId)
@@ -535,7 +525,6 @@ const handleAcceptPatientRequest = async (req, res, userId) => {
         return res.status(404).json({ success: false, message: 'No assignment found for this patient and doctor' });
       }
 
-      // Update the acceptance status in Firestore
       const acceptedRef = db.collection('doctor_accepted_patients').doc(doctorId);
       const acceptedDoc = await acceptedRef.get();
       let acceptedPatients = {};
@@ -572,7 +561,6 @@ const handleDeleteDoctorRequest = async (req, res, userId) => {
         return res.status(400).json({ success: false, message: 'doctorId is required' });
       }
 
-      // Verify the user is an admin
       const userDoc = await db.collection('users').doc(userId).get();
       console.log(`[DEBUG] Admin check for delete-doctor, user ${userId}: Document exists = ${userDoc.exists}`);
       if (!userDoc.exists || userDoc.data().role !== 'admin') {
@@ -580,7 +568,6 @@ const handleDeleteDoctorRequest = async (req, res, userId) => {
         return res.status(403).json({ success: false, message: 'Only admins can delete doctors' });
       }
 
-      // Check if the doctor exists
       const doctorQuery = await db.collection('doctors').where('doctorId', '==', doctorId).get();
       if (doctorQuery.empty) {
         return res.status(404).json({ success: false, message: 'Doctor not found' });
@@ -590,16 +577,13 @@ const handleDeleteDoctorRequest = async (req, res, userId) => {
       const doctorData = doctorDoc.data();
       const uid = doctorData.uid;
 
-      // Delete doctor from Firestore
       await doctorDoc.ref.delete();
       console.log(`Doctor ${doctorId} deleted from Firestore (doctors)`);
 
-      // Delete user from Firestore
       const userRef = db.collection('users').doc(uid);
       await userRef.delete();
       console.log(`User ${uid} deleted from Firestore (users)`);
 
-      // Clean up associated GCS data (e.g., chat files)
       const chatFiles = await bucket.getFiles({ prefix: `chats/-${doctorId}` });
       for (const [files] of chatFiles) {
         await Promise.all(files.map((file) => deleteWithRetry(file)));
@@ -627,7 +611,6 @@ const handleDeletePatientRequest = async (req, res, userId) => {
         return res.status(400).json({ success: false, message: 'patientId is required' });
       }
 
-      // Verify the user is an admin
       const userDoc = await db.collection('users').doc(userId).get();
       console.log(`[DEBUG] Admin check for delete-patient, user ${userId}: Document exists = ${userDoc.exists}`);
       if (!userDoc.exists || userDoc.data().role !== 'admin') {
@@ -635,7 +618,6 @@ const handleDeletePatientRequest = async (req, res, userId) => {
         return res.status(403).json({ success: false, message: 'Only admins can delete patients' });
       }
 
-      // Check if the patient exists
       const patientQuery = await db.collection('patients').where('patientId', '==', patientId).get();
       if (patientQuery.empty) {
         return res.status(404).json({ success: false, message: 'Patient not found' });
@@ -643,18 +625,15 @@ const handleDeletePatientRequest = async (req, res, userId) => {
 
       const patientDoc = patientQuery.docs[0];
 
-      // Delete patient from Firestore
       await patientDoc.ref.delete();
       console.log(`Patient ${patientId} deleted from Firestore`);
 
-      // Clean up associated GCS data (e.g., chat files)
       const chatFiles = await bucket.getFiles({ prefix: `chats/${patientId}-` });
       for (const [files] of chatFiles) {
         await Promise.all(files.map((file) => deleteWithRetry(file)));
       }
       console.log(`Deleted GCS chat files for patient ${patientId}`);
 
-      // Remove any assignments related to this patient
       const assignmentsQuery = await db.collection('doctor_assignments')
         .where('patientId', '==', patientId)
         .get();
@@ -676,10 +655,8 @@ const handleDeletePatientRequest = async (req, res, userId) => {
 const handleInvalidPrescriptionsRequest = async (req, res, userId) => {
   if (req.method === 'GET') {
     try {
-      // Log the userId being queried
       console.log(`[DEBUG] Verifying admin role for userId: ${userId}`);
 
-      // Fetch the user document directly by ID from the 'users' collection
       const userDoc = await db.collection('users').doc(userId).get();
       console.log(`[DEBUG] User document in 'users' collection for ID ${userId}: Document exists = ${userDoc.exists}`);
 
@@ -696,7 +673,6 @@ const handleInvalidPrescriptionsRequest = async (req, res, userId) => {
         return res.status(403).json({ success: false, message: 'Only admins can fetch invalid prescriptions', userRole });
       }
 
-      // Fetch all notifications
       const notificationsSnapshot = await db.collection('notifications').get();
       const invalidRecords = [];
 
@@ -704,19 +680,15 @@ const handleInvalidPrescriptionsRequest = async (req, res, userId) => {
         const data = doc.data();
         const { message, patientId, doctorId, timestamp } = data;
 
-        // Check if the message indicates an invalid prescription
         if (message && message.startsWith('Invalid prescription:')) {
-          // Parse the message to extract prescription and diagnosis
-          // Expected format: "Invalid prescription: \"{prescription}\" for diagnosis \"{diagnosis}\" (Patient: {patientId}, Doctor: {doctorId})"
           const prescriptionMatch = message.match(/Invalid prescription: "([^"]+)" for diagnosis "([^"]+)"/);
           if (prescriptionMatch) {
-            const prescriptionText = prescriptionMatch[1]; // e.g., "Acne cream"
-            const diagnosis = prescriptionMatch[2]; // e.g., "Acne"
+            const prescriptionText = prescriptionMatch[1];
+            const diagnosis = prescriptionMatch[2];
 
-            // Create a prescription object compatible with the frontend
             const prescription = {
               medicine: prescriptionText,
-              dosage: 'N/A', // Not provided in the notification
+              dosage: 'N/A',
               frequency: 'N/A',
               duration: 'N/A',
             };
@@ -748,7 +720,6 @@ const handleInvalidPrescriptionsRequest = async (req, res, userId) => {
 const handleRegisterPatientRequest = async (req, res, userId) => {
   if (req.method === 'POST') {
     try {
-      // Verify the user is an admin
       const userDoc = await db.collection('users').doc(userId).get();
       console.log(`[DEBUG] Admin check for register-patient, user ${userId}: Document exists = ${userDoc.exists}`);
       if (!userDoc.exists || userDoc.data().role !== 'admin') {
@@ -758,7 +729,6 @@ const handleRegisterPatientRequest = async (req, res, userId) => {
 
       const { name, email, dateOfBirth, age, languagePreference, password, aadhaarNumber, phoneNumber } = req.body;
 
-      // Validate required fields
       if (!name || !email || !dateOfBirth || !age || !languagePreference || !password || !aadhaarNumber || !phoneNumber) {
         return res.status(400).json({ error: { code: 400, message: 'All fields are required' } });
       }
@@ -782,7 +752,6 @@ const handleRegisterPatientRequest = async (req, res, userId) => {
         return res.status(400).json({ error: { code: 400, message: 'Password must be at least 6 characters long' } });
       }
 
-      // Check if email is already registered
       const emailQuery = await db.collection('patients')
         .where('email', '==', email)
         .get();
@@ -790,8 +759,7 @@ const handleRegisterPatientRequest = async (req, res, userId) => {
         return res.status(400).json({ error: { code: 400, message: 'Email already registered' } });
       }
 
-      // Check if Aadhaar number is already registered
-      const hashedAadhaar = await bcrypt.hash(aadhaarNumber, 10);
+      const hashedAadhaar = await bcryptjs.hash(aadhaarNumber, 10);
       const aadhaarQuery = await db.collection('patients')
         .where('aadhaarNumber', '==', hashedAadhaar)
         .get();
@@ -799,7 +767,6 @@ const handleRegisterPatientRequest = async (req, res, userId) => {
         return res.status(400).json({ error: { code: 400, message: 'Aadhaar number already registered' } });
       }
 
-      // Check if phone number is already registered
       const phoneQuery = await db.collection('patients')
         .where('phoneNumber', '==', phoneNumber)
         .get();
@@ -807,7 +774,6 @@ const handleRegisterPatientRequest = async (req, res, userId) => {
         return res.status(400).json({ error: { code: 400, message: 'Phone number already registered' } });
       }
 
-      // Generate patientId (already generated on the frontend, so we'll use it if provided, or generate a new one)
       let patientId = req.body.patientId;
       if (!patientId) {
         const characters = 'abcdefghijklmnopqrstuvwxyz0123456789';
@@ -828,18 +794,15 @@ const handleRegisterPatientRequest = async (req, res, userId) => {
         patientId = generatedId;
       }
 
-      // Hash the password
-      const hashedPassword = await bcrypt.hash(password, 10);
+      const hashedPassword = await bcryptjs.hash(password, 10);
 
-      // Create patient UID
       const patientUid = `patient-${patientId}`;
 
-      // Store patient data in Firestore
       const patientData = {
         uid: patientUid,
         patientId,
         name,
-        email, // Store the email
+        email,
         dateOfBirth,
         age: parseInt(age),
         languagePreference,
@@ -852,7 +815,6 @@ const handleRegisterPatientRequest = async (req, res, userId) => {
       await db.collection('patients').doc(patientId).set(patientData);
       console.log(`Patient ${patientId} registered successfully`);
 
-      // Send SMS with patient ID
       const message = `Welcome to the Healthcare App! Your Patient ID is: ${patientId}. Please use this ID to login.`;
       await sendSMS(phoneNumber, message);
 
@@ -877,7 +839,7 @@ export default async function handler(req, res) {
 
   if (req.method === 'OPTIONS') {
     console.log('[DEBUG] Handling OPTIONS request');
-    return res.status(200).end();
+    return res.status(200).json({ success: true, message: 'OPTIONS request handled' });
   }
 
   const userId = req.headers['x-user-uid'];
@@ -898,31 +860,32 @@ export default async function handler(req, res) {
     }
 
     const { patientId, doctorId } = req.query;
+    const path = req.url.split('?')[0].toLowerCase(); // Normalize URL path
 
-    if (req.url.includes('/missed-doses')) {
+    if (path === '/api/admin/register-patient') {
+      console.log('[DEBUG] Routing to handleRegisterPatientRequest with method:', req.method);
+      return handleRegisterPatientRequest(req, res, userId);
+    } else if (path.includes('/api/admin/missed-doses')) {
       console.log('[DEBUG] Routing to handleMissedDoseAlertsRequest');
       if (!patientId || !doctorId) {
         return res.status(400).json({ success: false, message: 'patientId and doctorId are required' });
       }
       return handleMissedDoseAlertsRequest(req, res, patientId, doctorId, userId);
-    } else if (req.url.includes('/notify')) {
+    } else if (path === '/api/admin/notify') {
       console.log('[DEBUG] Routing to handleAdminNotifyRequest');
       return handleAdminNotifyRequest(req, res, userId);
-    } else if (req.url.includes('/accept-patient')) {
+    } else if (path === '/api/admin/accept-patient') {
       console.log('[DEBUG] Routing to handleAcceptPatientRequest');
       return handleAcceptPatientRequest(req, res, userId);
-    } else if (req.url.includes('/delete-doctor')) {
+    } else if (path === '/api/admin/delete-doctor') {
       console.log('[DEBUG] Routing to handleDeleteDoctorRequest');
       return handleDeleteDoctorRequest(req, res, userId);
-    } else if (req.url.includes('/delete-patient')) {
+    } else if (path === '/api/admin/delete-patient') {
       console.log('[DEBUG] Routing to handleDeletePatientRequest');
       return handleDeletePatientRequest(req, res, userId);
-    } else if (req.url.includes('/invalid-prescriptions')) {
+    } else if (path === '/api/admin/invalid-prescriptions') {
       console.log('[DEBUG] Routing to handleInvalidPrescriptionsRequest');
       return handleInvalidPrescriptionsRequest(req, res, userId);
-    } else if (req.url.includes('/register-patient')) {
-      console.log('[DEBUG] Routing to handleRegisterPatientRequest with method:', req.method);
-      return handleRegisterPatientRequest(req, res, userId);
     } else {
       console.log('[DEBUG] Routing to handleChatRequest');
       if (!patientId || !doctorId) {
