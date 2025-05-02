@@ -2,7 +2,7 @@ import admin from 'firebase-admin';
 import Pusher from 'pusher';
 import { Storage } from '@google-cloud/storage';
 import busboy from 'busboy';
-
+import bcrypt from 'bcrypt';
 
 // Initialize Firebase Admin
 if (!admin.apps.length) {
@@ -58,31 +58,6 @@ try {
   console.error('Pusher initialization failed in api/admin/index.js:', error.message);
   throw new Error(`Pusher initialization failed: ${error.message}`);
 }
-
-// Initialize Twilio
-let twilioClient;
-try {
-  twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
-  console.log('Twilio initialized successfully in api/admin/index.js');
-} catch (error) {
-  console.error('Twilio initialization failed in api/admin/index.js:', error.message);
-  throw new Error(`Twilio initialization failed: ${error.message}`);
-}
-
-// Utility function for sending SMS via Twilio
-const sendSMS = async (phoneNumber, message) => {
-  try {
-    await twilioClient.messages.create({
-      body: message,
-      from: process.env.TWILIO_PHONE_NUMBER,
-      to: phoneNumber,
-    });
-    console.log(`SMS sent successfully to ${phoneNumber}`);
-  } catch (error) {
-    console.error('Error sending SMS:', error.message);
-    throw new Error('Failed to send SMS');
-  }
-};
 
 // Utility function for GCS upload with retry logic
 const uploadWithRetry = async (file, buffer, metadata, retries = 3, backoff = 1000) => {
@@ -725,7 +700,7 @@ const handleInvalidPrescriptionsRequest = async (req, res, userId) => {
   }
 };
 
-// Handler for registering a patient
+// Handler for registering a patient (admin-initiated)
 const handleRegisterPatientRequest = async (req, res, userId) => {
   if (req.method === 'POST') {
     try {
@@ -827,16 +802,66 @@ const handleRegisterPatientRequest = async (req, res, userId) => {
       await db.collection('patients').doc(patientId).set(patientData);
       console.log(`Patient ${patientId} registered successfully`);
 
-      // Send SMS with patient ID
-      const message = `Welcome to the Healthcare App! Your Patient ID is: ${patientId}. Please use this ID to login.`;
-      await sendSMS(phoneNumber, message);
-
       return res.status(200).json({ success: true, patientId });
     } catch (error) {
       console.error(`Error registering patient for user ${userId}:`, error.message);
       return res.status(500).json({ error: { code: 500, message: 'Failed to register patient', details: error.message } });
     }
   } else {
+    res.setHeader('Allow', ['POST']);
+    return res.status(405).json({ success: false, message: `Method ${req.method} Not Allowed for /admin/register-patient` });
+  }
+};
+
+// Handler for notifying admin of new patient registration
+const handleRegisterPatientNotificationRequest = async (req, res, userId) => {
+  console.log(`[DEBUG] Entering handleRegisterPatientNotificationRequest with method: ${req.method}, URL: ${req.url}`);
+  console.log(`[DEBUG] Request headers: ${JSON.stringify(req.headers)}`);
+
+  if (req.method.toUpperCase() === 'POST') {
+    try {
+      console.log(`[DEBUG] Request body: ${JSON.stringify(req.body)}`);
+      const { patientId, email, name } = req.body;
+
+      // Validate required fields
+      if (!patientId || !email || !name) {
+        console.log(`[DEBUG] Missing required fields: patientId=${patientId}, email=${email}, name=${name}`);
+        return res.status(400).json({ success: false, message: 'patientId, email, and name are required' });
+      }
+
+      // Verify the user is the patient
+      const patientQuery = await db.collection('patients').where('uid', '==', userId).where('patientId', '==', patientId).get();
+      if (patientQuery.empty) {
+        console.log(`[DEBUG] User ${userId} not authorized as patient ${patientId}`);
+        return res.status(403).json({ success: false, message: 'You are not authorized to send this notification' });
+      }
+
+      // Store the notification in Firestore
+      const notificationRef = db.collection('notifications').doc();
+      const notificationData = {
+        patientId,
+        email,
+        name,
+        message: `New patient registered: ${name} (${patientId})`,
+        timestamp: new Date().toISOString(),
+        userId,
+        type: 'patient_registration',
+      };
+      await notificationRef.set(notificationData);
+      console.log(`[DEBUG] Notification stored in Firestore with ID: ${notificationRef.id}`);
+
+      // Trigger Pusher event to notify admin
+      await pusher.trigger('admin-notifications', 'new-patient', notificationData);
+      console.log(`[DEBUG] Pusher event triggered for channel admin-notifications`);
+
+      console.log(`Admin notified of new patient registration for patient ${patientId}`);
+      return res.status(200).json({ success: true, message: 'Admin notified successfully' });
+    } catch (error) {
+      console.error(`Error notifying admin of patient registration for user ${userId}:`, error.message);
+      return res.status(500).json({ success: false, message: 'Failed to notify admin', details: error.message });
+    }
+  } else {
+    console.log(`[DEBUG] Method ${req.method} not allowed for /admin/register-patient`);
     res.setHeader('Allow', ['POST']);
     return res.status(405).json({ success: false, message: `Method ${req.method} Not Allowed for /admin/register-patient` });
   }
@@ -896,8 +921,8 @@ export default async function handler(req, res) {
       console.log('[DEBUG] Routing to handleInvalidPrescriptionsRequest');
       return handleInvalidPrescriptionsRequest(req, res, userId);
     } else if (req.url.includes('/register-patient')) {
-      console.log('[DEBUG] Routing to handleRegisterPatientRequest');
-      return handleRegisterPatientRequest(req, res, userId);
+      console.log('[DEBUG] Routing to handleRegisterPatientNotificationRequest');
+      return handleRegisterPatientNotificationRequest(req, res, userId);
     } else {
       console.log('[DEBUG] Routing to handleChatRequest');
       if (!patientId || !doctorId) {
