@@ -730,112 +730,165 @@ const handleInvalidPrescriptionsRequest = async (req, res, userId) => {
 const handleRegisterPatientRequest = async (req, res, userId) => {
   if (req.method === 'POST') {
     try {
-      // Verify the user is an admin
+      // Fetch the user document to determine the role
       const userDoc = await db.collection('users').doc(userId).get();
-      console.log(`[DEBUG] Admin check for register-patient, user ${userId}: Document exists = ${userDoc.exists}`);
-      if (!userDoc.exists || userDoc.data().role !== 'admin') {
-        console.log(`[DEBUG] User ${userId} not found in 'users' collection or not an admin`);
-        return res.status(403).json({ success: false, message: 'Only admins can register patients' });
+      console.log(`[DEBUG] User check for register-patient, user ${userId}: Document exists = ${userDoc.exists}`);
+      if (!userDoc.exists) {
+        console.log(`[DEBUG] User ${userId} not found in 'users' collection`);
+        return res.status(403).json({ success: false, message: 'User not found' });
       }
 
-      const { name, email, dateOfBirth, age, languagePreference, password, aadhaarNumber, phoneNumber } = req.body;
+      const userData = userDoc.data();
+      const userRole = userData.role;
 
-      // Validate required fields
-      if (!name || !email || !dateOfBirth || !age || !languagePreference || !password || !aadhaarNumber || !phoneNumber) {
-        return res.status(400).json({ error: { code: 400, message: 'All fields are required' } });
-      }
+      // Case 1: Admin is registering a new patient
+      if (userRole === 'admin') {
+        const { name, email, dateOfBirth, age, languagePreference, password, aadhaarNumber, phoneNumber } = req.body;
 
-      const aadhaarRegex = /^\d{12}$/;
-      if (!aadhaarRegex.test(aadhaarNumber)) {
-        return res.status(400).json({ error: { code: 400, message: 'Invalid Aadhaar number (must be 12 digits)' } });
-      }
-
-      const phoneRegex = /^\+91\d{10}$/;
-      if (!phoneRegex.test(phoneNumber)) {
-        return res.status(400).json({ error: { code: 400, message: 'Invalid phone number (use +91 followed by 10 digits)' } });
-      }
-
-      if (password.length < 6) {
-        return res.status(400).json({ error: { code: 400, message: 'Password must be at least 6 characters long' } });
-      }
-
-      // Check if email is already registered
-      const emailQuery = await db.collection('users')
-        .where('email', '==', email)
-        .get();
-      if (!emailQuery.empty) {
-        return res.status(400).json({ error: { code: 400, message: 'Email already registered' } });
-      }
-
-      // Check if Aadhaar number is already registered
-      const aadhaarQuery = await db.collection('patients')
-        .where('aadhaarNumber', '==', aadhaarNumber)
-        .get();
-      if (!aadhaarQuery.empty) {
-        return res.status(400).json({ error: { code: 400, message: 'Aadhaar number already registered' } });
-      }
-
-      // Check if phone number is already registered
-      const phoneQuery = await db.collection('patients')
-        .where('phoneNumber', '==', phoneNumber)
-        .get();
-      if (!phoneQuery.empty) {
-        return res.status(400).json({ error: { code: 400, message: 'Phone number already registered' } });
-      }
-
-      // Generate patientId (already generated on the frontend, so we'll use it if provided, or generate a new one)
-      let patientId = req.body.patientId;
-      if (!patientId) {
-        const characters = 'abcdefghijklmnopqrstuvwxyz0123456789';
-        let generatedId = '';
-        const patientIdsRef = db.collection('patients');
-
-        while (true) {
-          generatedId = '';
-          for (let i = 0; i < 6; i++) {
-            const randomIndex = Math.floor(Math.random() * characters.length);
-            generatedId += characters[randomIndex];
-          }
-
-          const q = await patientIdsRef.where('patientId', '==', generatedId).get();
-          if (q.empty) break;
-          console.log(`Generated patientId ${generatedId} already exists, regenerating...`);
+        // Validate required fields
+        if (!name || !email || !dateOfBirth || !age || !languagePreference || !password || !aadhaarNumber || !phoneNumber) {
+          return res.status(400).json({ error: { code: 400, message: 'All fields are required' } });
         }
-        patientId = generatedId;
+
+        const aadhaarRegex = /^\d{12}$/;
+        if (!aadhaarRegex.test(aadhaarNumber)) {
+          return res.status(400).json({ error: { code: 400, message: 'Invalid Aadhaar number (must be 12 digits)' } });
+        }
+
+        const phoneRegex = /^\+91\d{10}$/;
+        if (!phoneRegex.test(phoneNumber)) {
+          return res.status(400).json({ error: { code: 400, message: 'Invalid phone number (use +91 followed by 10 digits)' } });
+        }
+
+        if (password.length < 6) {
+          return res.status(400).json({ error: { code: 400, message: 'Password must be at least 6 characters long' } });
+        }
+
+        // Check if email is already registered
+        const emailQuery = await db.collection('users')
+          .where('email', '==', email)
+          .get();
+        if (!emailQuery.empty) {
+          return res.status(400).json({ error: { code: 400, message: 'Email already registered' } });
+        }
+
+        // Check if Aadhaar number is already registered
+        const aadhaarQuery = await db.collection('patients')
+          .where('aadhaarNumber', '==', aadhaarNumber)
+          .get();
+        if (!aadhaarQuery.empty) {
+          return res.status(400).json({ error: { code: 400, message: 'Aadhaar number already registered' } });
+        }
+
+        // Check if phone number is already registered
+        const phoneQuery = await db.collection('patients')
+          .where('phoneNumber', '==', phoneNumber)
+          .get();
+        if (!phoneQuery.empty) {
+          return res.status(400).json({ error: { code: 400, message: 'Phone number already registered' } });
+        }
+
+        // Generate patientId (already generated on the frontend, so we'll use it if provided, or generate a new one)
+        let patientId = req.body.patientId;
+        if (!patientId) {
+          const characters = 'abcdefghijklmnopqrstuvwxyz0123456789';
+          let generatedId = '';
+          const patientIdsRef = db.collection('patients');
+
+          while (true) {
+            generatedId = '';
+            for (let i = 0; i < 6; i++) {
+              const randomIndex = Math.floor(Math.random() * characters.length);
+              generatedId += characters[randomIndex];
+            }
+
+            const q = await patientIdsRef.where('patientId', '==', generatedId).get();
+            if (q.empty) break;
+            console.log(`Generated patientId ${generatedId} already exists, regenerating...`);
+          }
+          patientId = generatedId;
+        }
+
+        // Hash the password
+        const hashedPassword = await bcrypt.hash(password, 10);
+
+        // Create patient UID
+        const patientUid = `patient-${patientId}`;
+
+        // Store patient data in Firestore
+        const patientData = {
+          uid: patientUid,
+          patientId,
+          name,
+          email,
+          dateOfBirth,
+          age: parseInt(age),
+          languagePreference,
+          password: hashedPassword,
+          aadhaarNumber, // Store as plaintext to match Register.js and enable recovery
+          phoneNumber,
+          createdAt: new Date().toISOString(),
+        };
+
+        await db.collection('patients').doc(patientId).set(patientData);
+        console.log(`Patient ${patientId} registered successfully by admin`);
+
+        // Send SMS with patient ID to the patient
+        const message = `Welcome to the Healthcare App! Your Patient ID is: ${patientId}. Please use this ID to login.`;
+        await sendSMS(phoneNumber, message);
+
+        return res.status(200).json({ success: true, patientId });
       }
 
-      // Hash the password
-      const hashedPassword = await bcrypt.hash(password, 10);
+      // Case 2: Patient is notifying admin of their registration (called from Register.js)
+      if (userRole === 'patient') {
+        const { patientId, email, name } = req.body;
 
-      // Create patient UID
-      const patientUid = `patient-${patientId}`;
+        // Validate required fields
+        if (!patientId || !email || !name) {
+          return res.status(400).json({ error: { code: 400, message: 'patientId, email, and name are required' } });
+        }
 
-      // Store patient data in Firestore
-      const patientData = {
-        uid: patientUid,
-        patientId,
-        name,
-        email,
-        dateOfBirth,
-        age: parseInt(age),
-        languagePreference,
-        password: hashedPassword,
-        aadhaarNumber, // Store as plaintext to match Register.js and enable recovery
-        phoneNumber,
-        createdAt: new Date().toISOString(),
-      };
+        // Verify the user is the patient being registered
+        const patientQuery = await db.collection('patients').where('uid', '==', userId).get();
+        if (patientQuery.empty) {
+          return res.status(404).json({ success: false, message: 'Patient profile not found for this user' });
+        }
+        const patientData = patientQuery.docs[0].data();
+        if (patientData.patientId !== patientId) {
+          return res.status(403).json({ success: false, message: 'You are not authorized to notify for this patient' });
+        }
 
-      await db.collection('patients').doc(patientId).set(patientData);
-      console.log(`Patient ${patientId} registered successfully`);
+        // Fetch admin phone number (assumed to be stored in environment variable for simplicity)
+        const adminPhoneNumber = process.env.ADMIN_PHONE_NUMBER;
+        if (!adminPhoneNumber) {
+          console.error('Admin phone number not configured in environment variables');
+          return res.status(500).json({ error: { code: 500, message: 'Admin phone number not configured' } });
+        }
 
-      // Send SMS with patient ID
-      const message = `Welcome to the Healthcare App! Your Patient ID is: ${patientId}. Please use this ID to login.`;
-      await sendSMS(phoneNumber, message);
+        // Send SMS notification to admin
+        const adminMessage = `New patient registered: ${name} (${patientId}) with email ${email}`;
+        await sendSMS(adminPhoneNumber, adminMessage);
+        console.log(`Admin notified of new patient registration: ${patientId}`);
 
-      return res.status(200).json({ success: true, patientId });
+        // Store the notification in Firestore for record-keeping
+        const notificationRef = db.collection('notifications').doc();
+        await notificationRef.set({
+          patientId,
+          message: adminMessage,
+          timestamp: new Date().toISOString(),
+          userId,
+        });
+        console.log(`Notification stored in Firestore with ID: ${notificationRef.id}`);
+
+        return res.status(200).json({ success: true, message: 'Admin notified of new patient registration' });
+      }
+
+      // If the user is neither an admin nor the patient
+      return res.status(403).json({ success: false, message: 'You are not authorized to perform this action' });
     } catch (error) {
-      console.error(`Error registering patient for user ${userId}:`, error.message);
-      return res.status(500).json({ error: { code: 500, message: 'Failed to register patient', details: error.message } });
+      console.error(`Error in /admin/register-patient for user ${userId}:`, error.message);
+      return res.status(500).json({ error: { code: 500, message: 'Failed to process request', details: error.message } });
     }
   } else {
     res.setHeader('Allow', ['POST']);
