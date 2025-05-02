@@ -125,7 +125,7 @@
 
 .records-sidebar {
   width: 0;
-  background: rgba(255, 255, 255, 0.05);
+  background: #3e2a5a;
   backdrop-filter: blur(10px);
   padding: 0;
   border-left: 1px solid rgba(255, 255, 255, 0.1);
