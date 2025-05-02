@@ -2,6 +2,8 @@ import admin from 'firebase-admin';
 import Pusher from 'pusher';
 import { Storage } from '@google-cloud/storage';
 import busboy from 'busboy';
+import bcrypt from 'bcrypt';
+import twilio from 'twilio';
 
 // Initialize Firebase Admin
 if (!admin.apps.length) {
@@ -57,6 +59,31 @@ try {
   console.error('Pusher initialization failed in api/admin/index.js:', error.message);
   throw new Error(`Pusher initialization failed: ${error.message}`);
 }
+
+// Initialize Twilio
+let twilioClient;
+try {
+  twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+  console.log('Twilio initialized successfully in api/admin/index.js');
+} catch (error) {
+  console.error('Twilio initialization failed in api/admin/index.js:', error.message);
+  throw new Error(`Twilio initialization failed: ${error.message}`);
+}
+
+// Utility function for sending SMS via Twilio
+const sendSMS = async (phoneNumber, message) => {
+  try {
+    await twilioClient.messages.create({
+      body: message,
+      from: process.env.TWILIO_PHONE_NUMBER,
+      to: phoneNumber,
+    });
+    console.log(`SMS sent successfully to ${phoneNumber}`);
+  } catch (error) {
+    console.error('Error sending SMS:', error.message);
+    throw new Error('Failed to send SMS');
+  }
+};
 
 // Utility function for GCS upload with retry logic
 const uploadWithRetry = async (file, buffer, metadata, retries = 3, backoff = 1000) => {
@@ -699,6 +726,115 @@ const handleInvalidPrescriptionsRequest = async (req, res, userId) => {
   }
 };
 
+// Handler for registering a patient
+const handleRegisterPatientRequest = async (req, res, userId) => {
+  if (req.method === 'POST') {
+    try {
+      // Verify the user is an admin
+      const userDoc = await db.collection('users').doc(userId).get();
+      console.log(`[DEBUG] Admin check for register-patient, user ${userId}: Document exists = ${userDoc.exists}`);
+      if (!userDoc.exists || userDoc.data().role !== 'admin') {
+        console.log(`[DEBUG] User ${userId} not found in 'users' collection or not an admin`);
+        return res.status(403).json({ success: false, message: 'Only admins can register patients' });
+      }
+
+      const { name, dateOfBirth, age, languagePreference, password, aadhaarNumber, phoneNumber } = req.body;
+
+      // Validate required fields
+      if (!name || !dateOfBirth || !age || !languagePreference || !password || !aadhaarNumber || !phoneNumber) {
+        return res.status(400).json({ error: { code: 400, message: 'All fields are required' } });
+      }
+
+      const aadhaarRegex = /^\d{12}$/;
+      if (!aadhaarRegex.test(aadhaarNumber)) {
+        return res.status(400).json({ error: { code: 400, message: 'Invalid Aadhaar number (must be 12 digits)' } });
+      }
+
+      const phoneRegex = /^\+91\d{10}$/;
+      if (!phoneRegex.test(phoneNumber)) {
+        return res.status(400).json({ error: { code: 400, message: 'Invalid phone number (use +91 followed by 10 digits)' } });
+      }
+
+      if (password.length < 6) {
+        return res.status(400).json({ error: { code: 400, message: 'Password must be at least 6 characters long' } });
+      }
+
+      // Check if Aadhaar number is already registered
+      const hashedAadhaar = await bcrypt.hash(aadhaarNumber, 10);
+      const aadhaarQuery = await db.collection('patients')
+        .where('aadhaarNumber', '==', hashedAadhaar)
+        .get();
+      if (!aadhaarQuery.empty) {
+        return res.status(400).json({ error: { code: 400, message: 'Aadhaar number already registered' } });
+      }
+
+      // Check if phone number is already registered
+      const phoneQuery = await db.collection('patients')
+        .where('phoneNumber', '==', phoneNumber)
+        .get();
+      if (!phoneQuery.empty) {
+        return res.status(400).json({ error: { code: 400, message: 'Phone number already registered' } });
+      }
+
+      // Generate patientId (already generated on the frontend, so we'll use it if provided, or generate a new one)
+      let patientId = req.body.patientId;
+      if (!patientId) {
+        const characters = 'abcdefghijklmnopqrstuvwxyz0123456789';
+        let generatedId = '';
+        const patientIdsRef = db.collection('patients');
+
+        while (true) {
+          generatedId = '';
+          for (let i = 0; i < 6; i++) {
+            const randomIndex = Math.floor(Math.random() * characters.length);
+            generatedId += characters[randomIndex];
+          }
+
+          const q = await patientIdsRef.where('patientId', '==', generatedId).get();
+          if (q.empty) break;
+          console.log(`Generated patientId ${generatedId} already exists, regenerating...`);
+        }
+        patientId = generatedId;
+      }
+
+      // Hash the password
+      const hashedPassword = await bcrypt.hash(password, 10);
+
+      // Create patient UID
+      const patientUid = `patient-${patientId}`;
+
+      // Store patient data in Firestore
+      const patientData = {
+        uid: patientUid,
+        patientId,
+        name,
+        dateOfBirth,
+        age: parseInt(age),
+        languagePreference,
+        password: hashedPassword,
+        aadhaarNumber: hashedAadhaar,
+        phoneNumber,
+        createdAt: new Date().toISOString(),
+      };
+
+      await db.collection('patients').doc(patientId).set(patientData);
+      console.log(`Patient ${patientId} registered successfully`);
+
+      // Send SMS with patient ID
+      const message = `Welcome to the Healthcare App! Your Patient ID is: ${patientId}. Please use this ID to login.`;
+      await sendSMS(phoneNumber, message);
+
+      return res.status(200).json({ success: true, patientId });
+    } catch (error) {
+      console.error(`Error registering patient for user ${userId}:`, error.message);
+      return res.status(500).json({ error: { code: 500, message: 'Failed to register patient', details: error.message } });
+    }
+  } else {
+    res.setHeader('Allow', ['POST']);
+    return res.status(405).json({ success: false, message: `Method ${req.method} Not Allowed for /admin/register-patient` });
+  }
+};
+
 // Main handler
 export default async function handler(req, res) {
   console.log(`[DEBUG] Main handler called with method: ${req.method}, URL: ${req.url}`);
@@ -752,6 +888,9 @@ export default async function handler(req, res) {
     } else if (req.url.includes('/invalid-prescriptions')) {
       console.log('[DEBUG] Routing to handleInvalidPrescriptionsRequest');
       return handleInvalidPrescriptionsRequest(req, res, userId);
+    } else if (req.url.includes('/register-patient')) {
+      console.log('[DEBUG] Routing to handleRegisterPatientRequest');
+      return handleRegisterPatientRequest(req, res, userId);
     } else {
       console.log('[DEBUG] Routing to handleChatRequest');
       if (!patientId || !doctorId) {

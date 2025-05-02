@@ -1,18 +1,17 @@
-// src/components/Register.js
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { createUserWithEmailAndPassword } from 'firebase/auth';
 import { doc, setDoc, getDocs, query, collection, where } from 'firebase/firestore';
-import { auth, db } from '../services/firebase.js';
+import { db } from '../services/firebase.js';
 
 function Register({ setUser, setRole, user }) {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
   const [name, setName] = useState('');
   const [sex, setSex] = useState('');
   const [age, setAge] = useState('');
   const [address, setAddress] = useState('');
   const [patientId, setPatientId] = useState('');
+  const [password, setPassword] = useState('');
+  const [aadhaarNumber, setAadhaarNumber] = useState('');
+  const [phoneNumber, setPhoneNumber] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [termsAccepted, setTermsAccepted] = useState(false);
@@ -70,26 +69,6 @@ function Register({ setUser, setRole, user }) {
       return;
     }
 
-    if (!email.trim()) {
-      setError('Email is required.');
-      setIsLoading(false);
-      return;
-    }
-    if (!email.endsWith('@gmail.com')) {
-      setError('Email must be a valid Gmail address (e.g., example@gmail.com).');
-      setIsLoading(false);
-      return;
-    }
-    if (!password) {
-      setError('Password is required.');
-      setIsLoading(false);
-      return;
-    }
-    if (password.length < 6) {
-      setError('Password must be at least 6 characters long.');
-      setIsLoading(false);
-      return;
-    }
     if (!name.trim()) {
       setError('Name is required.');
       setIsLoading(false);
@@ -115,64 +94,88 @@ function Register({ setUser, setRole, user }) {
       setIsLoading(false);
       return;
     }
+    if (!password) {
+      setError('Password is required.');
+      setIsLoading(false);
+      return;
+    }
+    if (password.length < 6) {
+      setError('Password must be at least 6 characters long.');
+      setIsLoading(false);
+      return;
+    }
+    if (!aadhaarNumber) {
+      setError('Aadhaar number is required.');
+      setIsLoading(false);
+      return;
+    }
+    const aadhaarRegex = /^\d{12}$/;
+    if (!aadhaarRegex.test(aadhaarNumber)) {
+      setError('Invalid Aadhaar number (must be 12 digits).');
+      setIsLoading(false);
+      return;
+    }
+    if (!phoneNumber) {
+      setError('Phone number is required.');
+      setIsLoading(false);
+      return;
+    }
+    const phoneRegex = /^\+91\d{10}$/;
+    if (!phoneRegex.test(phoneNumber)) {
+      setError('Invalid phone number (use +91 followed by 10 digits).');
+      setIsLoading(false);
+      return;
+    }
 
-    console.log('Register.js: Attempting registration with:', { email, password, role: 'patient' });
+    console.log('Register.js: Attempting registration with:', { name, patientId, password, aadhaarNumber, phoneNumber });
 
     try {
-      // Step 1: Register user with Firebase Authentication
-      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-      const firebaseUser = userCredential.user;
-      console.log('Register.js: User registered in Firebase Auth:', firebaseUser.uid);
+      // Call the serverless function to register the patient
+      const response = await fetch(`${process.env.REACT_APP_API_URL}/admin/register-patient`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('idToken') || ''}`,
+          'x-user-uid': 'admin-uid', // Replace with actual admin UID or fetch dynamically
+        },
+        body: JSON.stringify({
+          name,
+          dateOfBirth: '1990-01-15', // You can add a field for this in the form if needed
+          age: parseInt(age),
+          languagePreference: 'en', // Default to English, can be made configurable
+          password,
+          aadhaarNumber,
+          phoneNumber,
+        }),
+      });
 
-      // Step 2: Store user data in Firestore (users collection)
-      const userData = {
-        uid: firebaseUser.uid,
-        email,
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error.message || 'Registration failed');
+      }
+
+      const data = await response.json();
+      const { patientId: registeredPatientId } = data;
+
+      // Update local state and redirect
+      const updatedUser = {
+        uid: `patient-${registeredPatientId}`,
         role: 'patient',
-        createdAt: new Date().toISOString(),
+        patientId: registeredPatientId,
         name,
         sex,
         age: parseInt(age),
         address,
-        patientId,
       };
-      await setDoc(doc(db, 'users', firebaseUser.uid), userData);
-      console.log('Register.js: User data stored in Firestore (users):', firebaseUser.uid);
-
-      // Step 3: Store patient data in Firestore (patients collection)
-      const patientData = {
-        uid: firebaseUser.uid,
-        patientId,
-        name,
-        sex,
-        age: parseInt(age),
-        address,
-        createdAt: new Date().toISOString(),
-      };
-      await setDoc(doc(db, 'patients', patientId), patientData);
-      console.log('Register.js: Patient data stored in Firestore (patients):', patientId);
-
-      // Step 4: Update application state and redirect
-      const updatedUser = { uid: firebaseUser.uid, email, role: 'patient', patientId, name, sex, age, address };
       setUser(updatedUser);
       setRole('patient');
-      localStorage.setItem('userId', firebaseUser.uid);
-      localStorage.setItem('patientId', patientId);
+      localStorage.setItem('userId', updatedUser.uid);
+      localStorage.setItem('patientId', registeredPatientId);
 
       navigate('/patient/select-doctor');
     } catch (error) {
       console.error('Register.js: Registration error:', error.message);
-      if (error.code === 'auth/email-already-in-use') {
-        setError('This email is already registered. Please login instead.');
-      } else if (error.code === 'auth/invalid-email') {
-        setError('Please enter a valid Gmail address (e.g., example@gmail.com).');
-      } else if (error.code === 'auth/weak-password') {
-        setError('Password must be at least 6 characters long.');
-      } else if (error.code === 'firestore/permission-denied') {
-        setError('Permission denied while saving data. Please contact support.');
-      } else {
-        setError(`Registration failed: ${error.message}`);
-      }
+      setError(`Registration failed: ${error.message}`);
     } finally {
       setIsLoading(false);
     }
@@ -180,7 +183,6 @@ function Register({ setUser, setRole, user }) {
 
   const handleLogout = async () => {
     try {
-      await auth.signOut();
       setUser(null);
       setRole(null);
       localStorage.removeItem('userId');
@@ -193,7 +195,7 @@ function Register({ setUser, setRole, user }) {
   };
 
   const goToLogin = () => {
-    navigate('/login', { state: { username: email, password } });
+    navigate('/login');
   };
 
   return (
@@ -203,14 +205,14 @@ function Register({ setUser, setRole, user }) {
         <div className="form-section left-section">
           <h3>Patient Registration</h3>
           <div className="form-group">
-            <label htmlFor="email">Email</label>
+            <label htmlFor="name">Name</label>
             <input
-              type="email"
-              id="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              type="text"
+              id="name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
               required
-              placeholder="Enter your Gmail address (e.g., example@gmail.com)"
+              placeholder="Enter your name"
             />
           </div>
           <div className="form-group">
@@ -225,14 +227,14 @@ function Register({ setUser, setRole, user }) {
             />
           </div>
           <div className="form-group">
-            <label htmlFor="name">Name</label>
+            <label htmlFor="aadhaarNumber">Aadhaar Number</label>
             <input
               type="text"
-              id="name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
+              id="aadhaarNumber"
+              value={aadhaarNumber}
+              onChange={(e) => setAadhaarNumber(e.target.value)}
               required
-              placeholder="Enter your name"
+              placeholder="Enter your 12-digit Aadhaar number"
             />
           </div>
         </div>
@@ -276,6 +278,17 @@ function Register({ setUser, setRole, user }) {
               onChange={(e) => setAddress(e.target.value)}
               required
               placeholder="Enter your address"
+            />
+          </div>
+          <div className="form-group">
+            <label htmlFor="phoneNumber">Phone Number</label>
+            <input
+              type="text"
+              id="phoneNumber"
+              value={phoneNumber}
+              onChange={(e) => setPhoneNumber(e.target.value)}
+              required
+              placeholder="Enter your phone number (e.g., +919876543210)"
             />
           </div>
           <div className="form-group">
