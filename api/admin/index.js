@@ -833,10 +833,6 @@ const handleRegisterPatientRequest = async (req, res, userId) => {
         await db.collection('patients').doc(patientId).set(patientData);
         console.log(`Patient ${patientId} registered successfully by admin`);
 
-        // Send SMS with patient ID to the patient
-        const message = `Welcome to the Healthcare App! Your Patient ID is: ${patientId}. Please use this ID to login.`;
-        await sendSMS(phoneNumber, message);
-
         return res.status(200).json({ success: true, patientId });
       }
 
@@ -859,19 +855,8 @@ const handleRegisterPatientRequest = async (req, res, userId) => {
           return res.status(403).json({ success: false, message: 'You are not authorized to notify for this patient' });
         }
 
-        // Fetch admin phone number (assumed to be stored in environment variable for simplicity)
-        const adminPhoneNumber = process.env.ADMIN_PHONE_NUMBER;
-        if (!adminPhoneNumber) {
-          console.error('Admin phone number not configured in environment variables');
-          return res.status(500).json({ error: { code: 500, message: 'Admin phone number not configured' } });
-        }
-
-        // Send SMS notification to admin
-        const adminMessage = `New patient registered: ${name} (${patientId}) with email ${email}`;
-        await sendSMS(adminPhoneNumber, adminMessage);
-        console.log(`Admin notified of new patient registration: ${patientId}`);
-
         // Store the notification in Firestore for record-keeping
+        const adminMessage = `New patient registered: ${name} (${patientId}) with email ${email}`;
         const notificationRef = db.collection('notifications').doc();
         await notificationRef.set({
           patientId,
