@@ -7,10 +7,9 @@ function Register({ setUser, setRole, user }) {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [sex, setSex] = useState('');
-  const [dateOfBirth, setDateOfBirth] = useState(''); // Added dateOfBirth field
+  const [dateOfBirth, setDateOfBirth] = useState('');
   const [age, setAge] = useState('');
   const [address, setAddress] = useState('');
-  const [languagePreference, setLanguagePreference] = useState('en'); // Added languagePreference
   const [password, setPassword] = useState('');
   const [aadhaarNumber, setAadhaarNumber] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
@@ -75,11 +74,6 @@ function Register({ setUser, setRole, user }) {
       setIsLoading(false);
       return;
     }
-    if (!languagePreference) {
-      setError('Language preference is required.');
-      setIsLoading(false);
-      return;
-    }
     if (!password) {
       setError('Password is required.');
       setIsLoading(false);
@@ -120,7 +114,6 @@ function Register({ setUser, setRole, user }) {
       dateOfBirth,
       age,
       address,
-      languagePreference,
       password,
       aadhaarNumber,
       phoneNumber,
@@ -138,22 +131,26 @@ function Register({ setUser, setRole, user }) {
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${await firebaseUser.getIdToken()}`,
-          'x-user-uid': firebaseUser.uid, // Use the Firebase UID as the user ID
+          'x-user-uid': firebaseUser.uid,
         },
         body: JSON.stringify({
           name,
           email,
           dateOfBirth,
           age: parseInt(age),
-          languagePreference,
-          password, // Backend will hash this
+          password,
           aadhaarNumber,
           phoneNumber,
         }),
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
+        let errorData;
+        try {
+          errorData = await response.json();
+        } catch (jsonError) {
+          throw new Error(`Failed to register: ${response.statusText}`);
+        }
         throw new Error(errorData.error?.message || 'Registration failed');
       }
 
@@ -171,7 +168,6 @@ function Register({ setUser, setRole, user }) {
         dateOfBirth,
         age: parseInt(age),
         address,
-        languagePreference,
       };
       setUser(updatedUser);
       setRole('patient');
@@ -302,19 +298,6 @@ function Register({ setUser, setRole, user }) {
               required
               placeholder="Enter your address"
             />
-          </div>
-          <div className="form-group">
-            <label htmlFor="languagePreference">Language Preference</label>
-            <select
-              id="languagePreference"
-              value={languagePreference}
-              onChange={(e) => setLanguagePreference(e.target.value)}
-              required
-            >
-              <option value="en">English</option>
-              <option value="hi">Hindi</option>
-              <option value="es">Spanish</option>
-            </select>
           </div>
           <div className="form-group">
             <label htmlFor="phoneNumber">Phone Number</label>
