@@ -100,6 +100,7 @@
   display: flex;
   flex: 1;
   overflow: hidden;
+  position: relative;
 }
 
 .patient-sidebar {
@@ -110,6 +111,11 @@
   border-right: 1px solid rgba(255, 255, 255, 0.1);
   overflow-y: auto;
   transition: width 0.3s ease, padding 0.3s ease;
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  z-index: 10;
 }
 
 .patient-sidebar.open {
@@ -122,9 +128,14 @@
   background: rgba(255, 255, 255, 0.05);
   backdrop-filter: blur(10px);
   padding: 0;
-  border-right: 1px solid rgba(255, 255, 255, 0.1);
+  border-left: 1px solid rgba(255, 255, 255, 0.1);
   overflow-y: auto;
   transition: width 0.3s ease, padding 0.3s ease;
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  z-index: 10;
 }
 
 .records-sidebar.open {
@@ -269,6 +280,17 @@
   flex-direction: column;
   padding: 20px 30px;
   overflow-y: auto;
+  margin-left: 0;
+  margin-right: 0;
+  transition: margin-left 0.3s ease, margin-right 0.3s ease;
+}
+
+.chat-content.sidebar-open-left {
+  margin-left: 250px;
+}
+
+.chat-content.sidebar-open-right {
+  margin-right: 300px;
 }
 
 .diagnosis-prompt {

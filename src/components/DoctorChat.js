@@ -1136,35 +1136,6 @@ function DoctorChat({ user, role, handleLogout, setError }) {
               </div>
             ) : (
               <div className="chat-main">
-                {showPatientProfile && (
-                  <div className="patient-profile-modal">
-                    <div className="modal-content">
-                      <h3>Patient Records for {selectedPatientName} (ID: {selectedPatientId})</h3>
-                      {patientRecords.length > 0 ? (
-                        <div className="records-list">
-                          {patientRecords.map((record, index) => (
-                            <div key={index} className="record-item">
-                              <p><strong>Doctor Name:</strong> {record.doctorName}</p>
-                              <p><strong>Doctor ID:</strong> {record.doctorId}</p>
-                              <p><strong>Timestamp:</strong> {new Date(record.timestamp).toLocaleString()}</p>
-                              <p><strong>Diagnosis:</strong> {record.diagnosis}</p>
-                              <p><strong>Prescription:</strong> {record.prescription}</p>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <p>No records found for this patient.</p>
-                      )}
-                      <button
-                        onClick={() => setShowPatientProfile(false)}
-                        className="close-modal-button"
-                        aria-label="Close patient profile modal"
-                      >
-                        Close
-                      </button>
-                    </div>
-                  </div>
-                )}
                 {missedDoseAlerts.length > 0 && (
                   <div className="missed-dose-alerts">
                     <h3>Missed Dose Alerts</h3>
@@ -1386,6 +1357,29 @@ function DoctorChat({ user, role, handleLogout, setError }) {
             <div className="no-patient-selected">
               <p>Select a patient to start chatting.</p>
             </div>
+          )}
+        </div>
+        <div className={`records-sidebar ${showPatientProfile ? 'open' : ''}`}>
+          <div className="records-header">
+            <h3>Patient Records for {selectedPatientName} (ID: {selectedPatientId})</h3>
+            <button className="close-records" onClick={() => setShowPatientProfile(false)} aria-label="Close records sidebar">
+              ✕
+            </button>
+          </div>
+          {patientRecords.length > 0 ? (
+            <div className="records-list">
+              {patientRecords.map((record, index) => (
+                <div key={index} className="record-item">
+                  <p><strong>Doctor Name:</strong> {record.doctorName}</p>
+                  <p><strong>Doctor ID:</strong> {record.doctorId}</p>
+                  <p><strong>Timestamp:</strong> {new Date(record.timestamp).toLocaleString()}</p>
+                  <p><strong>Diagnosis:</strong> {record.diagnosis}</p>
+                  <p><strong>Prescription:</strong> {record.prescription}</p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p>No records found for this patient.</p>
           )}
         </div>
       </div>
