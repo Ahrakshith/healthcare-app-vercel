@@ -1,4 +1,3 @@
-// src/components/Register.js
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { createUserWithEmailAndPassword } from 'firebase/auth';
@@ -13,6 +12,8 @@ function Register({ setUser, setRole, user }) {
   const [age, setAge] = useState('');
   const [address, setAddress] = useState('');
   const [patientId, setPatientId] = useState('');
+  const [aadhaarNumber, setAadhaarNumber] = useState(''); // New field
+  const [phoneNumber, setPhoneNumber] = useState(''); // New field
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [termsAccepted, setTermsAccepted] = useState(false);
@@ -115,6 +116,19 @@ function Register({ setUser, setRole, user }) {
       setIsLoading(false);
       return;
     }
+    // New validations for Aadhaar and phone number
+    const aadhaarRegex = /^\d{12}$/;
+    if (!aadhaarRegex.test(aadhaarNumber)) {
+      setError('Invalid Aadhaar number (must be 12 digits).');
+      setIsLoading(false);
+      return;
+    }
+    const phoneRegex = /^\+91\d{10}$/;
+    if (!phoneRegex.test(phoneNumber)) {
+      setError('Invalid phone number (use +91 followed by 10 digits, e.g., +919876543210).');
+      setIsLoading(false);
+      return;
+    }
 
     console.log('Register.js: Attempting registration with:', { email, password, role: 'patient' });
 
@@ -135,6 +149,8 @@ function Register({ setUser, setRole, user }) {
         age: parseInt(age),
         address,
         patientId,
+        aadhaarNumber, // New field
+        phoneNumber,   // New field
       };
       await setDoc(doc(db, 'users', firebaseUser.uid), userData);
       console.log('Register.js: User data stored in Firestore (users):', firebaseUser.uid);
@@ -144,16 +160,61 @@ function Register({ setUser, setRole, user }) {
         uid: firebaseUser.uid,
         patientId,
         name,
-        sex,
+        email, // Added email as per admin/register-patient
+        dateOfBirth: new Date().toISOString().split('T')[0], // Placeholder, adjust if needed
         age: parseInt(age),
+        languagePreference: 'en', // Placeholder, adjust if needed
+        password, // Plaintext for now, backend will hash it
+        aadhaarNumber, // New field
+        phoneNumber,   // New field
+        sex,
         address,
         createdAt: new Date().toISOString(),
       };
       await setDoc(doc(db, 'patients', patientId), patientData);
       console.log('Register.js: Patient data stored in Firestore (patients):', patientId);
 
-      // Step 4: Update application state and redirect
-      const updatedUser = { uid: firebaseUser.uid, email, role: 'patient', patientId, name, sex, age, address };
+      // Step 4: Call the backend to send SMS
+      const token = await firebaseUser.getIdToken();
+      const response = await fetch(`${process.env.REACT_APP_API_URL}/admin/register-patient`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+          'x-user-uid': firebaseUser.uid,
+        },
+        body: JSON.stringify({
+          name,
+          email,
+          dateOfBirth: new Date().toISOString().split('T')[0], // Placeholder
+          age: parseInt(age),
+          languagePreference: 'en', // Placeholder
+          password,
+          aadhaarNumber,
+          phoneNumber,
+          patientId,
+        }),
+      });
+
+      const result = await response.json();
+      if (!response.ok || !result.success) {
+        throw new Error(result.message || 'Failed to send SMS via backend');
+      }
+      console.log('Register.js: SMS sent via backend:', result);
+
+      // Step 5: Update application state and redirect
+      const updatedUser = {
+        uid: firebaseUser.uid,
+        email,
+        role: 'patient',
+        patientId,
+        name,
+        sex,
+        age,
+        address,
+        aadhaarNumber, // New field
+        phoneNumber,   // New field
+      };
       setUser(updatedUser);
       setRole('patient');
       localStorage.setItem('userId', firebaseUser.uid);
@@ -286,6 +347,28 @@ function Register({ setUser, setRole, user }) {
               value={patientId}
               readOnly
               placeholder="Auto-generated Patient ID"
+            />
+          </div>
+          <div className="form-group">
+            <label htmlFor="aadhaarNumber">Aadhaar Number</label>
+            <input
+              type="text"
+              id="aadhaarNumber"
+              value={aadhaarNumber}
+              onChange={(e) => setAadhaarNumber(e.target.value)}
+              required
+              placeholder="Enter your 12-digit Aadhaar number"
+            />
+          </div>
+          <div className="form-group">
+            <label htmlFor="phoneNumber">Phone Number</label>
+            <input
+              type="text"
+              id="phoneNumber"
+              value={phoneNumber}
+              onChange={(e) => setPhoneNumber(e.target.value)}
+              required
+              placeholder="Enter your phone number (e.g., +919876543210)"
             />
           </div>
           {error && <p className="error-message">{error}</p>}

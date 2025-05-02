@@ -1,14 +1,20 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { signInWithEmailAndPassword, onAuthStateChanged } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, query, collection, where, getDocs } from 'firebase/firestore';
 import { auth, db } from '../services/firebase.js';
 
 function Login({ setUser, setRole, setPatientId, user, setError: setParentError }) {
+  const [userType, setUserType] = useState(''); // New state for user type
   const [email, setEmail] = useState('');
+  const [patientId, setPatientId] = useState(''); // New state for patientId
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [showRecovery, setShowRecovery] = useState(false); // State to toggle recovery form
+  const [aadhaarNumber, setAadhaarNumber] = useState(''); // State for recovery form
+  const [phoneNumber, setPhoneNumber] = useState(''); // State for recovery form
+  const [recoveredId, setRecoveredId] = useState(''); // State to store recovered patientId
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -127,24 +133,77 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
     setParentError('');
     setIsLoading(true);
 
-    if (!email.trim()) {
-      setError('Email is required.');
+    // Validate user type selection
+    if (!userType) {
+      setError('Please select a user type.');
       setIsLoading(false);
-      console.error('Login validation error: Email is empty');
+      console.error('Login validation error: User type not selected');
       return;
     }
 
-    if (!email.endsWith('@gmail.com')) {
-      setError('Please enter a valid Gmail address (e.g., example@gmail.com).');
+    let loginEmail = email;
+
+    // For patient login, map patientId to email
+    if (userType === 'patient') {
+      if (!patientId.trim()) {
+        setError('Patient ID is required.');
+        setIsLoading(false);
+        console.error('Login validation error: Patient ID is empty');
+        return;
+      }
+
+      try {
+        const q = query(collection(db, 'patients'), where('patientId', '==', patientId));
+        const querySnapshot = await getDocs(q);
+        if (querySnapshot.empty) {
+          setError('Patient ID not found. Please check your ID or register.');
+          setIsLoading(false);
+          console.error('Login validation error: Patient ID not found in Firestore');
+          return;
+        }
+
+        const patientData = querySnapshot.docs[0].data();
+        loginEmail = patientData.email;
+        if (!loginEmail) {
+          setError('No email associated with this Patient ID. Please contact support.');
+          setIsLoading(false);
+          console.error('Login validation error: No email found for patientId:', patientId);
+          return;
+        }
+      } catch (err) {
+        setError('Error fetching patient data. Please try again.');
+        setIsLoading(false);
+        console.error('Error querying patient by patientId:', err.message);
+        return;
+      }
+    } else {
+      // Admin or Doctor login validation
+      if (!email.trim()) {
+        setError('Email is required.');
+        setIsLoading(false);
+        console.error('Login validation error: Email is empty');
+        return;
+      }
+
+      if (!email.endsWith('@gmail.com')) {
+        setError('Please enter a valid Gmail address (e.g., example@gmail.com).');
+        setIsLoading(false);
+        console.error('Login validation error: Invalid email domain, must end with @gmail.com');
+        return;
+      }
+    }
+
+    if (!password) {
+      setError('Password is required.');
       setIsLoading(false);
-      console.error('Login validation error: Invalid email domain, must end with @gmail.com');
+      console.error('Login validation error: Password is empty');
       return;
     }
 
-    console.log('Attempting login with:', { email, password });
+    console.log('Attempting login with:', { userType, email: loginEmail, password });
 
     try {
-      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      const userCredential = await signInWithEmailAndPassword(auth, loginEmail, password);
       const firebaseUser = userCredential.user;
       console.log('User logged in successfully:', { uid: firebaseUser.uid, email: firebaseUser.email });
 
@@ -219,7 +278,7 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
 
       const updatedUser = {
         uid: firebaseUser.uid,
-        email,
+        email: loginEmail,
         role: userData.role,
         patientId: userData.patientId || null,
         name: userData.name || null,
@@ -241,7 +300,7 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
       console.error('Login process error:', { message: error.message, code: error.code, stack: error.stack });
       let errorMessage = 'Login failed. Please try again.';
       if (error.code === 'auth/invalid-credential') {
-        errorMessage = 'Invalid email or password. Please try again.';
+        errorMessage = 'Invalid Patient ID or password. Please try again.';
       } else if (error.code === 'auth/user-not-found') {
         errorMessage = 'User not found. Please register first.';
       } else if (error.code === 'auth/wrong-password') {
@@ -263,6 +322,49 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
     }
   };
 
+  const handleRecoverId = async (e) => {
+    e.preventDefault();
+    setError('');
+    setRecoveredId('');
+    setIsLoading(true);
+
+    // Validate Aadhaar and phone number
+    const aadhaarRegex = /^\d{12}$/;
+    if (!aadhaarRegex.test(aadhaarNumber)) {
+      setError('Invalid Aadhaar number (must be 12 digits).');
+      setIsLoading(false);
+      return;
+    }
+    const phoneRegex = /^\+91\d{10}$/;
+    if (!phoneRegex.test(phoneNumber)) {
+      setError('Invalid phone number (use +91 followed by 10 digits, e.g., +919876543210).');
+      setIsLoading(false);
+      return;
+    }
+
+    try {
+      const q = query(
+        collection(db, 'patients'),
+        where('aadhaarNumber', '==', aadhaarNumber),
+        where('phoneNumber', '==', phoneNumber)
+      );
+      const querySnapshot = await getDocs(q);
+      if (querySnapshot.empty) {
+        setError('No patient found with this Aadhaar number and phone number.');
+        setIsLoading(false);
+        return;
+      }
+
+      const patientData = querySnapshot.docs[0].data();
+      setRecoveredId(patientData.patientId);
+    } catch (err) {
+      setError('Error recovering Patient ID. Please try again.');
+      console.error('Error recovering patientId:', err.message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const goToRegister = () => {
     console.log('First Time Login clicked, redirecting to /register');
     navigate('/register', { state: { username: email, password } });
@@ -271,64 +373,187 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
   return (
     <div className="login-container">
       <div className="login-card">
-        <h2>Login</h2>
-        <form onSubmit={handleLogin}>
-          <div className="form-group">
-            <label htmlFor="email">Email</label>
-            <input
-              type="email"
-              id="email"
-              value={email}
-              onChange={handleInputChange(setEmail)}
-              required
-              placeholder="Enter your Gmail address (e.g., example@gmail.com)"
-            />
-          </div>
-          <div className="form-group">
-            <label htmlFor="password">Password</label>
-            <input
-              type="password"
-              id="password"
-              value={password}
-              onChange={handleInputChange(setPassword)}
-              required
-              placeholder="Enter your password"
-            />
-          </div>
-          {error && <p className="error-message">{error}</p>}
-          <button type="submit" disabled={isLoading} className="login-button">
-            {isLoading ? (
-              <svg
-                className="spinner"
-                xmlns="http://www.w3.org/2000/svg"
-                fill="none"
-                viewBox="0 0 24 24"
+        <h2>{showRecovery ? 'Recover Patient ID' : 'Login'}</h2>
+        {!showRecovery ? (
+          <form onSubmit={handleLogin}>
+            <div className="form-group">
+              <label htmlFor="userType">User Type</label>
+              <select
+                id="userType"
+                value={userType}
+                onChange={(e) => {
+                  setUserType(e.target.value);
+                  setError('');
+                  setPatientId('');
+                  setEmail('');
+                }}
+                required
               >
-                <circle
-                  className="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  strokeWidth="4"
-                ></circle>
-                <path
-                  className="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                ></path>
-              </svg>
+                <option value="" disabled>Select user type</option>
+                <option value="admin">Admin</option>
+                <option value="doctor">Doctor</option>
+                <option value="patient">Patient</option>
+              </select>
+            </div>
+            {userType === 'patient' ? (
+              <div className="form-group">
+                <label htmlFor="patientId">Patient ID</label>
+                <input
+                  type="text"
+                  id="patientId"
+                  value={patientId}
+                  onChange={handleInputChange(setPatientId)}
+                  required
+                  placeholder="Enter your Patient ID"
+                />
+              </div>
             ) : (
-              'Login'
+              <div className="form-group">
+                <label htmlFor="email">Email</label>
+                <input
+                  type="email"
+                  id="email"
+                  value={email}
+                  onChange={handleInputChange(setEmail)}
+                  required
+                  placeholder="Enter your Gmail address (e.g., example@gmail.com)"
+                />
+              </div>
             )}
-          </button>
-        </form>
-        <p className="register-prompt">
-          First Time Login?{' '}
-          <span className="register-link" onClick={goToRegister}>
-            Register here
-          </span>
-        </p>
+            <div className="form-group">
+              <label htmlFor="password">Password</label>
+              <input
+                type="password"
+                id="password"
+                value={password}
+                onChange={handleInputChange(setPassword)}
+                required
+                placeholder="Enter your password"
+              />
+            </div>
+            {error && <p className="error-message">{error}</p>}
+            {userType === 'patient' && (
+              <p className="recover-link">
+                Forgot your Patient ID?{' '}
+                <span
+                  className="register-link"
+                  onClick={() => {
+                    setShowRecovery(true);
+                    setError('');
+                    setRecoveredId('');
+                  }}
+                >
+                  Recover here
+                </span>
+              </p>
+            )}
+            <button type="submit" disabled={isLoading} className="login-button">
+              {isLoading ? (
+                <svg
+                  className="spinner"
+                  xmlns="http://www.w3.org/2000/svg"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                >
+                  <circle
+                    className="opacity-25"
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    strokeWidth="4"
+                  ></circle>
+                  <path
+                    className="opacity-75"
+                    fill="currentColor"
+                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                  ></path>
+                </svg>
+              ) : (
+                'Login'
+              )}
+            </button>
+          </form>
+        ) : (
+          <form onSubmit={handleRecoverId}>
+            <div className="form-group">
+              <label htmlFor="aadhaarNumber">Aadhaar Number</label>
+              <input
+                type="text"
+                id="aadhaarNumber"
+                value={aadhaarNumber}
+                onChange={handleInputChange(setAadhaarNumber)}
+                required
+                placeholder="Enter your 12-digit Aadhaar number"
+              />
+            </div>
+            <div className="form-group">
+              <label htmlFor="phoneNumber">Phone Number</label>
+              <input
+                type="text"
+                id="phoneNumber"
+                value={phoneNumber}
+                onChange={handleInputChange(setPhoneNumber)}
+                required
+                placeholder="Enter your phone number (e.g., +919876543210)"
+              />
+            </div>
+            {error && <p className="error-message">{error}</p>}
+            {recoveredId && (
+              <p className="success-message">
+                Your Patient ID is: <strong>{recoveredId}</strong>
+              </p>
+            )}
+            <button type="submit" disabled={isLoading} className="login-button">
+              {isLoading ? (
+                <svg
+                  className="spinner"
+                  xmlns="http://www.w3.org/2000/svg"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                >
+                  <circle
+                    className="opacity-25"
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    strokeWidth="4"
+                  ></circle>
+                  <path
+                    className="opacity-75"
+                    fill="currentColor"
+                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                  ></path>
+                </svg>
+              ) : (
+                'Recover Patient ID'
+              )}
+            </button>
+            <p className="back-link">
+              <span
+                className="register-link"
+                onClick={() => {
+                  setShowRecovery(false);
+                  setError('');
+                  setRecoveredId('');
+                  setAadhaarNumber('');
+                  setPhoneNumber('');
+                }}
+              >
+                Back to Login
+              </span>
+            </p>
+          </form>
+        )}
+        {!showRecovery && (
+          <p className="register-prompt">
+            First Time Login?{' '}
+            <span className="register-link" onClick={goToRegister}>
+              Register here
+            </span>
+          </p>
+        )}
       </div>
 
       <style>{`
@@ -395,7 +620,8 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
           font-weight: 500;
         }
 
-        input {
+        input,
+        select {
           width: 100%;
           padding: 12px 15px;
           border: 1px solid rgba(255, 255, 255, 0.2);
@@ -406,15 +632,30 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
           transition: border-color 0.3s ease, box-shadow 0.3s ease;
         }
 
-        input:focus {
+        input:focus,
+        select:focus {
           outline: none;
           border-color: #6E48AA;
           box-shadow: 0 0 8px rgba(110, 72, 170, 0.3);
           background: rgba(255, 255, 255, 0.15);
         }
 
-        input::placeholder {
+        input::placeholder,
+        select:invalid {
           color: #A0A0A0;
+        }
+
+        select {
+          color: #FFFFFF;
+        }
+
+        select:invalid {
+          color: #A0A0A0;
+        }
+
+        select option {
+          color: #333;
+          background: #FFFFFF;
         }
 
         .error-message {
@@ -422,6 +663,15 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
           font-size: 0.9rem;
           margin-bottom: 20px;
           animation: shake 0.5s ease;
+        }
+
+        .success-message {
+          color: #2ECC71;
+          font-size: 0.95rem;
+          margin-bottom: 20px;
+          background: rgba(46, 204, 113, 0.1);
+          padding: 10px;
+          border-radius: 5px;
         }
 
         .login-button {
@@ -470,7 +720,9 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
           left: 100%;
         }
 
-        .register-prompt {
+        .register-prompt,
+        .recover-link,
+        .back-link {
           margin-top: 20px;
           font-size: 0.95rem;
           color: #E0E0E0;

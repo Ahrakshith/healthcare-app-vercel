@@ -738,16 +738,11 @@ const handleRegisterPatientRequest = async (req, res, userId) => {
         return res.status(403).json({ success: false, message: 'Only admins can register patients' });
       }
 
-      const { name, email, dateOfBirth, age, languagePreference, password, aadhaarNumber, phoneNumber } = req.body;
+      const { name, dateOfBirth, age, languagePreference, password, aadhaarNumber, phoneNumber } = req.body;
 
       // Validate required fields
-      if (!name || !email || !dateOfBirth || !age || !languagePreference || !password || !aadhaarNumber || !phoneNumber) {
+      if (!name || !dateOfBirth || !age || !languagePreference || !password || !aadhaarNumber || !phoneNumber) {
         return res.status(400).json({ error: { code: 400, message: 'All fields are required' } });
-      }
-
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!emailRegex.test(email)) {
-        return res.status(400).json({ error: { code: 400, message: 'Invalid email address' } });
       }
 
       const aadhaarRegex = /^\d{12}$/;
@@ -762,14 +757,6 @@ const handleRegisterPatientRequest = async (req, res, userId) => {
 
       if (password.length < 6) {
         return res.status(400).json({ error: { code: 400, message: 'Password must be at least 6 characters long' } });
-      }
-
-      // Check if email is already registered
-      const emailQuery = await db.collection('patients')
-        .where('email', '==', email)
-        .get();
-      if (!emailQuery.empty) {
-        return res.status(400).json({ error: { code: 400, message: 'Email already registered' } });
       }
 
       // Check if Aadhaar number is already registered
@@ -821,7 +808,6 @@ const handleRegisterPatientRequest = async (req, res, userId) => {
         uid: patientUid,
         patientId,
         name,
-        email, // Store the email
         dateOfBirth,
         age: parseInt(age),
         languagePreference,
