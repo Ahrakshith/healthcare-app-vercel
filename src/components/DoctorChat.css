@@ -56,6 +56,29 @@
   gap: 15px;
 }
 
+.patient-profile-button {
+  padding: 8px 20px;
+  background: #6E48AA;
+  color: #FFFFFF;
+  border: none;
+  border-radius: 25px;
+  font-size: 1rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.3s ease, transform 0.3s ease;
+}
+
+.patient-profile-button:hover {
+  background: #5A3E8B;
+  transform: scale(1.05);
+}
+
+.patient-profile-button:disabled {
+  background: #666;
+  color: #A0A0A0;
+  cursor: not-allowed;
+}
+
 .logout-button {
   padding: 8px 20px;
   background: #E74C3C;
