@@ -161,7 +161,7 @@ function PatientProfile({ user, setError }) {
         <h2>Patient Profile</h2>
         <button
           className="close-profile-button"
-          onClick={() => navigate('/doctor-chat')}
+          onClick={() => navigate('/doctor/chat')} // Updated to correct route
           aria-label="Close patient profile"
         >
           ✕
