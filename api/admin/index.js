@@ -378,41 +378,59 @@ const handleChatRequest = async (req, res, patientId, doctorId, userId) => {
   }
 };
 
-// Handler for missed dose alerts
+// Handler for missed dose alerts (Updated with detailed logging and error handling)
 const handleMissedDoseAlertsRequest = async (req, res, patientId, doctorId, userId) => {
   if (req.method === 'GET') {
     try {
+      console.log(`[DEBUG] Starting handleMissedDoseAlertsRequest for user ${userId}, patient ${patientId}, doctor ${doctorId}`);
+
+      // Step 1: Verify the user is a doctor and matches the doctorId
+      console.log(`[DEBUG] Fetching doctor profile for user ${userId}`);
       const doctorQuery = await db.collection('doctors').where('uid', '==', userId).get();
       if (doctorQuery.empty) {
+        console.log(`[DEBUG] No doctor profile found for user ${userId}`);
         return res.status(404).json({ success: false, message: 'Doctor profile not found for this user' });
       }
       const doctorData = doctorQuery.docs[0].data();
+      console.log(`[DEBUG] Doctor profile found:`, { doctorId: doctorData.doctorId, uid: doctorData.uid });
       if (doctorData.doctorId !== doctorId) {
+        console.log(`[DEBUG] User ${userId} not authorized for doctor ${doctorId}`);
         return res.status(403).json({ success: false, message: 'You are not authorized to access alerts for this doctor' });
       }
 
+      // Step 2: Check if there is an assignment between the patient and doctor
+      console.log(`[DEBUG] Checking assignment for patient ${patientId} and doctor ${doctorId}`);
       const assignmentQuery = await db.collection('doctor_assignments')
         .where('patientId', '==', patientId)
         .where('doctorId', '==', doctorId)
         .get();
       if (assignmentQuery.empty) {
+        console.log(`[DEBUG] No assignment found for patient ${patientId} and doctor ${doctorId}`);
         return res.status(404).json({ success: false, message: 'No assignment found for this patient and doctor' });
       }
+      console.log(`[DEBUG] Assignment found:`, assignmentQuery.docs[0].data());
 
+      // Step 3: Fetch missed dose alerts
+      console.log(`[DEBUG] Fetching missed dose alerts for patient ${patientId} and doctor ${doctorId}`);
       const alertsQuery = await db.collection('missed_dose_alerts')
         .where('patientId', '==', patientId)
         .where('doctorId', '==', doctorId)
         .get();
 
-      const alerts = alertsQuery.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      }));
+      // Step 4: Map the alerts data
+      const alerts = alertsQuery.docs.map((doc) => {
+        const data = doc.data();
+        console.log(`[DEBUG] Alert data for doc ${doc.id}:`, data);
+        return {
+          id: doc.id,
+          ...data,
+        };
+      });
 
-      console.log(`Fetched ${alerts.length} missed dose alerts for patient ${patientId} and doctor ${doctorId}`);
+      console.log(`[DEBUG] Fetched ${alerts.length} missed dose alerts for patient ${patientId} and doctor ${doctorId}`);
       return res.status(200).json({ success: true, alerts });
     } catch (error) {
-      console.error(`Error fetching missed dose alerts for patient ${patientId} and doctor ${doctorId}:`, error.message);
+      console.error(`[ERROR] Detailed error fetching missed dose alerts for patient ${patientId} and doctor ${doctorId}:`, error.message);
       return res.status(500).json({ success: false, message: 'Failed to fetch missed dose alerts', details: error.message });
     }
   } else {
@@ -903,7 +921,7 @@ export default async function handler(req, res) {
       console.log('[DEBUG] Routing to handleInvalidPrescriptionsRequest');
       return handleInvalidPrescriptionsRequest(req, res, userId);
     } else if (req.url.includes('/register-patient')) {
-      console.log('[DEBUG] Routing to handleRegisterPatientRequest');
+      console.log('[DEBUG] Routing to handleRegisterPatientRequest with method:', req.method);
       return handleRegisterPatientRequest(req, res, userId);
     } else {
       console.log('[DEBUG] Routing to handleChatRequest');
