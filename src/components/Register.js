@@ -767,5 +767,4 @@ function Register({ setUser, setRole, user }) {
   );
 }
 
-
 export default Register;

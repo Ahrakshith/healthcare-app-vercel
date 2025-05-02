@@ -220,6 +220,10 @@
       "destination": "/api/admin/index"
     },
     {
+      "source": "/api/admin/register-patient",
+      "destination": "/api/admin/index"
+    },
+    {
       "source": "/api/users/:uid",
       "destination": "/api/users/[uid]"
     },
