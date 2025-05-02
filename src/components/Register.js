@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { doc, setDoc, getDocs, query, collection, where } from 'firebase/firestore';
+import { getAuth, createUserWithEmailAndPassword } from 'firebase/auth';
 import { db } from '../services/firebase.js';
 
 function Register({ setUser, setRole, user }) {
   const [name, setName] = useState('');
+  const [email, setEmail] = useState(''); // Added email state
   const [sex, setSex] = useState('');
   const [age, setAge] = useState('');
   const [address, setAddress] = useState('');
@@ -17,6 +19,7 @@ function Register({ setUser, setRole, user }) {
   const [termsAccepted, setTermsAccepted] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
+  const auth = getAuth();
 
   const { username: initialEmail, password: initialPassword } = location.state || {};
 
@@ -74,6 +77,17 @@ function Register({ setUser, setRole, user }) {
       setIsLoading(false);
       return;
     }
+    if (!email) {
+      setError('Email is required.');
+      setIsLoading(false);
+      return;
+    }
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      setError('Please enter a valid email address.');
+      setIsLoading(false);
+      return;
+    }
     if (!sex) {
       setError('Sex is required.');
       setIsLoading(false);
@@ -127,23 +141,29 @@ function Register({ setUser, setRole, user }) {
       return;
     }
 
-    console.log('Register.js: Attempting registration with:', { name, patientId, password, aadhaarNumber, phoneNumber });
+    console.log('Register.js: Attempting registration with:', { name, email, patientId, password, aadhaarNumber, phoneNumber });
 
     try {
-      // Call the serverless function to register the patient
+      // Create a Firebase Auth user with the provided email and password
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      const firebaseUser = userCredential.user;
+      console.log('Register.js: Firebase user created:', firebaseUser.uid);
+
+      // Call the serverless function to store patient data
       const response = await fetch(`${process.env.REACT_APP_API_URL}/admin/register-patient`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('idToken') || ''}`,
+          'Authorization': `Bearer ${await firebaseUser.getIdToken()}`,
           'x-user-uid': 'admin-uid', // Replace with actual admin UID or fetch dynamically
         },
         body: JSON.stringify({
           name,
-          dateOfBirth: '1990-01-15', // You can add a field for this in the form if needed
+          email, // Include email in the request
+          dateOfBirth: '1990-01-15', // Add a field in the form if needed
           age: parseInt(age),
-          languagePreference: 'en', // Default to English, can be made configurable
-          password,
+          languagePreference: 'en',
+          password, // Backend will hash this
           aadhaarNumber,
           phoneNumber,
         }),
@@ -159,10 +179,11 @@ function Register({ setUser, setRole, user }) {
 
       // Update local state and redirect
       const updatedUser = {
-        uid: `patient-${registeredPatientId}`,
+        uid: firebaseUser.uid,
         role: 'patient',
         patientId: registeredPatientId,
         name,
+        email,
         sex,
         age: parseInt(age),
         address,
@@ -213,6 +234,17 @@ function Register({ setUser, setRole, user }) {
               onChange={(e) => setName(e.target.value)}
               required
               placeholder="Enter your name"
+            />
+          </div>
+          <div className="form-group">
+            <label htmlFor="email">Email</label>
+            <input
+              type="email"
+              id="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              placeholder="Enter your email"
             />
           </div>
           <div className="form-group">

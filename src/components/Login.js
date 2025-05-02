@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { signInWithEmailAndPassword, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
+import { signInWithEmailAndPassword, onAuthStateChanged } from 'firebase/auth';
+import { doc, getDoc, query, collection, where, getDocs } from 'firebase/firestore';
 import { auth, db } from '../services/firebase.js';
 
 function PatientIdRecovery({ setError }) {
@@ -253,49 +253,53 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
     }
 
     try {
-      const response = await fetch(`${process.env.REACT_APP_API_URL}/auth/patient-login`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ patientId, password }),
-      });
+      // Fetch the patient's email from Firestore using the patientId
+      const patientQuery = query(collection(db, 'patients'), where('patientId', '==', patientId));
+      const querySnapshot = await getDocs(patientQuery);
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error.message || 'Login failed');
+      if (querySnapshot.empty) {
+        throw new Error('Patient ID not found');
       }
 
-      const { customToken, patientId: returnedPatientId } = await response.json();
-      const userCredential = await signInWithCustomToken(auth, customToken);
+      const patientData = querySnapshot.docs[0].data();
+      const patientEmail = patientData.email;
+
+      if (!patientEmail) {
+        throw new Error('Email not found for this patient');
+      }
+
+      // Sign in with Firebase Auth using the email and password
+      const userCredential = await signInWithEmailAndPassword(auth, patientEmail, password);
       const firebaseUser = userCredential.user;
 
-      const userDoc = await getDoc(doc(db, 'patients', returnedPatientId));
-      if (!userDoc.exists()) {
-        throw new Error('Patient data not found in Firestore');
-      }
-      const patientData = userDoc.data();
-
+      // Fetch patient data to populate user state
       const updatedUser = {
         uid: firebaseUser.uid,
         role: 'patient',
-        patientId: returnedPatientId,
+        patientId: patientId,
         name: patientData.name,
+        email: patientEmail,
         sex: patientData.sex,
         age: patientData.age,
       };
 
       setUser(updatedUser);
       setRole('patient');
-      setPatientId(returnedPatientId);
+      setPatientId(patientId);
       localStorage.setItem('userId', firebaseUser.uid);
-      localStorage.setItem('patientId', returnedPatientId);
+      localStorage.setItem('patientId', patientId);
+
+      navigate('/patient/select-doctor');
     } catch (error) {
       let errorMessage = 'Login failed. Please try again.';
       if (error.message.includes('Patient ID not found')) {
         errorMessage = 'Patient ID not found. Please check your ID or register.';
-      } else if (error.message.includes('Invalid password')) {
+      } else if (error.code === 'auth/wrong-password') {
         errorMessage = 'Incorrect password. Please try again.';
+      } else if (error.code === 'auth/invalid-credential') {
+        errorMessage = 'Invalid credentials. Please check your Patient ID and password.';
+      } else if (error.message.includes('Email not found')) {
+        errorMessage = 'Email not found for this patient. Please contact support.';
       }
       setError(errorMessage);
       setParentError(errorMessage);
