@@ -5,28 +5,34 @@ import { doc, getDoc, query, collection, where, getDocs } from 'firebase/firesto
 import { auth, db } from '../services/firebase.js';
 
 function Login({ setUser, setRole, setPatientId, user, setError: setParentError }) {
-  const [userType, setUserType] = useState(''); // New state for user type
+  const [userType, setUserType] = useState('');
   const [email, setEmail] = useState('');
-  const [patientId, setLocalPatientId] = useState(''); // Renamed to avoid conflict with prop
+  const [patientId, setLocalPatientId] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [showRecovery, setShowRecovery] = useState(false); // State to toggle recovery form
-  const [aadhaarNumber, setAadhaarNumber] = useState(''); // State for recovery form
-  const [phoneNumber, setPhoneNumber] = useState(''); // State for recovery form
-  const [recoveredId, setRecoveredId] = useState(''); // State to store recovered patientId
+  const [showRecovery, setShowRecovery] = useState(false);
+  const [aadhaarNumber, setAadhaarNumber] = useState('');
+  const [phoneNumber, setPhoneNumber] = useState('');
+  const [recoveredId, setRecoveredId] = useState('');
+  const [showWelcomeAlert, setShowWelcomeAlert] = useState(false);
+  const [patientName, setPatientName] = useState('');
+  const [welcomePatientId, setWelcomePatientId] = useState('');
   const navigate = useNavigate();
   const location = useLocation();
 
-  const { username: initialUsername, password: initialPassword } = location.state || {};
+  const { username: initialUsername, password: initialPassword, patientName: initialPatientName, patientId: initialPatientId } = location.state || {};
 
-  // Set initial email and password from location state (e.g., from registration)
   useEffect(() => {
     if (initialUsername) setEmail(initialUsername);
     if (initialPassword) setPassword(initialPassword);
-  }, [initialUsername, initialPassword]);
+    if (initialPatientName && initialPatientId) {
+      setPatientName(initialPatientName);
+      setWelcomePatientId(initialPatientId);
+      setShowWelcomeAlert(true);
+    }
+  }, [initialUsername, initialPassword, initialPatientName, initialPatientId]);
 
-  // Check for existing user session on component mount
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
@@ -66,7 +72,6 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
             }
           } else {
             console.warn('API request failed, falling back to Firestore', { status: response.status });
-            // Fallback to Firestore
             const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
             if (!userDoc.exists()) {
               throw new Error('User not found in Firestore');
@@ -117,7 +122,6 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
     return () => unsubscribe();
   }, [navigate, setUser, setRole, setPatientId]);
 
-  // Clear error when user starts typing
   const handleInputChange = (setter) => (e) => {
     if (error) {
       setError('');
@@ -133,7 +137,6 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
     setParentError('');
     setIsLoading(true);
 
-    // Validate user type selection
     if (!userType) {
       setError('Please select a user type.');
       setIsLoading(false);
@@ -143,7 +146,6 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
 
     let loginEmail = email;
 
-    // For patient login, map patientId to email
     if (userType === 'patient') {
       if (!patientId.trim()) {
         setError('Patient ID is required.');
@@ -177,7 +179,6 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
         return;
       }
     } else {
-      // Admin or Doctor login validation
       if (!email.trim()) {
         setError('Email is required.');
         setIsLoading(false);
@@ -237,7 +238,6 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
         });
 
         if (!response.ok) {
-          // Fallback to Firestore if API fails
           console.warn('API request failed, falling back to Firestore', { status: response.status });
           const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
           if (!userDoc.exists()) {
@@ -259,7 +259,6 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
         } catch (parseError) {
           console.error('JSON parsing failed:', parseError.message, 'Raw response:', responseText);
           if (attempt === maxAttempts - 1) {
-            // Fallback to Firestore after retries
             console.warn('Falling back to Firestore after failed retries');
             const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
             if (!userDoc.exists()) {
@@ -328,7 +327,6 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
     setRecoveredId('');
     setIsLoading(true);
 
-    // Validate Aadhaar and phone number
     const aadhaarRegex = /^\d{12}$/;
     if (!aadhaarRegex.test(aadhaarNumber)) {
       setError('Invalid Aadhaar number (must be 12 digits).');
@@ -372,6 +370,17 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
 
   return (
     <div className="login-container">
+      {showWelcomeAlert && (
+        <div className="welcome-alert">
+          <p>Welcome {patientName}, your patient ID is <strong>{welcomePatientId}</strong>.</p>
+          <button
+            className="noted-button"
+            onClick={() => setShowWelcomeAlert(false)}
+          >
+            Noted
+          </button>
+        </div>
+      )}
       <div className="login-card">
         <h2>{showRecovery ? 'Recover Patient ID' : 'Login'}</h2>
         {!showRecovery ? (
@@ -384,7 +393,7 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
                 onChange={(e) => {
                   setUserType(e.target.value);
                   setError('');
-                  setLocalPatientId(''); // Updated to use renamed setter
+                  setLocalPatientId('');
                   setEmail('');
                 }}
                 required
@@ -402,7 +411,7 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
                   type="text"
                   id="patientId"
                   value={patientId}
-                  onChange={handleInputChange(setLocalPatientId)} // Updated to use renamed setter
+                  onChange={handleInputChange(setLocalPatientId)}
                   required
                   placeholder="Enter your Patient ID"
                 />
@@ -567,6 +576,50 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
           background: linear-gradient(135deg, #2C1A3D, #3E2A5A);
           padding: 20px;
           font-family: 'Poppins', sans-serif;
+          position: relative;
+        }
+
+        .welcome-alert {
+          position: fixed;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%);
+          background: rgba(44, 26, 61, 0.95);
+          backdrop-filter: blur(10px);
+          padding: 30px;
+          border-radius: 15px;
+          box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+          color: #FFFFFF;
+          text-align: center;
+          z-index: 1000;
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          animation: fadeIn 0.5s ease-in-out;
+        }
+
+        .welcome-alert p {
+          font-size: 1.2rem;
+          margin-bottom: 20px;
+        }
+
+        .welcome-alert strong {
+          color: #6E48AA;
+        }
+
+        .noted-button {
+          padding: 10px 25px;
+          background: #27AE60;
+          color: #FFFFFF;
+          border: none;
+          border-radius: 20px;
+          font-size: 1rem;
+          font-weight: 500;
+          cursor: pointer;
+          transition: background 0.3s ease, transform 0.3s ease;
+        }
+
+        .noted-button:hover {
+          background: #219653;
+          transform: scale(1.05);
         }
 
         .login-card {

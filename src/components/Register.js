@@ -12,8 +12,8 @@ function Register({ setUser, setRole, user }) {
   const [age, setAge] = useState('');
   const [address, setAddress] = useState('');
   const [patientId, setPatientId] = useState('');
-  const [aadhaarNumber, setAadhaarNumber] = useState(''); // New field
-  const [phoneNumber, setPhoneNumber] = useState(''); // New field
+  const [aadhaarNumber, setAadhaarNumber] = useState('');
+  const [phoneNumber, setPhoneNumber] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [termsAccepted, setTermsAccepted] = useState(false);
@@ -22,7 +22,6 @@ function Register({ setUser, setRole, user }) {
 
   const { username: initialEmail, password: initialPassword } = location.state || {};
 
-  // Generate a unique 6-character alphanumeric patientId
   const generatePatientId = async () => {
     const characters = 'abcdefghijklmnopqrstuvwxyz0123456789';
     let generatedId = '';
@@ -64,7 +63,6 @@ function Register({ setUser, setRole, user }) {
     setError('');
     setIsLoading(true);
 
-    // Validation checks
     if (!termsAccepted) {
       setError('You must accept the terms and conditions.');
       setIsLoading(false);
@@ -116,7 +114,6 @@ function Register({ setUser, setRole, user }) {
       setIsLoading(false);
       return;
     }
-    // New validations for Aadhaar and phone number
     const aadhaarRegex = /^\d{12}$/;
     if (!aadhaarRegex.test(aadhaarNumber)) {
       setError('Invalid Aadhaar number (must be 12 digits).');
@@ -133,36 +130,25 @@ function Register({ setUser, setRole, user }) {
     console.log('Register.js: Attempting registration with:', { email, password, role: 'patient' });
 
     try {
-      // Step 1: Check email uniqueness against Aadhaar number and patient ID in Firestore
       const patientsRef = collection(db, 'patients');
 
-      // Check if email is already in use
       const emailQuery = query(patientsRef, where('email', '==', email));
       const emailSnapshot = await getDocs(emailQuery);
 
       if (!emailSnapshot.empty) {
-        // Email is already in use, check Aadhaar number and patient ID
         const existingPatient = emailSnapshot.docs[0].data();
-
-        // Check email against Aadhaar number
         if (existingPatient.aadhaarNumber !== aadhaarNumber) {
           setError('This email is already associated with a different Aadhaar number.');
           setIsLoading(false);
           return;
         }
-
-        // Check email against patient ID
         if (existingPatient.patientId !== patientId) {
           setError('This email is already associated with a different patient ID.');
           setIsLoading(false);
           return;
         }
-
-        // If we reach here, the email is already in use with the same Aadhaar number and patient ID,
-        // which shouldn't happen due to Firebase Auth, but we'll let the auth step handle it
       }
 
-      // Step 2: Check Aadhaar number uniqueness (already in patients collection)
       const aadhaarQuery = query(patientsRef, where('aadhaarNumber', '==', aadhaarNumber));
       const aadhaarSnapshot = await getDocs(aadhaarQuery);
       if (!aadhaarSnapshot.empty) {
@@ -174,7 +160,6 @@ function Register({ setUser, setRole, user }) {
         }
       }
 
-      // Step 3: Check phone number uniqueness (already in patients collection)
       const phoneQuery = query(patientsRef, where('phoneNumber', '==', phoneNumber));
       const phoneSnapshot = await getDocs(phoneQuery);
       if (!phoneSnapshot.empty) {
@@ -183,12 +168,10 @@ function Register({ setUser, setRole, user }) {
         return;
       }
 
-      // Step 4: Register user with Firebase Authentication
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
       const firebaseUser = userCredential.user;
       console.log('Register.js: User registered in Firebase Auth:', firebaseUser.uid);
 
-      // Step 5: Store user data in Firestore (users collection)
       const userData = {
         uid: firebaseUser.uid,
         email,
@@ -199,24 +182,23 @@ function Register({ setUser, setRole, user }) {
         age: parseInt(age),
         address,
         patientId,
-        aadhaarNumber, // New field
-        phoneNumber,   // New field
+        aadhaarNumber,
+        phoneNumber,
       };
       await setDoc(doc(db, 'users', firebaseUser.uid), userData);
       console.log('Register.js: User data stored in Firestore (users):', firebaseUser.uid);
 
-      // Step 6: Store patient data in Firestore (patients collection)
       const patientData = {
         uid: firebaseUser.uid,
         patientId,
         name,
-        email, // Added email as per admin/register-patient
-        dateOfBirth: new Date().toISOString().split('T')[0], // Placeholder, adjust if needed
+        email,
+        dateOfBirth: new Date().toISOString().split('T')[0],
         age: parseInt(age),
-        languagePreference: 'en', // Placeholder, adjust if needed
-        password, // Plaintext for now, backend will hash it
-        aadhaarNumber, // New field
-        phoneNumber,   // New field
+        languagePreference: 'en',
+        password,
+        aadhaarNumber,
+        phoneNumber,
         sex,
         address,
         createdAt: new Date().toISOString(),
@@ -224,7 +206,6 @@ function Register({ setUser, setRole, user }) {
       await setDoc(doc(db, 'patients', patientId), patientData);
       console.log('Register.js: Patient data stored in Firestore (patients):', patientId);
 
-      // Step 7: Call the backend to notify admin via SMS
       const token = await firebaseUser.getIdToken();
       const response = await fetch(`${process.env.REACT_APP_API_URL}/admin/register-patient`, {
         method: 'POST',
@@ -236,9 +217,9 @@ function Register({ setUser, setRole, user }) {
         body: JSON.stringify({
           name,
           email,
-          dateOfBirth: new Date().toISOString().split('T')[0], // Placeholder
+          dateOfBirth: new Date().toISOString().split('T')[0],
           age: parseInt(age),
-          languagePreference: 'en', // Placeholder
+          languagePreference: 'en',
           password,
           aadhaarNumber,
           phoneNumber,
@@ -252,25 +233,15 @@ function Register({ setUser, setRole, user }) {
       }
       console.log('Register.js: Admin notified via backend:', result);
 
-      // Step 8: Update application state and redirect
-      const updatedUser = {
-        uid: firebaseUser.uid,
-        email,
-        role: 'patient',
-        patientId,
-        name,
-        sex,
-        age,
-        address,
-        aadhaarNumber, // New field
-        phoneNumber,   // New field
-      };
-      setUser(updatedUser);
-      setRole('patient');
-      localStorage.setItem('userId', firebaseUser.uid);
-      localStorage.setItem('patientId', patientId);
-
-      navigate('/patient/select-doctor');
+      // Redirect to login page with patient name and ID
+      navigate('/login', {
+        state: {
+          username: email,
+          password,
+          patientName: name,
+          patientId
+        }
+      });
     } catch (error) {
       console.error('Register.js: Registration error:', error.message);
       if (error.code === 'auth/email-already-in-use') {
@@ -310,7 +281,6 @@ function Register({ setUser, setRole, user }) {
   return (
     <div className="register-page">
       <div className="form-sections">
-        {/* Left Section: General Information */}
         <div className="form-section left-section">
           <h3>Patient Registration</h3>
           <div className="form-group">
@@ -348,7 +318,6 @@ function Register({ setUser, setRole, user }) {
           </div>
         </div>
 
-        {/* Right Section: Additional Details */}
         <div className="form-section right-section">
           <h3>Additional Details</h3>
           <div className="form-group">
