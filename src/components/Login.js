@@ -15,6 +15,7 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
   const [aadhaarNumber, setAadhaarNumber] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
   const [recoveredId, setRecoveredId] = useState('');
+  const [recoveredPassword, setRecoveredPassword] = useState('');
   const [showWelcomeAlert, setShowWelcomeAlert] = useState(false);
   const [patientName, setPatientName] = useState('');
   const [welcomePatientId, setWelcomePatientId] = useState('');
@@ -325,6 +326,7 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
     e.preventDefault();
     setError('');
     setRecoveredId('');
+    setRecoveredPassword('');
     setIsLoading(true);
 
     const aadhaarRegex = /^\d{12}$/;
@@ -355,9 +357,10 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
 
       const patientData = querySnapshot.docs[0].data();
       setRecoveredId(patientData.patientId);
+      setRecoveredPassword(patientData.password || 'No password stored');
     } catch (err) {
-      setError('Error recovering Patient ID. Please try again.');
-      console.error('Error recovering patientId:', err.message);
+      setError('Error recovering patient credentials. Please try again.');
+      console.error('Error recovering patient credentials:', err.message);
     } finally {
       setIsLoading(false);
     }
@@ -450,6 +453,7 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
                     setShowRecovery(true);
                     setError('');
                     setRecoveredId('');
+                    setRecoveredPassword('');
                   }}
                 >
                   Recover here
@@ -508,9 +512,10 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
               />
             </div>
             {error && <p className="error-message">{error}</p>}
-            {recoveredId && (
+            {(recoveredId || recoveredPassword) && (
               <p className="success-message">
-                Your Patient ID is: <strong>{recoveredId}</strong>
+                Your Patient ID is: <strong>{recoveredId}</strong><br />
+                Your Password is: <strong>{recoveredPassword}</strong>
               </p>
             )}
             <button type="submit" disabled={isLoading} className="login-button">
@@ -546,6 +551,7 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
                   setShowRecovery(false);
                   setError('');
                   setRecoveredId('');
+                  setRecoveredPassword('');
                   setAadhaarNumber('');
                   setPhoneNumber('');
                 }}
