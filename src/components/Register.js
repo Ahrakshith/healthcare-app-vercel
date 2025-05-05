@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { createUserWithEmailAndPassword } from 'firebase/auth';
+import { createUserWithEmailAndPassword, signOut } from 'firebase/auth';
 import { doc, setDoc, getDocs, query, collection, where } from 'firebase/firestore';
 import { auth, db } from '../services/firebase.js';
 
@@ -219,6 +219,10 @@ function Register({ setUser, setRole, user }) {
       }
       console.log('Register.js: Admin notified via backend:', result);
 
+      // Sign out the user to prevent automatic redirect to /patient/select-doctor
+      await signOut(auth);
+      console.log('Register.js: User signed out after registration');
+
       // Redirect to login page with patient name and ID
       navigate('/login', {
         state: {
@@ -248,7 +252,7 @@ function Register({ setUser, setRole, user }) {
 
   const handleLogout = async () => {
     try {
-      await auth.signOut();
+      await signOut(auth);
       setUser(null);
       setRole(null);
       localStorage.removeItem('userId');
