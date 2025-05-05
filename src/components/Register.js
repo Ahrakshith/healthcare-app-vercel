@@ -132,16 +132,12 @@ function Register({ setUser, setRole, user }) {
     try {
       const patientsRef = collection(db, 'patients');
 
+      // Check if email is already associated with a different patient ID
       const emailQuery = query(patientsRef, where('email', '==', email));
       const emailSnapshot = await getDocs(emailQuery);
 
       if (!emailSnapshot.empty) {
         const existingPatient = emailSnapshot.docs[0].data();
-        if (existingPatient.aadhaarNumber !== aadhaarNumber) {
-          setError('This email is already associated with a different Aadhaar number.');
-          setIsLoading(false);
-          return;
-        }
         if (existingPatient.patientId !== patientId) {
           setError('This email is already associated with a different patient ID.');
           setIsLoading(false);
@@ -149,21 +145,11 @@ function Register({ setUser, setRole, user }) {
         }
       }
 
+      // Check if Aadhaar number is already used by any patient
       const aadhaarQuery = query(patientsRef, where('aadhaarNumber', '==', aadhaarNumber));
       const aadhaarSnapshot = await getDocs(aadhaarQuery);
       if (!aadhaarSnapshot.empty) {
-        const existingAadhaarPatient = aadhaarSnapshot.docs[0].data();
-        if (existingAadhaarPatient.email !== email) {
-          setError('This Aadhaar number is already associated with a different email.');
-          setIsLoading(false);
-          return;
-        }
-      }
-
-      const phoneQuery = query(patientsRef, where('phoneNumber', '==', phoneNumber));
-      const phoneSnapshot = await getDocs(phoneQuery);
-      if (!phoneSnapshot.empty) {
-        setError('This phone number is already registered.');
+        setError('This Aadhaar number is already registered with another account.');
         setIsLoading(false);
         return;
       }
