@@ -158,8 +158,16 @@ function Register({ setUser, setRole, user }) {
       const firebaseUser = userCredential.user;
       console.log('Register.js: User registered in Firebase Auth:', firebaseUser.uid);
 
+      // Store UID and token before signing out
+      const userId = firebaseUser.uid;
+      const token = await firebaseUser.getIdToken();
+
+      // Sign out immediately to prevent auth state change
+      await signOut(auth);
+      console.log('Register.js: User signed out after registration');
+
       const userData = {
-        uid: firebaseUser.uid,
+        uid: userId,
         email,
         role: 'patient',
         createdAt: new Date().toISOString(),
@@ -171,11 +179,11 @@ function Register({ setUser, setRole, user }) {
         aadhaarNumber,
         phoneNumber,
       };
-      await setDoc(doc(db, 'users', firebaseUser.uid), userData);
-      console.log('Register.js: User data stored in Firestore (users):', firebaseUser.uid);
+      await setDoc(doc(db, 'users', userId), userData);
+      console.log('Register.js: User data stored in Firestore (users):', userId);
 
       const patientData = {
-        uid: firebaseUser.uid,
+        uid: userId,
         patientId,
         name,
         email,
@@ -192,13 +200,12 @@ function Register({ setUser, setRole, user }) {
       await setDoc(doc(db, 'patients', patientId), patientData);
       console.log('Register.js: Patient data stored in Firestore (patients):', patientId);
 
-      const token = await firebaseUser.getIdToken();
       const response = await fetch(`${process.env.REACT_APP_API_URL}/admin/register-patient`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
-          'x-user-uid': firebaseUser.uid,
+          'x-user-uid': userId,
         },
         body: JSON.stringify({
           name,
@@ -218,10 +225,6 @@ function Register({ setUser, setRole, user }) {
         throw new Error(result.message || 'Failed to send SMS via backend');
       }
       console.log('Register.js: Admin notified via backend:', result);
-
-      // Sign out the user to prevent automatic redirect to /patient/select-doctor
-      await signOut(auth);
-      console.log('Register.js: User signed out after registration');
 
       // Redirect to login page with patient name and ID
       navigate('/login', {
