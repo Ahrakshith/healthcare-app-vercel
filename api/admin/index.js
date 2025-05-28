@@ -652,9 +652,19 @@ const handleInvalidPrescriptionsRequest = async (req, res, userId) => {
         return res.status(403).json({ success: false, message: 'Only admins can fetch invalid prescriptions', userRole });
       }
 
+      // Fetch all patients to get their names
+      const patientsSnapshot = await db.collection('patients').get();
+      const patientMap = patientsSnapshot.docs.reduce((map, doc) => {
+        const data = doc.data();
+        map[data.patientId] = {
+          name: data.name || 'Unknown',
+        };
+        return map;
+      }, {});
+
       // Fetch all notifications
       const notificationsSnapshot = await db.collection('notifications').get();
-      const invalidRecords = [];
+      const invalidRecordsMap = new Map();
 
       for (const doc of notificationsSnapshot.docs) {
         const data = doc.data();
@@ -662,33 +672,42 @@ const handleInvalidPrescriptionsRequest = async (req, res, userId) => {
 
         // Check if the message indicates an invalid prescription
         if (message && message.startsWith('Invalid prescription:')) {
-          // Parse the message to extract prescription and diagnosis
-          // Expected format: "Invalid prescription: \"{prescription}\" for diagnosis \"{diagnosis}\" (Patient: {patientId}, Doctor: {doctorId})"
-          const prescriptionMatch = message.match(/Invalid prescription: "([^"]+)" for diagnosis "([^"]+)"/);
+          // Parse the message to extract prescription details
+          const prescriptionMatch = message.match(/Invalid prescription: "([^"]+)" for diagnosis "([^"]+)"(?:, dosage "([^"]*)", frequency "([^"]*)", duration "([^"]*)")?/);
           if (prescriptionMatch) {
-            const prescriptionText = prescriptionMatch[1]; // e.g., "Acne cream"
-            const diagnosis = prescriptionMatch[2]; // e.g., "Acne"
+            const prescriptionText = prescriptionMatch[1]; // e.g., "paracetamol"
+            const diagnosis = prescriptionMatch[2]; // e.g., "acne"
+            const dosage = prescriptionMatch[3] || 'N/A'; // e.g., "500mg"
+            const frequency = prescriptionMatch[4] || 'N/A'; // e.g., "twice daily"
+            const duration = prescriptionMatch[5] || 'N/A'; // e.g., "5 days"
 
-            // Create a prescription object compatible with the frontend
             const prescription = {
               medicine: prescriptionText,
-              dosage: 'N/A', // Not provided in the notification
-              frequency: 'N/A',
-              duration: 'N/A',
+              dosage,
+              frequency,
+              duration,
             };
 
-            invalidRecords.push({
-              doctorId: doctorId || 'N/A',
-              patientId: patientId || 'N/A',
-              diagnosis: diagnosis || 'N/A',
-              prescription: prescription,
-              timestamp: timestamp || new Date().toISOString(),
-            });
+            // Create a unique key for deduplication
+            const uniqueKey = `${doctorId || 'N/A'}-${patientId || 'N/A'}-${diagnosis || 'N/A'}-${prescriptionText}-${timestamp || ''}`;
+
+            // Only add the record if it hasn't been seen before
+            if (!invalidRecordsMap.has(uniqueKey)) {
+              invalidRecordsMap.set(uniqueKey, {
+                doctorId: doctorId || 'N/A',
+                patientId: patientId || 'N/A',
+                patientName: patientMap[patientId]?.name || 'Unknown',
+                diagnosis: diagnosis || 'N/A',
+                prescription,
+                timestamp: timestamp || new Date().toISOString(),
+              });
+            }
           }
         }
       }
 
-      console.log(`Fetched ${invalidRecords.length} invalid prescriptions for admin ${userId} from notifications`);
+      const invalidRecords = Array.from(invalidRecordsMap.values());
+      console.log(`Fetched ${invalidRecords.length} unique invalid prescriptions for admin ${userId} from notifications`);
       return res.status(200).json({ success: true, invalidPrescriptions: invalidRecords });
     } catch (error) {
       console.error(`Error fetching invalid prescriptions for user ${userId}:`, error.message);
@@ -833,7 +852,7 @@ const handleRegisterPatientRequest = async (req, res, userId) => {
         age: parseInt(age),
         languagePreference,
         password: hashedPassword,
-        aadhaarNumber, // Store as plaintext to match Register.js and enable recovery
+        aadhaarNumber,
         phoneNumber,
         createdAt: new Date().toISOString(),
       };
