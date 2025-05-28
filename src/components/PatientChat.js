@@ -1447,7 +1447,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         <button className="hamburger-button" onClick={() => setMenuOpen(!menuOpen)}>
           ☰
         </button>
-        <h2>Patient Chat with Dr. {doctorName}</h2>
+        <h2>Patient Chat with {doctorName}</h2>
         <div className="header-actions">
           <button onClick={handleLogoutClick} className="logout-button">
             Logout
