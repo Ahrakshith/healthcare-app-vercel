@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { doc, getDoc, setDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { db, auth } from '../services/firebase.js';
+import { updatePassword } from 'firebase/auth';
 import './DoctorChat.css';
 
 function DoctorProfile({ user, role, setError }) {
@@ -42,13 +43,15 @@ function DoctorProfile({ user, role, setError }) {
           const errorMsg = 'You are not authorized to view this profile.';
           setError(errorMsg);
           console.error(errorMsg);
-          navigate('/doctor/chat', { replace: true }); // Updated path
+          navigate('/doctor/chat', { replace: true });
           return;
         }
 
         setDoctorData(data);
         setUpdatedData({
           name: data.name || '',
+          email: data.email || '',
+          password: '', // Password will be updated separately
           age: data.age || '',
           sex: data.sex || '',
           experience: data.experience || '',
@@ -84,12 +87,30 @@ function DoctorProfile({ user, role, setError }) {
     return phoneRegex.test(number);
   };
 
+  const validateEmail = (email) => {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return emailRegex.test(email);
+  };
+
+  const validatePassword = (password) => {
+    return password.length >= 6; // Firebase requires passwords to be at least 6 characters
+  };
+
   const handleUpdateSubmit = async (e) => {
     e.preventDefault();
     console.log('DoctorProfile: Submitting updated doctor profile:', updatedData);
     setUpdateError('');
     setUpdateSuccess('');
 
+    // Validate email
+    if (!validateEmail(updatedData.email)) {
+      const errorMsg = 'Invalid email format.';
+      setUpdateError(errorMsg);
+      console.error(errorMsg);
+      return;
+    }
+
+    // Validate contact number
     if (updatedData.contactNumber && !validateContactNumber(updatedData.contactNumber)) {
       const errorMsg = 'Invalid contact number. Please enter a 10-digit number.';
       setUpdateError(errorMsg);
@@ -97,14 +118,17 @@ function DoctorProfile({ user, role, setError }) {
       return;
     }
 
+    // Validate age
     const age = parseInt(updatedData.age);
-    const experience = parseInt(updatedData.experience);
     if (isNaN(age) || age < 0) {
       const errorMsg = 'Age must be a valid positive number.';
       setUpdateError(errorMsg);
       console.error(errorMsg);
       return;
     }
+
+    // Validate experience
+    const experience = parseInt(updatedData.experience);
     if (isNaN(experience) || experience < 0) {
       const errorMsg = 'Experience must be a valid positive number.';
       setUpdateError(errorMsg);
@@ -112,12 +136,20 @@ function DoctorProfile({ user, role, setError }) {
       return;
     }
 
+    // Validate password (if provided)
+    if (updatedData.password && !validatePassword(updatedData.password)) {
+      const errorMsg = 'Password must be at least 6 characters long.';
+      setUpdateError(errorMsg);
+      console.error(errorMsg);
+      return;
+    }
+
     try {
-      const idToken = await auth.currentUser.getIdToken(true);
       const doctorRef = doc(db, 'doctors', doctorId);
       const updatedProfile = {
         ...doctorData,
         name: updatedData.name,
+        email: updatedData.email,
         age: updatedData.age,
         sex: updatedData.sex,
         experience: updatedData.experience,
@@ -128,12 +160,28 @@ function DoctorProfile({ user, role, setError }) {
         updatedAt: new Date().toISOString(),
       };
 
+      // Update Firestore document
       await setDoc(doctorRef, updatedProfile, { merge: true });
       setDoctorData(updatedProfile);
-      setEditing(false);
-      setUpdateSuccess('Profile updated successfully!');
-      console.log('DoctorProfile: Profile updated successfully:', updatedProfile);
 
+      // Update password if provided
+      if (updatedData.password) {
+        try {
+          const currentUser = auth.currentUser;
+          await updatePassword(currentUser, updatedData.password);
+          console.log('DoctorProfile: Password updated successfully');
+        } catch (passwordErr) {
+          // Note: In a production app, updating the password requires recent authentication.
+          // Firebase will throw an error if the user hasn't recently signed in.
+          // To handle this properly, you should re-authenticate the user before updating the password.
+          const errorMsg = `Failed to update password: ${passwordErr.message}. You may need to re-login to update your password.`;
+          setUpdateError(errorMsg);
+          console.error('DoctorProfile: Password update error:', passwordErr);
+          return; // Exit to prevent closing the edit form
+        }
+      }
+
+      // Update doctor name in doctor_assignments
       const doctorAssignmentsRef = collection(db, 'doctor_assignments');
       const q = query(doctorAssignmentsRef, where('doctorId', '==', doctorId));
       const querySnapshot = await getDocs(q);
@@ -143,6 +191,10 @@ function DoctorProfile({ user, role, setError }) {
       });
       await batch.commit();
       console.log('DoctorProfile: Updated doctor name in doctor_assignments');
+
+      setEditing(false);
+      setUpdateSuccess('Profile updated successfully!');
+      console.log('DoctorProfile: Profile updated successfully:', updatedProfile);
     } catch (err) {
       const errorMsg = `Failed to update profile: ${err.message}`;
       setUpdateError(errorMsg);
@@ -154,6 +206,8 @@ function DoctorProfile({ user, role, setError }) {
     setEditing(false);
     setUpdatedData({
       name: doctorData.name || '',
+      email: doctorData.email || '',
+      password: '',
       age: doctorData.age || '',
       sex: doctorData.sex || '',
       experience: doctorData.experience || '',
@@ -184,8 +238,9 @@ function DoctorProfile({ user, role, setError }) {
         {!editing ? (
           <div className="profile-details">
             <p><strong>Doctor ID:</strong> {doctorData.doctorId}</p>
-            <p><strong>Name:</strong> {doctorData.name}</p>
+            <p><strong>Doctor Name:</strong> {doctorData.name}</p>
             <p><strong>Email:</strong> {doctorData.email}</p>
+            <p><strong>Password:</strong> ••••••••</p>
             <p><strong>Age:</strong> {doctorData.age}</p>
             <p><strong>Sex:</strong> {doctorData.sex}</p>
             <p><strong>Experience:</strong> {doctorData.experience} years</p>
@@ -206,12 +261,13 @@ function DoctorProfile({ user, role, setError }) {
           <div className="edit-profile-form">
             <h3>Edit Profile</h3>
             <label>
-              Name:
+              Doctor Name:
               <input
                 type="text"
                 name="name"
                 value={updatedData.name}
                 onChange={handleUpdateChange}
+                placeholder="Enter doctor name"
                 required
               />
             </label>
@@ -219,9 +275,23 @@ function DoctorProfile({ user, role, setError }) {
               Email:
               <input
                 type="email"
-                value={doctorData.email}
-                disabled
+                name="email"
+                value={updatedData.email}
+                onChange={handleUpdateChange}
+                placeholder="Enter doctor email (e.g., doctor@gmail.com)"
+                required
               />
+            </label>
+            <label>
+              Password:
+              <input
+                type="password"
+                name="password"
+                value={updatedData.password}
+                onChange={handleUpdateChange}
+                placeholder="Enter doctor password"
+              />
+              <small>Leave blank to keep current password</small>
             </label>
             <label>
               Age:
@@ -230,6 +300,7 @@ function DoctorProfile({ user, role, setError }) {
                 name="age"
                 value={updatedData.age}
                 onChange={handleUpdateChange}
+                placeholder="Enter age"
                 required
               />
             </label>
@@ -254,6 +325,7 @@ function DoctorProfile({ user, role, setError }) {
                 name="experience"
                 value={updatedData.experience}
                 onChange={handleUpdateChange}
+                placeholder="Enter years of experience"
                 required
               />
             </label>
@@ -280,7 +352,7 @@ function DoctorProfile({ user, role, setError }) {
                 name="qualification"
                 value={updatedData.qualification}
                 onChange={handleUpdateChange}
-                placeholder="e.g., MBBS, MD"
+                placeholder="Enter qualification (e.g., MBBS, MD)"
                 required
               />
             </label>
@@ -290,6 +362,7 @@ function DoctorProfile({ user, role, setError }) {
                 name="address"
                 value={updatedData.address}
                 onChange={handleUpdateChange}
+                placeholder="Enter address"
                 required
               />
             </label>
@@ -300,7 +373,7 @@ function DoctorProfile({ user, role, setError }) {
                 name="contactNumber"
                 value={updatedData.contactNumber}
                 onChange={handleUpdateChange}
-                placeholder="10-digit number"
+                placeholder="Enter 10-digit number"
                 required
               />
             </label>

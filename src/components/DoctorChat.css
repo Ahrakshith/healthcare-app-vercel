@@ -922,7 +922,7 @@
 /* Doctor Profile Styles */
 .doctor-profile-wrapper {
   min-height: 100vh;
-  background: #f9f9f9; /* Enforce light background */
+  background: #6e48aa; /* Enforce light background */
   display: flex;
   justify-content: center;
   align-items: flex-start;
