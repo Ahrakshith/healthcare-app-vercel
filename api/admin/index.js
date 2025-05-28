@@ -694,8 +694,47 @@ const handleInvalidPrescriptionsRequest = async (req, res, userId) => {
       console.error(`Error fetching invalid prescriptions for user ${userId}:`, error.message);
       return res.status(500).json({ success: false, message: 'Failed to fetch invalid prescriptions', details: error.message });
     }
+  } else if (req.method === 'DELETE') {
+    try {
+      // Verify the user is an admin
+      const userDoc = await db.collection('users').doc(userId).get();
+      console.log(`[DEBUG] Admin check for DELETE invalid-prescriptions, user ${userId}: Document exists = ${userDoc.exists}`);
+      if (!userDoc.exists || userDoc.data().role !== 'admin') {
+        console.log(`[DEBUG] User ${userId} not found in 'users' collection or not an admin`);
+        return res.status(403).json({ success: false, message: 'Only admins can delete invalid prescriptions' });
+      }
+
+      // Fetch all notifications
+      const notificationsSnapshot = await db.collection('notifications').get();
+      const batch = db.batch();
+      let deleteCount = 0;
+
+      // Identify and delete notifications related to invalid prescriptions
+      for (const doc of notificationsSnapshot.docs) {
+        const data = doc.data();
+        const { message } = data;
+
+        if (message && message.startsWith('Invalid prescription:')) {
+          batch.delete(doc.ref);
+          deleteCount++;
+        }
+      }
+
+      // Commit the batch delete
+      if (deleteCount > 0) {
+        await batch.commit();
+        console.log(`Deleted ${deleteCount} invalid prescription notifications for admin ${userId}`);
+      } else {
+        console.log(`No invalid prescription notifications found to delete for admin ${userId}`);
+      }
+
+      return res.status(200).json({ success: true, message: `Successfully deleted ${deleteCount} invalid prescription notifications` });
+    } catch (error) {
+      console.error(`Error deleting invalid prescriptions for user ${userId}:`, error.message);
+      return res.status(500).json({ success: false, message: 'Failed to delete invalid prescriptions', details: error.message });
+    }
   } else {
-    res.setHeader('Allow', ['GET']);
+    res.setHeader('Allow', ['GET', 'DELETE']);
     return res.status(405).json({ success: false, message: `Method ${req.method} Not Allowed for /admin/invalid-prescriptions` });
   }
 };
@@ -867,12 +906,73 @@ const handleRegisterPatientNotificationRequest = async (req, res, userId) => {
   }
 };
 
+// Handler for deleting all doctor records (prescriptions)
+const handleDeleteDoctorRecordsRequest = async (req, res, userId) => {
+  if (req.method === 'DELETE') {
+    try {
+      // Verify the user is an admin
+      const userDoc = await db.collection('users').doc(userId).get();
+      console.log(`[DEBUG] Admin check for DELETE doctors/records, user ${userId}: Document exists = ${userDoc.exists}`);
+      if (!userDoc.exists || userDoc.data().role !== 'admin') {
+        console.log(`[DEBUG] User ${userId} not found in 'users' collection or not an admin`);
+        return res.status(403).json({ success: false, message: 'Only admins can delete doctor records' });
+      }
+
+      // Fetch all prescriptions
+      const prescriptionsSnapshot = await db.collection('prescriptions').get();
+      const batch = db.batch();
+      let deleteCount = 0;
+
+      // Delete all prescriptions
+      for (const doc of prescriptionsSnapshot.docs) {
+        batch.delete(doc.ref);
+        deleteCount++;
+      }
+
+      // Commit the batch delete
+      if (deleteCount > 0) {
+        await batch.commit();
+        console.log(`Deleted ${deleteCount} doctor records (prescriptions) for admin ${userId}`);
+      } else {
+        console.log(`No doctor records (prescriptions) found to delete for admin ${userId}`);
+      }
+
+      // Also clear related notifications that reference prescriptions
+      const notificationsSnapshot = await db.collection('notifications').get();
+      const notificationBatch = db.batch();
+      let notificationDeleteCount = 0;
+
+      for (const doc of notificationsSnapshot.docs) {
+        const data = doc.data();
+        const { message } = data;
+        if (message && message.startsWith('Invalid prescription:')) {
+          notificationBatch.delete(doc.ref);
+          notificationDeleteCount++;
+        }
+      }
+
+      if (notificationDeleteCount > 0) {
+        await notificationBatch.commit();
+        console.log(`Deleted ${notificationDeleteCount} related notifications for admin ${userId}`);
+      }
+
+      return res.status(200).json({ success: true, message: `Successfully deleted ${deleteCount} doctor records and ${notificationDeleteCount} related notifications` });
+    } catch (error) {
+      console.error(`Error deleting doctor records for user ${userId}:`, error.message);
+      return res.status(500).json({ success: false, message: 'Failed to delete doctor records', details: error.message });
+    }
+  } else {
+    res.setHeader('Allow', ['DELETE']);
+    return res.status(405).json({ success: false, message: `Method ${req.method} Not Allowed for /doctors/records` });
+  }
+};
+
 // Main handler
 export default async function handler(req, res) {
   console.log(`[DEBUG] Main handler called with method: ${req.method}, URL: ${req.url}`);
   console.log(`[DEBUG] Request headers: ${JSON.stringify(req.headers)}`);
   res.setHeader('Access-Control-Allow-Origin', process.env.FRONTEND_URL || '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Authorization, x-user-uid, Content-Type, Accept');
 
   if (req.method === 'OPTIONS') {
@@ -923,6 +1023,9 @@ export default async function handler(req, res) {
     } else if (req.url.includes('/register-patient')) {
       console.log('[DEBUG] Routing to handleRegisterPatientNotificationRequest');
       return handleRegisterPatientNotificationRequest(req, res, userId);
+    } else if (req.url.includes('/doctors/records')) {
+      console.log('[DEBUG] Routing to handleDeleteDoctorRecordsRequest');
+      return handleDeleteDoctorRecordsRequest(req, res, userId);
     } else {
       console.log('[DEBUG] Routing to handleChatRequest');
       if (!patientId || !doctorId) {
