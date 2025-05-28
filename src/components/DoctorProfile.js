@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { doc, getDoc, setDoc, collection, query, where, getDocs } from 'firebase/firestore'; // Added missing imports
+import { doc, getDoc, setDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { db, auth } from '../services/firebase.js';
-
+import './DoctorChat.css'; // Updated import to use shared CSS
 
 function DoctorProfile({ user, role, setError }) {
   const { doctorId } = useParams();
@@ -179,7 +179,7 @@ function DoctorProfile({ user, role, setError }) {
   }
 
   return (
-    <div className="doctor-profile-container">
+    <div className="doctor-profile">
       <h2>Doctor Profile</h2>
       {updateError && <div className="error-message">{updateError}</div>}
       {updateSuccess && <div className="success-message">{updateSuccess}</div>}
@@ -314,160 +314,6 @@ function DoctorProfile({ user, role, setError }) {
           </div>
         </div>
       )}
-      <style>{`
-        .doctor-profile-container {
-          max-width: 600px;
-          margin: 0 auto;
-          padding: 20px;
-          font-family: 'Poppins', sans-serif;
-          background: #f9f9f9;
-          border-radius: 8px;
-          box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-        }
-
-        h2 {
-          text-align: center;
-          color: #6e48aa;
-          margin-bottom: 20px;
-        }
-
-        h3 {
-          color: #333;
-          margin-bottom: 15px;
-        }
-
-        .loading, .error {
-          text-align: center;
-          color: #6e48aa;
-          font-size: 1.1rem;
-        }
-
-        .error-message {
-          color: #e74c3c;
-          background: #ffebee;
-          padding: 10px;
-          border-radius: 4px;
-          margin-bottom: 15px;
-          text-align: center;
-        }
-
-        .success-message {
-          color: #2ecc71;
-          background: #e8f5e9;
-          padding: 10px;
-          border-radius: 4px;
-          margin-bottom: 15px;
-          text-align: center;
-        }
-
-        .profile-details p {
-          font-size: 1rem;
-          color: #333;
-          margin: 10px 0;
-        }
-
-        .profile-details strong {
-          color: #6e48aa;
-        }
-
-        .edit-profile-form {
-          display: flex;
-          flex-direction: column;
-          gap: 15px;
-        }
-
-        .edit-profile-form label {
-          display: flex;
-          flex-direction: column;
-          font-size: 1rem;
-          color: #333;
-        }
-
-        .edit-profile-form input,
-        .edit-profile-form select,
-        .edit-profile-form textarea {
-          padding: 8px;
-          margin-top: 5px;
-          border: 1px solid #ddd;
-          border-radius: 4px;
-          font-size: 1rem;
-          font-family: 'Poppins', sans-serif;
-        }
-
-        .edit-profile-form input:disabled {
-          background: #f0f0f0;
-          cursor: not-allowed;
-        }
-
-        .edit-profile-form textarea {
-          resize: vertical;
-          min-height: 80px;
-        }
-
-        .form-buttons,
-        .profile-details {
-          display: flex;
-          gap: 10px;
-          justify-content: center;
-          margin-top: 20px;
-        }
-
-        .edit-button,
-        .save-button,
-        .back-button {
-          background: #6e48aa;
-          color: #fff;
-          border: none;
-          padding: 10px 20px;
-          border-radius: 4px;
-          cursor: pointer;
-          font-size: 1rem;
-          font-family: 'Poppins', sans-serif;
-          transition: background 0.3s;
-        }
-
-        .cancel-button {
-          background: #e74c3c;
-          color: #fff;
-          border: none;
-          padding: 10px 20px;
-          border-radius: 4px;
-          cursor: pointer;
-          font-size: 1rem;
-          font-family: 'Poppins', sans-serif;
-          transition: background 0.3s;
-        }
-
-        .edit-button:hover,
-        .save-button:hover,
-        .back-button:hover {
-          background: #5a3a8b;
-        }
-
-        .cancel-button:hover {
-          background: #c0392b;
-        }
-
-        @media (max-width: 480px) {
-          .doctor-profile-container {
-            padding: 15px;
-          }
-
-          .edit-profile-form input,
-          .edit-profile-form select,
-          .edit-profile-form textarea {
-            font-size: 0.9rem;
-          }
-
-          .edit-button,
-          .save-button,
-          .cancel-button,
-          .back-button {
-            padding: 8px 15px;
-            font-size: 0.9rem;
-          }
-        }
-      `}</style>
     </div>
   );
 }
