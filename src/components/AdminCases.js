@@ -24,6 +24,11 @@ function AdminCases() {
       .join(', ');
   };
 
+  const handleClearAll = () => {
+    setCases([]);
+    setError('');
+  };
+
   useEffect(() => {
     const adminId = localStorage.getItem('userId');
     if (!adminId) {
@@ -105,6 +110,11 @@ function AdminCases() {
 
   return (
     <div className="table-container">
+      <div className="table-header">
+        <button onClick={handleClearAll} className="clear-all-button">
+          Clear All
+        </button>
+      </div>
       {error && <p className="error-message">{error}</p>}
       {loading ? (
         <p className="loading-message">Loading cases...</p>
@@ -156,6 +166,28 @@ function AdminCases() {
           overflow-x: auto;
           padding: 20px;
           font-family: 'Poppins', sans-serif;
+        }
+
+        .table-header {
+          display: flex;
+          justify-content: flex-end;
+          margin-bottom: 10px;
+        }
+
+        .clear-all-button {
+          background-color: #e74c3c;
+          color: #ffffff;
+          border: none;
+          padding: 8px 16px;
+          border-radius: 4px;
+          cursor: pointer;
+          font-size: 1rem;
+          font-family: 'Poppins', sans-serif;
+          transition: background-color 0.3s;
+        }
+
+        .clear-all-button:hover {
+          background-color: #c0392b;
         }
 
         .error-message {
@@ -211,11 +243,21 @@ function AdminCases() {
             padding: 10px;
             font-size: 0.9rem;
           }
+
+          .clear-all-button {
+            padding: 6px 12px;
+            font-size: 0.9rem;
+          }
         }
 
         @media (max-width: 480px) {
           th, td {
             padding: 8px;
+            font-size: 0.8rem;
+          }
+
+          .clear-all-button {
+            padding: 5px 10px;
             font-size: 0.8rem;
           }
         }
