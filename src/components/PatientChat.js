@@ -399,16 +399,17 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         }
 
         setMessages((prev) => {
+          // Enhanced duplicate check: Compare essential fields
           const isDuplicate = prev.some(
             (msg) =>
-              msg.timestamp === updatedMessage.timestamp &&
               msg.sender === updatedMessage.sender &&
               msg.text === updatedMessage.text &&
               msg.audioUrl === updatedMessage.audioUrl &&
-              msg.imageUrl === updatedMessage.imageUrl
+              msg.imageUrl === updatedMessage.imageUrl &&
+              Math.abs(new Date(msg.timestamp) - new Date(updatedMessage.timestamp)) < 1000 // Allow 1-second difference for timestamps
           );
           if (isDuplicate) {
-            console.log('PatientChat: Skipped duplicate message:', updatedMessage.timestamp, updatedMessage.text);
+            console.log('PatientChat: Skipped duplicate message from Pusher:', updatedMessage.timestamp, updatedMessage.text);
             return prev;
           }
           return [...prev, updatedMessage].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
@@ -1248,24 +1249,23 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
 
     if (!textInput.trim()) return;
 
+    const tempMessageId = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+    const timestamp = new Date().toISOString();
+
     const message = {
       sender: 'patient',
       text: textInput,
       translatedText: null,
-      timestamp: new Date().toISOString(),
+      timestamp,
       language: 'en',
       recordingLanguage: 'en',
       doctorId,
       userId: effectivePatientId,
+      tempMessageId, // Temporary ID to track the message before server response
     };
 
-    setMessages((prev) => {
-      if (!prev.some((msg) => msg.timestamp === message.timestamp && msg.text === message.text)) {
-        return [...prev, message].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-      }
-      console.log('PatientChat: Skipped duplicate text message:', message.timestamp, message.text);
-      return prev;
-    });
+    // Add the message optimistically with a temporary ID
+    setMessages((prev) => [...prev, message].sort((a, b) => a.timestamp.localeCompare(b.timestamp)));
     setTextInput('');
 
     try {
@@ -1287,14 +1287,30 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         throw new Error(`Failed to save text message: ${response.status} - ${errorData.message || 'Unknown error'}`);
       }
       const data = await response.json();
-      setMessages((prev) =>
-        [...prev.filter((msg) => msg.timestamp !== message.timestamp), data.newMessage].sort((a, b) =>
-          a.timestamp.localeCompare(b.timestamp)
-        )
-      );
+      const newMessage = data.newMessage;
+
+      // Replace the optimistic message with the server-confirmed message
+      setMessages((prev) => {
+        // Remove the temporary message
+        const filteredMessages = prev.filter((msg) => msg.tempMessageId !== tempMessageId);
+        // Check for duplicates based on essential fields
+        const isDuplicate = filteredMessages.some(
+          (msg) =>
+            msg.sender === newMessage.sender &&
+            msg.text === newMessage.text &&
+            Math.abs(new Date(msg.timestamp) - new Date(newMessage.timestamp)) < 1000 // Allow 1-second difference
+        );
+        if (isDuplicate) {
+          console.log('PatientChat: Skipped duplicate text message from server:', newMessage.timestamp, newMessage.text);
+          return filteredMessages;
+        }
+        return [...filteredMessages, newMessage].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+      });
     } catch (err) {
       console.error('Failed to save text message:', err);
       setError(`Failed to save text message: ${err.message}`);
+      // Remove the optimistic message on failure
+      setMessages((prev) => prev.filter((msg) => msg.tempMessageId !== tempMessageId));
       if (err.message.includes('404')) {
         setTimeout(() => handleSendText(), 2000);
       }
@@ -1308,24 +1324,23 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       return;
     }
 
+    const tempMessageId = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+    const timestamp = new Date().toISOString();
+
     const message = {
       sender: 'patient',
       text: replyText,
       translatedText: null,
-      timestamp: new Date().toISOString(),
+      timestamp,
       language: 'en',
       recordingLanguage: 'en',
       doctorId,
       userId: effectivePatientId,
+      tempMessageId,
     };
 
-    setMessages((prev) => {
-      if (!prev.some((msg) => msg.timestamp === message.timestamp && msg.text === message.text)) {
-        return [...prev, message].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-      }
-      console.log('PatientChat: Skipped duplicate quick reply:', message.timestamp, message.text);
-      return prev;
-    });
+    // Add the message optimistically with a temporary ID
+    setMessages((prev) => [...prev, message].sort((a, b) => a.timestamp.localeCompare(b.timestamp)));
 
     try {
       const postUrl = `${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`;
@@ -1346,14 +1361,27 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         throw new Error(`Failed to save quick reply message: ${response.status} - ${errorData.message || 'Unknown error'}`);
       }
       const data = await response.json();
-      setMessages((prev) =>
-        [...prev.filter((msg) => msg.timestamp !== message.timestamp), data.newMessage].sort((a, b) =>
-          a.timestamp.localeCompare(b.timestamp)
-        )
-      );
+      const newMessage = data.newMessage;
+
+      // Replace the optimistic message with the server-confirmed message
+      setMessages((prev) => {
+        const filteredMessages = prev.filter((msg) => msg.tempMessageId !== tempMessageId);
+        const isDuplicate = filteredMessages.some(
+          (msg) =>
+            msg.sender === newMessage.sender &&
+            msg.text === newMessage.text &&
+            Math.abs(new Date(msg.timestamp) - new Date(newMessage.timestamp)) < 1000
+        );
+        if (isDuplicate) {
+          console.log('PatientChat: Skipped duplicate quick reply:', newMessage.timestamp, newMessage.text);
+          return filteredMessages;
+        }
+        return [...filteredMessages, newMessage].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+      });
     } catch (err) {
       console.error('Failed to save quick reply:', err);
       setError(`Failed to save quick reply message: ${err.message}`);
+      setMessages((prev) => prev.filter((msg) => msg.tempMessageId !== tempMessageId));
     }
   };
 
@@ -1843,6 +1871,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                                     <button
                                       onClick={() => readAloud(msg.translatedPrescription || (typeof msg.prescription === 'object'
                                         ? `${msg.prescription.medicine}, ${msg.prescription.dosage}, ${msg.prescription.frequency}, ${msg.prescription.duration}`
+
                                         : msg.prescription), 'kn')}
                                       className="read-aloud-button"
                                     >
