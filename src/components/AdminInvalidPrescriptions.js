@@ -24,9 +24,46 @@ function AdminInvalidPrescriptions() {
       .join(', ');
   };
 
-  const handleClearAll = () => {
-    setInvalidPrescriptions([]);
+  const handleClearAll = async () => {
+    const adminId = localStorage.getItem('userId');
+    if (!adminId) {
+      setError('Admin ID not found. Please log in again.');
+      return;
+    }
+
+    const confirmed = window.confirm('Are you sure you want to permanently delete all invalid prescriptions? This action cannot be undone.');
+    if (!confirmed) return;
+
+    setLoading(true);
     setError('');
+
+    try {
+      const baseApiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app';
+      const apiUrl = baseApiUrl.endsWith('/api') ? baseApiUrl.replace(/\/api$/, '') : baseApiUrl;
+      const idToken = await auth.currentUser?.getIdToken(true);
+      if (!idToken) throw new Error('Authentication token not available');
+
+      const response = await fetch(`${apiUrl}/api/admin/invalid-prescriptions`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${idToken}`,
+          'x-user-uid': adminId,
+        },
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(`Failed to delete invalid prescriptions: ${errorData.message || response.statusText}`);
+      }
+
+      setInvalidPrescriptions([]);
+      setError('All invalid prescriptions have been permanently deleted.');
+    } catch (err) {
+      console.error('AdminInvalidPrescriptions: Error deleting invalid prescriptions:', err);
+      setError(`Error deleting invalid prescriptions: ${err.message}`);
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
