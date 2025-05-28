@@ -1,6 +1,6 @@
 /* src/components/DoctorChat.css */
 
-/* Import Poppins font as used in the inline styles */
+/* Import Poppins font */
 @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap');
 
 /* Reset and base styles */
@@ -282,7 +282,7 @@
   overflow-y: auto;
   margin-left: 0;
   margin-right: 0;
-  transition: margin-left 0.3s ease, margin-right 0.3s ease; /* Fixed syntax error */
+  transition: margin-left 0.3s ease, margin-right 0.3s ease;
 }
 
 .chat-content.sidebar-open-left {
@@ -342,7 +342,7 @@
 }
 
 .decline-button {
-  padding: 10px 25px; /* Fixed syntax: removed stray "background" line and corrected structure */
+  padding: 10px 25px;
   background: #E74C3C;
   color: #FFFFFF;
   border: none;
@@ -359,7 +359,7 @@
 }
 
 .chat-main {
-  flex: 1; /* Fixed syntax: changed "flex: flex" to "flex: 1" */
+  flex: 1;
   display: flex;
   flex-direction: column;
 }
@@ -401,12 +401,12 @@
 }
 
 .alert-item p {
-  font-size: 1rem; /* Fixed syntax: removed stray "margin-" */
+  font-size: 1rem;
   color: #E0E0E0;
 }
 
 .dismiss-button {
-  padding: 6px 12px; /* Fixed syntax: removed duplicate and stray "background" lines */
+  padding: 6px 12px;
   background: #E74C3C;
   color: #FFFFFF;
   border: none;
@@ -862,7 +862,7 @@
 .modal-content input:focus,
 .modal-content textarea:focus {
   outline: none;
-  border-color: #6E48AA; /* Fixed syntax: removed duplicate border-color */
+  border-color: #6E48AA;
   box-shadow: 0 0 8px rgba(110, 72, 170, 0.3);
 }
 
@@ -910,7 +910,7 @@
   transform: scale(1.05);
 }
 
-/* From original DoctorChat.css */
+/* Error message for DoctorChat */
 .error-message {
   color: red;
   position: absolute;
@@ -920,104 +920,137 @@
 }
 
 /* Doctor Profile Styles */
+.doctor-profile-wrapper {
+  min-height: 100vh;
+  background: #f9f9f9; /* Enforce light background */
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 20px;
+}
+
 .doctor-profile {
   max-width: 600px;
-  background-color: #f9f9f9;
-  color: #333;
-  border-radius: 8px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-  margin: 20px auto;
-  padding: 20px;
+  width: 100%;
+  background-color: #ffffff; /* White background for the card */
+  color: #333333;
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+  margin: 20px 0;
+  padding: 30px;
   font-family: 'Poppins', sans-serif;
 }
 
 .doctor-profile h2 {
   text-align: center;
   color: #6e48AA;
-  margin-bottom: 20px;
+  margin-bottom: 25px;
+  font-size: 2rem;
+  font-weight: 600;
 }
 
 .doctor-profile h3 {
-  color: #333;
-  margin-bottom: 15px;
+  color: #333333;
+  margin-bottom: 20px;
+  font-size: 1.5rem;
+  font-weight: 500;
 }
 
 .doctor-profile .loading,
 .doctor-profile .error {
   text-align: center;
-  color: #666;
-  font-size: 1.1rem;
+  color: #666666;
+  font-size: 1.2rem;
+  padding: 20px;
 }
 
 .doctor-profile .error-message {
   color: #e74c3c;
   background-color: #ffebee;
-  padding: 10px;
-  border-radius: 4px;
-  margin-bottom: 15px;
+  padding: 12px;
+  border-radius: 6px;
+  margin-bottom: 20px;
   text-align: center;
+  font-size: 1rem;
 }
 
 .doctor-profile .success-message {
   color: #2ecc71;
   background-color: #e8f5e9;
-  padding: 10px;
-  border-radius: 4px;
-  margin-bottom: 15px;
+  padding: 12px;
+  border-radius: 6px;
+  margin-bottom: 20px;
   text-align: center;
+  font-size: 1rem;
 }
 
 .doctor-profile .profile-details p {
-  font-size: 18px;
-  color: #333;
-  margin: 10px 0;
+  font-size: 1.1rem;
+  color: #333333;
+  margin: 12px 0;
+  line-height: 1.6;
 }
 
 .doctor-profile .profile-details strong {
-  font-weight: bold;
+  font-weight: 600;
   color: #6e48AA;
+  margin-right: 8px;
 }
 
 .doctor-profile .edit-profile-form {
   display: flex;
   flex-direction: column;
-  gap: 15px;
+  gap: 20px;
 }
 
 .edit-profile-form label {
   display: flex;
   flex-direction: column;
   font-size: 1rem;
-  color: #333;
+  color: #333333;
+  font-weight: 500;
 }
 
 .edit-profile-form input,
 .edit-profile-form select,
 .edit-profile-form textarea {
-  padding: 10px;
-  margin-top: 5px;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  font-size: 14px;
+  padding: 12px;
+  margin-top: 6px;
+  border: 1px solid #dddddd;
+  border-radius: 6px;
+  font-size: 1rem;
   font-family: 'Poppins', sans-serif;
+  color: #333333;
+  background-color: #f9f9f9;
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+.edit-profile-form input:focus,
+.edit-profile-form select:focus,
+.edit-profile-form textarea:focus {
+  outline: none;
+  border-color: #6e48AA;
+  box-shadow: 0 0 8px rgba(110, 72, 170, 0.2);
 }
 
 .edit-profile-form input:disabled {
-  background: #f0f0f0;
+  background: #e0e0e0;
   cursor: not-allowed;
+  color: #666666;
 }
 
 .edit-profile-form textarea {
   resize: vertical;
-  min-height: 80px;
+  min-height: 100px;
 }
 
 .edit-profile-form .form-buttons,
-.profile-details {
+.profile-details-buttons {
   display: flex;
-  gap: 10px;
+  gap: 15px;
   justify-content: center;
-  margin-top: 20px;
+  margin-top: 25px;
+  flex-wrap: wrap;
 }
 
 .edit-button,
@@ -1026,34 +1059,36 @@
   background: #6E48AA;
   color: #FFFFFF;
   border: none;
-  border-radius: 4px;
-  padding: 10px 20px;
-  font-size: 12px;
+  border-radius: 6px;
+  padding: 12px 25px;
+  font-size: 1rem;
   font-family: 'Poppins', sans-serif;
-  cursor: pointer; /* Fixed syntax: changed "cursor: background 0.3s" to "cursor: pointer" */
-  transition: background 0.3s ease;
+  cursor: pointer;
+  transition: background 0.3s ease, transform 0.3s ease;
 }
 
 .edit-button:hover,
 .save-button:hover,
 .back-button:hover {
   background: #5A3E8A;
+  transform: scale(1.05);
 }
 
 .cancel-button {
   background: #E74C3C;
   color: #FFFFFF;
   border: none;
-  border-radius: 4px;
-  padding: 10px 20px;
-  font-size: 12px;
+  border-radius: 6px;
+  padding: 12px 25px;
+  font-size: 1rem;
   font-family: 'Poppins', sans-serif;
   cursor: pointer;
-  transition: background 0.3s ease;
+  transition: background 0.3s ease, transform 0.3s ease;
 }
 
 .cancel-button:hover {
   background: #C0392B;
+  transform: scale(1.05);
 }
 
 /* Media Queries */
@@ -1083,7 +1118,7 @@
     justify-content: center;
   }
   .text-input-container input {
-    padding: 10px 15px; /* Fixed in media query to match general style */
+    padding: 10px 15px;
   }
   .send-button {
     padding: 10px 20px;
@@ -1092,20 +1127,35 @@
     width: 90%;
     padding: 20px;
   }
-  .doctor-profile {
+  .doctor-profile-wrapper {
     padding: 15px;
+  }
+  .doctor-profile {
+    padding: 20px;
+  }
+  .doctor-profile h2 {
+    font-size: 1.8rem;
+  }
+  .doctor-profile h3 {
+    font-size: 1.3rem;
+  }
+  .doctor-profile .profile-details p {
+    font-size: 1rem;
+  }
+  .edit-profile-form label {
+    font-size: 0.95rem;
   }
   .edit-profile-form input,
   .edit-profile-form select,
   .edit-profile-form textarea {
-    padding: 8px;
-    font-size: 0.9rem;
+    padding: 10px;
+    font-size: 0.95rem;
   }
   .edit-button,
   .save-button,
   .cancel-button,
   .back-button {
-    padding: 8px 15px;
-    font-size: 14px;
+    padding: 10px 20px;
+    font-size: 0.95rem;
   }
 }

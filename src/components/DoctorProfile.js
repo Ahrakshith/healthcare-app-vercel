@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { doc, getDoc, setDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { db, auth } from '../services/firebase.js';
-import './DoctorChat.css'; // Updated import to use shared CSS
+import './DoctorChat.css';
 
 function DoctorProfile({ user, role, setError }) {
   const { doctorId } = useParams();
@@ -42,7 +42,7 @@ function DoctorProfile({ user, role, setError }) {
           const errorMsg = 'You are not authorized to view this profile.';
           setError(errorMsg);
           console.error(errorMsg);
-          navigate('/doctor-dashboard', { replace: true });
+          navigate('/doctor/chat', { replace: true }); // Updated path
           return;
         }
 
@@ -90,7 +90,6 @@ function DoctorProfile({ user, role, setError }) {
     setUpdateError('');
     setUpdateSuccess('');
 
-    // Validate contact number
     if (updatedData.contactNumber && !validateContactNumber(updatedData.contactNumber)) {
       const errorMsg = 'Invalid contact number. Please enter a 10-digit number.';
       setUpdateError(errorMsg);
@@ -98,7 +97,6 @@ function DoctorProfile({ user, role, setError }) {
       return;
     }
 
-    // Validate age and experience
     const age = parseInt(updatedData.age);
     const experience = parseInt(updatedData.experience);
     if (isNaN(age) || age < 0) {
@@ -136,7 +134,6 @@ function DoctorProfile({ user, role, setError }) {
       setUpdateSuccess('Profile updated successfully!');
       console.log('DoctorProfile: Profile updated successfully:', updatedProfile);
 
-      // Update doctor_assignments with the new name
       const doctorAssignmentsRef = collection(db, 'doctor_assignments');
       const q = query(doctorAssignmentsRef, where('doctorId', '==', doctorId));
       const querySnapshot = await getDocs(q);
@@ -179,141 +176,145 @@ function DoctorProfile({ user, role, setError }) {
   }
 
   return (
-    <div className="doctor-profile">
-      <h2>Doctor Profile</h2>
-      {updateError && <div className="error-message">{updateError}</div>}
-      {updateSuccess && <div className="success-message">{updateSuccess}</div>}
-      {!editing ? (
-        <div className="profile-details">
-          <p><strong>Doctor ID:</strong> {doctorData.doctorId}</p>
-          <p><strong>Name:</strong> {doctorData.name}</p>
-          <p><strong>Email:</strong> {doctorData.email}</p>
-          <p><strong>Age:</strong> {doctorData.age}</p>
-          <p><strong>Sex:</strong> {doctorData.sex}</p>
-          <p><strong>Experience:</strong> {doctorData.experience} years</p>
-          <p><strong>Specialty:</strong> {doctorData.specialty}</p>
-          <p><strong>Qualification:</strong> {doctorData.qualification}</p>
-          <p><strong>Address:</strong> {doctorData.address}</p>
-          <p><strong>Contact Number:</strong> {doctorData.contactNumber}</p>
-          <button onClick={() => setEditing(true)} className="edit-button">
-            Edit Profile
-          </button>
-          <button onClick={() => navigate('/doctor-dashboard')} className="back-button">
-            Back to Dashboard
-          </button>
-        </div>
-      ) : (
-        <div className="edit-profile-form">
-          <h3>Edit Profile</h3>
-          <label>
-            Name:
-            <input
-              type="text"
-              name="name"
-              value={updatedData.name}
-              onChange={handleUpdateChange}
-              required
-            />
-          </label>
-          <label>
-            Email:
-            <input
-              type="email"
-              value={doctorData.email}
-              disabled
-            />
-          </label>
-          <label>
-            Age:
-            <input
-              type="number"
-              name="age"
-              value={updatedData.age}
-              onChange={handleUpdateChange}
-              required
-            />
-          </label>
-          <label>
-            Sex:
-            <select
-              name="sex"
-              value={updatedData.sex}
-              onChange={handleUpdateChange}
-              required
-            >
-              <option value="">Select sex</option>
-              <option value="Male">Male</option>
-              <option value="Female">Female</option>
-              <option value="Other">Other</option>
-            </select>
-          </label>
-          <label>
-            Experience (Years):
-            <input
-              type="number"
-              name="experience"
-              value={updatedData.experience}
-              onChange={handleUpdateChange}
-              required
-            />
-          </label>
-          <label>
-            Specialty:
-            <select
-              name="specialty"
-              value={updatedData.specialty}
-              onChange={handleUpdateChange}
-              required
-            >
-              <option value="">Select specialty</option>
-              <option value="General Physician">General Physician</option>
-              <option value="Cardiologist">Cardiologist</option>
-              <option value="Dermatologist">Dermatologist</option>
-              <option value="Pediatrician">Pediatrician</option>
-              <option value="Orthopedic Surgeon">Orthopedic Surgeon</option>
-            </select>
-          </label>
-          <label>
-            Qualification:
-            <input
-              type="text"
-              name="qualification"
-              value={updatedData.qualification}
-              onChange={handleUpdateChange}
-              placeholder="e.g., MBBS, MD"
-              required
-            />
-          </label>
-          <label>
-            Address:
-            <textarea
-              name="address"
-              value={updatedData.address}
-              onChange={handleUpdateChange}
-              required
-            />
-          </label>
-          <label>
-            Contact Number:
-            <input
-              type="text"
-              name="contactNumber"
-              value={updatedData.contactNumber}
-              onChange={handleUpdateChange}
-              placeholder="10-digit number"
-              required
-            />
-          </label>
-          <div className="form-buttons">
-            <button onClick={handleUpdateSubmit} className="save-button">
-              Save Changes
-            </button>
-            <button onClick={handleCancelEdit} className="cancel-button">
-              Cancel
-            </button>
+    <div className="doctor-profile-wrapper">
+      <div className="doctor-profile">
+        <h2>Doctor Profile</h2>
+        {updateError && <div className="error-message">{updateError}</div>}
+        {updateSuccess && <div className="success-message">{updateSuccess}</div>}
+        {!editing ? (
+          <div className="profile-details">
+            <p><strong>Doctor ID:</strong> {doctorData.doctorId}</p>
+            <p><strong>Name:</strong> {doctorData.name}</p>
+            <p><strong>Email:</strong> {doctorData.email}</p>
+            <p><strong>Age:</strong> {doctorData.age}</p>
+            <p><strong>Sex:</strong> {doctorData.sex}</p>
+            <p><strong>Experience:</strong> {doctorData.experience} years</p>
+            <p><strong>Specialty:</strong> {doctorData.specialty}</p>
+            <p><strong>Qualification:</strong> {doctorData.qualification}</p>
+            <p><strong>Address:</strong> {doctorData.address}</p>
+            <p><strong>Contact Number:</strong> {doctorData.contactNumber}</p>
+            <div className="profile-details-buttons">
+              <button onClick={() => setEditing(true)} className="edit-button">
+                Edit Profile
+              </button>
+              <button onClick={() => navigate('/doctor/chat')} className="back-button">
+                Back to Dashboard
+              </button>
+            </div>
           </div>
-        </div>
-      )}
+        ) : (
+          <div className="edit-profile-form">
+            <h3>Edit Profile</h3>
+            <label>
+              Name:
+              <input
+                type="text"
+                name="name"
+                value={updatedData.name}
+                onChange={handleUpdateChange}
+                required
+              />
+            </label>
+            <label>
+              Email:
+              <input
+                type="email"
+                value={doctorData.email}
+                disabled
+              />
+            </label>
+            <label>
+              Age:
+              <input
+                type="number"
+                name="age"
+                value={updatedData.age}
+                onChange={handleUpdateChange}
+                required
+              />
+            </label>
+            <label>
+              Sex:
+              <select
+                name="sex"
+                value={updatedData.sex}
+                onChange={handleUpdateChange}
+                required
+              >
+                <option value="">Select sex</option>
+                <option value="Male">Male</option>
+                <option value="Female">Female</option>
+                <option value="Other">Other</option>
+              </select>
+            </label>
+            <label>
+              Experience (Years):
+              <input
+                type="number"
+                name="experience"
+                value={updatedData.experience}
+                onChange={handleUpdateChange}
+                required
+              />
+            </label>
+            <label>
+              Specialty:
+              <select
+                name="specialty"
+                value={updatedData.specialty}
+                onChange={handleUpdateChange}
+                required
+              >
+                <option value="">Select specialty</option>
+                <option value="General Physician">General Physician</option>
+                <option value="Cardiologist">Cardiologist</option>
+                <option value="Dermatologist">Dermatologist</option>
+                <option value="Pediatrician">Pediatrician</option>
+                <option value="Orthopedic Surgeon">Orthopedic Surgeon</option>
+              </select>
+            </label>
+            <label>
+              Qualification:
+              <input
+                type="text"
+                name="qualification"
+                value={updatedData.qualification}
+                onChange={handleUpdateChange}
+                placeholder="e.g., MBBS, MD"
+                required
+              />
+            </label>
+            <label>
+              Address:
+              <textarea
+                name="address"
+                value={updatedData.address}
+                onChange={handleUpdateChange}
+                required
+              />
+            </label>
+            <label>
+              Contact Number:
+              <input
+                type="text"
+                name="contactNumber"
+                value={updatedData.contactNumber}
+                onChange={handleUpdateChange}
+                placeholder="10-digit number"
+                required
+              />
+            </label>
+            <div className="form-buttons">
+              <button onClick={handleUpdateSubmit} className="save-button">
+                Save Changes
+              </button>
+              <button onClick={handleCancelEdit} className="cancel-button">
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -11,7 +11,7 @@ import AdminDashboard from './components/AdminDashboard.js';
 import SelectDoctor from './components/SelectDoctor.js';
 import LanguagePreference from './components/LanguagePreference.js';
 import PatientProfile from './components/PatientProfile.js';
-import DoctorProfile from './components/DoctorProfile.js'; // Added import for DoctorProfile
+import DoctorProfile from './components/DoctorProfile.js';
 import './components/patient.css';
 
 // Custom 404 Component
@@ -137,7 +137,6 @@ function App() {
     };
   }, [isLoggingOut]);
 
-  // Clear error on route change
   useEffect(() => {
     const handleRouteChange = () => {
       if (error) {
@@ -250,14 +249,13 @@ function App() {
 
   console.log('App: Rendering main app with user:', user?.uid, 'role:', role, 'patientId:', patientId);
 
-  // Determine redirect path based on role
   const getRedirectPath = () => {
     if (!user || !role || isLoggingOut) return '/login';
     switch (role) {
       case 'patient':
         return '/patient/select-doctor';
       case 'doctor':
-        return '/doctor/chat';
+        return '/doctor/chat'; // Doctor's dashboard route
       case 'admin':
         return '/admin';
       default:
