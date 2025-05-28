@@ -11,7 +11,7 @@ import {
 import { verifyMedicine, notifyAdmin } from '../services/medicineVerify.js';
 import { doc, getDoc, collection, getDocs, updateDoc, setDoc } from 'firebase/firestore';
 import { db, auth } from '../services/firebase.js';
-import { signOut } from 'firebase/auth';
+import { signOut, updatePassword } from 'firebase/auth';
 import '../components/patient.css';
 
 function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
@@ -34,6 +34,8 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   const [missedDoseAlerts, setMissedDoseAlerts] = useState([]);
   const [doctorPrompt, setDoctorPrompt] = useState(null);
   const [doctorName, setDoctorName] = useState('Unknown Doctor');
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const [editProfileData, setEditProfileData] = useState(null);
   const audioChunksRef = useRef([]);
   const streamRef = useRef(null);
   const pusherRef = useRef(null);
@@ -137,6 +139,17 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
             sex: data.sex || 'N/A',
             age: data.age || 'N/A',
             address: data.address || 'N/A',
+            phoneNumber: data.phoneNumber || 'N/A',
+            aadhaarNumber: data.aadhaarNumber || 'N/A',
+          });
+          // Initialize editProfileData with current profile data
+          setEditProfileData({
+            name: data.name || '',
+            password: '', // Don't pre-fill password for security
+            age: data.age || '',
+            sex: data.sex || '',
+            address: data.address || '',
+            phoneNumber: data.phoneNumber || '',
           });
         } else {
           setError('Patient not found or unauthorized.');
@@ -204,6 +217,79 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       clearTimeout(retryTimeoutRef.current);
     };
   }, [firebaseUser, effectiveUserId, effectivePatientId, doctorId, role, navigate]);
+
+  // Handle profile update
+  const handleProfileUpdate = async () => {
+    if (!firebaseUser) {
+      setError('User authentication failed. Please log in again.');
+      navigate('/login');
+      return;
+    }
+
+    try {
+      const patientRef = doc(db, 'patients', effectivePatientId);
+
+      // Validate required fields
+      if (!editProfileData.name || !editProfileData.age || !editProfileData.sex || !editProfileData.address || !editProfileData.phoneNumber) {
+        setError('Please fill in all editable fields.');
+        return;
+      }
+
+      // Validate phone number format
+      const phoneRegex = /^\+?[1-9]\d{1,14}$/;
+      if (!phoneRegex.test(editProfileData.phoneNumber)) {
+        setError('Invalid phone number format. Please use a valid format (e.g., +918792693974).');
+        return;
+      }
+
+      // Validate age
+      const ageNum = Number(editProfileData.age);
+      if (isNaN(ageNum) || ageNum < 0 || ageNum > 150) {
+        setError('Please enter a valid age between 0 and 150.');
+        return;
+      }
+
+      // Validate sex
+      const validSexOptions = ['Male', 'Female', 'Other'];
+      if (!validSexOptions.includes(editProfileData.sex)) {
+        setError('Please select a valid sex: Male, Female, or Other.');
+        return;
+      }
+
+      // Prepare updated data for Firestore
+      const updatedData = {
+        name: editProfileData.name,
+        age: ageNum,
+        sex: editProfileData.sex,
+        address: editProfileData.address,
+        phoneNumber: editProfileData.phoneNumber,
+      };
+
+      // Update Firestore
+      await updateDoc(patientRef, updatedData);
+
+      // Update password in Firebase Authentication if provided
+      if (editProfileData.password) {
+        if (editProfileData.password.length < 6) {
+          setError('Password must be at least 6 characters long.');
+          return;
+        }
+        await updatePassword(firebaseUser, editProfileData.password);
+      }
+
+      // Update local profile data
+      setProfileData((prev) => ({
+        ...prev,
+        ...updatedData,
+      }));
+
+      setIsEditingProfile(false);
+      setError('Profile updated successfully!');
+    } catch (err) {
+      console.error('Failed to update profile:', err.message);
+      setError(`Failed to update profile: ${err.message}`);
+    }
+  };
 
   // Handle Pusher and message fetching with session handling
   useEffect(() => {
@@ -1415,16 +1501,95 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           {activeMenuOption === 'profile' && profileData && (
             <div className="profile-section">
               <h3>Patient Profile</h3>
-              <p><strong>Name:</strong> {profileData.name}</p>
-              <p><strong>Patient ID:</strong> {profileData.patientId}</p>
-              <p><strong>Email:</strong> {profileData.email}</p>
-              <p><strong>Language Preference:</strong> {profileData.languagePreference === 'kn' ? 'Kannada' : 'English'}</p>
-              <p><strong>Sex:</strong> {profileData.sex}</p>
-              <p><strong>Age:</strong> {profileData.age}</p>
-              <p><strong>Address:</strong> {profileData.address}</p>
-              <button onClick={() => setActiveMenuOption(null)} className="close-section-button">
-                Close
-              </button>
+              {isEditingProfile ? (
+                <>
+                  <div className="profile-field">
+                    <strong>Name:</strong>
+                    <input
+                      type="text"
+                      value={editProfileData.name}
+                      onChange={(e) => setEditProfileData({ ...editProfileData, name: e.target.value })}
+                    />
+                  </div>
+                  <div className="profile-field">
+                    <strong>Password:</strong>
+                    <input
+                      type="password"
+                      value={editProfileData.password}
+                      onChange={(e) => setEditProfileData({ ...editProfileData, password: e.target.value })}
+                      placeholder="Leave blank to keep unchanged"
+                    />
+                  </div>
+                  <div className="profile-field">
+                    <strong>Age:</strong>
+                    <input
+                      type="number"
+                      value={editProfileData.age}
+                      onChange={(e) => setEditProfileData({ ...editProfileData, age: e.target.value })}
+                    />
+                  </div>
+                  <div className="profile-field">
+                    <strong>Sex:</strong>
+                    <select
+                      value={editProfileData.sex}
+                      onChange={(e) => setEditProfileData({ ...editProfileData, sex: e.target.value })}
+                    >
+                      <option value="Male">Male</option>
+                      <option value="Female">Female</option>
+                      <option value="Other">Other</option>
+                    </select>
+                  </div>
+                  <div className="profile-field">
+                    <strong>Address:</strong>
+                    <input
+                      type="text"
+                      value={editProfileData.address}
+                      onChange={(e) => setEditProfileData({ ...editProfileData, address: e.target.value })}
+                    />
+                  </div>
+                  <div className="profile-field">
+                    <strong>Phone Number:</strong>
+                    <input
+                      type="text"
+                      value={editProfileData.phoneNumber}
+                      onChange={(e) => setEditProfileData({ ...editProfileData, phoneNumber: e.target.value })}
+                    />
+                  </div>
+                  {/* Non-editable fields */}
+                  <p><strong>Patient ID:</strong> {profileData.patientId}</p>
+                  <p><strong>Email:</strong> {profileData.email}</p>
+                  <p><strong>Language Preference:</strong> {profileData.languagePreference === 'kn' ? 'Kannada' : 'English'}</p>
+                  <p><strong>Aadhaar Number:</strong> {profileData.aadhaarNumber}</p>
+                  <div className="profile-actions">
+                    <button onClick={handleProfileUpdate} className="save-button">
+                      Save Changes
+                    </button>
+                    <button onClick={() => setIsEditingProfile(false)} className="cancel-button">
+                      Cancel
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <p><strong>Name:</strong> {profileData.name}</p>
+                  <p><strong>Patient ID:</strong> {profileData.patientId}</p>
+                  <p><strong>Email:</strong> {profileData.email}</p>
+                  <p><strong>Language Preference:</strong> {profileData.languagePreference === 'kn' ? 'Kannada' : 'English'}</p>
+                  <p><strong>Sex:</strong> {profileData.sex}</p>
+                  <p><strong>Age:</strong> {profileData.age}</p>
+                  <p><strong>Address:</strong> {profileData.address}</p>
+                  <p><strong>Phone Number:</strong> {profileData.phoneNumber}</p>
+                  <p><strong>Aadhaar Number:</strong> {profileData.aadhaarNumber}</p>
+                  <div className="profile-actions">
+                    <button onClick={() => setIsEditingProfile(true)} className="update-button">
+                      Update Profile
+                    </button>
+                    <button onClick={() => setActiveMenuOption(null)} className="close-section-button">
+                      Close
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           )}
           {activeMenuOption === 'reminders' && (
