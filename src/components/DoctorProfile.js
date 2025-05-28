@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db, auth } from '../services/firebase.js';
-import './DoctorProfile.css';
+
 
 function DoctorProfile({ user, role, setError }) {
   const { doctorId } = useParams();
