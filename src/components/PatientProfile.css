@@ -1,4 +1,4 @@
-/* src/components/PatientProfile.css */
+/* src/components/patientchat.css */
 
 /* Import Poppins font */
 @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap');
@@ -126,6 +126,109 @@
   margin-top: 20px;
 }
 
+/* Profile Update Section */
+.profile-section {
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(10px);
+  border-radius: 15px;
+  padding: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.profile-section h3 {
+  font-size: 1.5rem;
+  color: #FFFFFF;
+  margin-bottom: 15px;
+}
+
+.profile-field {
+  display: flex;
+  align-items: center;
+  margin-bottom: 15px;
+  gap: 10px;
+}
+
+.profile-field strong {
+  color: #FFFFFF;
+  font-weight: 500;
+  width: 150px;
+}
+
+.profile-field input,
+.profile-field select {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #E0E0E0;
+  font-family: 'Poppins', sans-serif;
+  font-size: 1rem;
+  transition: border-color 0.3s ease, background 0.3s ease;
+}
+
+.profile-field input:focus,
+.profile-field select:focus {
+  outline: none;
+  border-color: #6E4BAF;
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.profile-field select {
+  appearance: none;
+  background-image: url('data:image/svg+xml;utf8,<svg fill="%23E0E0E0" height="24" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg"><path d="M7 10l5 5 5-5z"/></svg>');
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 30px;
+}
+
+.profile-field input::placeholder {
+  color: #A0A0A0;
+}
+
+.profile-actions {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 20px;
+}
+
+.update-button,
+.save-button,
+.cancel-button,
+.close-section-button {
+  padding: 10px 20px;
+  border: none;
+  border-radius: 5px;
+  font-family: 'Poppins', sans-serif;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: background 0.3s ease, transform 0.3s ease;
+}
+
+.update-button,
+.save-button {
+  background: #6E4BAF;
+  color: #FFFFFF;
+}
+
+.update-button:hover,
+.save-button:hover {
+  background: #7A5BCF;
+  transform: translateY(-2px);
+}
+
+.cancel-button,
+.close-section-button {
+  background: rgba(255, 255, 255, 0.1);
+  color: #E0E0E0;
+}
+
+.cancel-button:hover,
+.close-section-button:hover {
+  background: rgba(255, 255, 255, 0.2);
+  transform: translateY(-2px);
+}
+
 /* Media Queries */
 @media (max-width: 768px) {
   .profile-header h2 {
@@ -137,7 +240,8 @@
   }
 
   .patient-details,
-  .patient-records {
+  .patient-records,
+  .profile-section {
     padding: 15px;
   }
 
@@ -147,7 +251,36 @@
   }
 
   .patient-details h3,
-  .patient-records h3 {
+  .patient-records h3,
+  .profile-section h3 {
     font-size: 1.3rem;
+  }
+
+  .profile-field {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 5px;
+  }
+
+  .profile-field strong {
+    width: auto;
+  }
+
+  .profile-field input,
+  .profile-field select {
+    width: 100%;
+  }
+
+  .profile-actions {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .update-button,
+  .save-button,
+  .cancel-button,
+  .close-section-button {
+    width: 100%;
+    padding: 12px;
   }
 }
