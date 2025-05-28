@@ -282,7 +282,7 @@
   overflow-y: auto;
   margin-left: 0;
   margin-right: 0;
-  transition: margin-left 0.3s ease, margin-right: 0.3s ease;
+  transition: margin-left 0.3s ease, margin-right 0.3s ease; /* Fixed syntax error */
 }
 
 .chat-content.sidebar-open-left {
@@ -342,11 +342,9 @@
 }
 
 .decline-button {
-  background: #C0392B;
-}
-
- padding: 10px 25px;
-  color-color: #FFFFFF;
+  padding: 10px 25px; /* Fixed syntax: removed stray "background" line and corrected structure */
+  background: #E74C3C;
+  color: #FFFFFF;
   border: none;
   border-radius: 20px;
   font-size: 1rem;
@@ -361,7 +359,7 @@
 }
 
 .chat-main {
-  flex: flex;
+  flex: 1; /* Fixed syntax: changed "flex: flex" to "flex: 1" */
   display: flex;
   flex-direction: column;
 }
@@ -403,19 +401,14 @@
 }
 
 .alert-item p {
-  margin-font-size: 1rem;
+  font-size: 1rem; /* Fixed syntax: removed stray "margin-" */
   color: #E0E0E0;
 }
 
 .dismiss-button {
-  background-color: #E74C3C;
-}
-
- padding: 6px 12px;
-  color: #FFFFFF;background
-}
-
- background: #E74C3C;
+  padding: 6px 12px; /* Fixed syntax: removed duplicate and stray "background" lines */
+  background: #E74C3C;
+  color: #FFFFFF;
   border: none;
   border-radius: 20px;
   font-size: 0.9rem;
@@ -869,8 +862,7 @@
 .modal-content input:focus,
 .modal-content textarea:focus {
   outline: none;
-  border-color: #6E48AA;
-  border-color: #6E48AA;
+  border-color: #6E48AA; /* Fixed syntax: removed duplicate border-color */
   box-shadow: 0 0 8px rgba(110, 72, 170, 0.3);
 }
 
@@ -981,27 +973,22 @@
   margin: 10px 0;
 }
 
-.doctor-profile .profile-details .strong {
+.doctor-profile .profile-details strong {
   font-weight: bold;
   color: #6e48AA;
 }
 
-.doctor-profile .edit-profile-form .editors {
+.doctor-profile .edit-profile-form {
   display: flex;
   flex-direction: column;
   gap: 15px;
 }
 
-.edit-profile-form labelform {
+.edit-profile-form label {
   display: flex;
   flex-direction: column;
   font-size: 1rem;
   color: #333;
-}
-
-.edit-profile-form .input-label {
-  margin-top: 5px;
-  padding: 8px;
 }
 
 .edit-profile-form input,
@@ -1015,7 +1002,7 @@
   font-family: 'Poppins', sans-serif;
 }
 
-.edit-profile-form .input:disabled {
+.edit-profile-form input:disabled {
   background: #f0f0f0;
   cursor: not-allowed;
 }
@@ -1043,7 +1030,7 @@
   padding: 10px 20px;
   font-size: 12px;
   font-family: 'Poppins', sans-serif;
-  cursor: background 0.3s;
+  cursor: pointer; /* Fixed syntax: changed "cursor: background 0.3s" to "cursor: pointer" */
   transition: background 0.3s ease;
 }
 
@@ -1096,7 +1083,7 @@
     justify-content: center;
   }
   .text-input-container input {
-    padding: 10px 20px;
+    padding: 10px 15px; /* Fixed in media query to match general style */
   }
   .send-button {
     padding: 10px 20px;
@@ -1108,9 +1095,9 @@
   .doctor-profile {
     padding: 15px;
   }
-  .edit-profile-form .input,
+  .edit-profile-form input,
   .edit-profile-form select,
-  .edit-profile-form .textarea {
+  .edit-profile-form textarea {
     padding: 8px;
     font-size: 0.9rem;
   }
