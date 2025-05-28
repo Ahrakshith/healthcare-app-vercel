@@ -415,8 +415,38 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           return [...prev, updatedMessage].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
         });
 
-        if (updatedMessage.sender === 'doctor' && (updatedMessage.diagnosis || updatedMessage.prescription)) {
-          validatePrescription(updatedMessage.diagnosis, updatedMessage.prescription, updatedMessage.timestamp);
+        if (updatedMessage.sender === 'doctor') {
+          // Check for diagnosis and prescription in the message
+          const hasDiagnosis = !!updatedMessage.diagnosis;
+          const hasPrescription = !!updatedMessage.prescription;
+
+          // If both diagnosis and prescription are present in the same message, validate them together
+          if (hasDiagnosis && hasPrescription) {
+            validatePrescription(updatedMessage.diagnosis, updatedMessage.prescription, updatedMessage.timestamp);
+            setupMedicationSchedule(updatedMessage.prescription, updatedMessage.timestamp);
+          } else {
+            // Find the most recent diagnosis and prescription from all messages
+            const doctorMessages = [...prev, updatedMessage].filter((msg) => msg.sender === 'doctor');
+            const latestDiagnosis = doctorMessages
+              .filter((msg) => msg.diagnosis)
+              .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0]?.diagnosis || '';
+            const latestPrescription = doctorMessages
+              .filter((msg) => msg.prescription)
+              .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0]?.prescription || '';
+
+            // If the message has a prescription, use the latest diagnosis (if available) for validation and scheduling
+            if (hasPrescription && latestDiagnosis) {
+              validatePrescription(latestDiagnosis, updatedMessage.prescription, updatedMessage.timestamp);
+              setupMedicationSchedule(updatedMessage.prescription, updatedMessage.timestamp);
+            } else if (hasPrescription) {
+              // If no prior diagnosis, still schedule the medication but flag validation issue
+              setupMedicationSchedule(updatedMessage.prescription, updatedMessage.timestamp);
+              setValidationResult((prev) => ({
+                ...prev,
+                [updatedMessage.timestamp]: 'No prior diagnosis available for prescription validation.',
+              }));
+            }
+          }
         }
       });
 
@@ -438,17 +468,6 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       }
     };
   }, [firebaseUser, effectiveUserId, effectivePatientId, doctorId, languagePreference, apiBaseUrl, pusherKey, pusherCluster]);
-
-  // Process prescriptions
-  useEffect(() => {
-    const doctorMessages = messages.filter((msg) => msg.sender === 'doctor' && msg.prescription);
-    if (doctorMessages.length > 0) {
-      doctorMessages.forEach((msg) => {
-        console.log('Processing prescription:', msg.prescription, 'at timestamp:', msg.timestamp);
-        setupMedicationSchedule(msg.prescription, msg.timestamp);
-      });
-    }
-  }, [messages]);
 
   const normalizeLanguageCode = useCallback((code) => {
     switch (code?.toLowerCase()) {
@@ -1473,7 +1492,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         <button className="hamburger-button" onClick={() => setMenuOpen(!menuOpen)}>
           ☰
         </button>
-        <h2>Patient Chat with Dr. {doctorName}</h2>
+        <h2>Patient Chat with {doctorName}</h2>
         <div className="header-actions">
           <button onClick={handleLogoutClick} className="logout-button">
             Logout
