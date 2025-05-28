@@ -1008,7 +1008,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
         <div className={`patient-sidebar ${menuOpen ? 'open' : ''}`}>
           <div className="sidebar-header">
             <h3>Assigned Patients</h3>
-            <button className="close-menu" onClick={() => setMenuOpen(false)} aria-label="Close patient menu">
+            <button className="close-modal" onClick={() => setMenuOpen(false)} aria-label="Close patient menu">
               ✕
             </button>
           </div>
@@ -1020,7 +1020,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
             patientList
           )}
         </div>
-        <div className="chat-content">
+        <div className="chat-content ${selectedPatientId ? '' : 'no-patient-selected'}">
           {selectedPatientId ? (
             diagnosisPrompt === selectedPatientId ? (
               <div className="diagnosis-prompt">
@@ -1084,7 +1084,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
                                   className="chat-image"
                                   onError={() => console.error(`Failed to load image: ${msg.imageUrl}`)}
                                 />
-                              )}
+                              </div>
                               <p className="primary-text">{msg.text || 'No transcription'}</p>
                               {msg.translatedText && <p className="translated-text">English: {msg.translatedText}</p>}
                               {msg.audioUrl && (
@@ -1095,7 +1095,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
                                   </audio>
                                   <div className="read-aloud-container">
                                     <button
-                                      onClick={() => readAloud(languagePreference === 'kn' ? (msg.translatedText || msg.text) : msg.text, 'en', msg.sender)}
+                                      onClick={() => readAloud(msg.translatedText || msg.text, 'en', msg.sender)}
                                       className="read-aloud-button"
                                     >
                                       🔊 English
@@ -1159,14 +1159,14 @@ function DoctorChat({ user, role, handleLogout, setError }) {
                                       {languagePreference === 'kn' && msg.translatedDiagnosis && (
                                         <>
                                           <p className="translated-text">Kannada: {msg.translatedDiagnosis}</p>
-                                          <button
-                                            onClick={() => readAloud(msg.translatedDiagnosis, 'kn', msg.sender)}
-                                            className="read-aloud-button"
-                                          >
-                                            🔊
-                                          </button>
+                                        <button
+                                          onClick={() => readAloud(msg.translatedDiagnosis, 'kn', msg.sender)}
+                                          className="read-aloud-button"
+                                        >
+                                          🔊
+                                        </button>
                                         </>
-                                      )}
+                                    )}
                                     </div>
                                   ) : (
                                     <p className="missing-field">Diagnosis not provided.</p>
@@ -1176,7 +1176,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
                                       <strong>Prescription:</strong>{' '}
                                       {`${msg.prescription.medicine}, ${msg.prescription.dosage}, ${msg.prescription.frequency}, ${msg.prescription.duration}`}
                                       {languagePreference === 'kn' && msg.translatedPrescription && (
-                                        <>
+                                    <>
                                           <p className="translated-text">Kannada: {msg.translatedPrescription}</p>
                                           <button
                                             onClick={() => readAloud(msg.translatedPrescription, 'kn', msg.sender)}
@@ -1185,7 +1185,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
                                             🔊
                                           </button>
                                         </>
-                                      )}
+                                    )}
                                     </div>
                                   ) : (
                                     <p className="missing-field">Prescription not provided.</p>
@@ -1211,7 +1211,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
                     >
                       Retry
                     </button>
-                    <button onClick={dismissError} className="dismiss-error-button" aria-label="Dismiss error">
+                    <button onClick={dismissError} onClick={() => dismissError()} className="dismiss-error-button" aria-label="Dismiss error">
                       Dismiss
                     </button>
                   </div>
@@ -1248,9 +1248,9 @@ function DoctorChat({ user, role, handleLogout, setError }) {
                       <input
                         type="text"
                         value={newMessage}
-                        onChange={(e) => setNewMessage(e.target.value)}
+                        onChange={(e) => setNewMessage(e.target.value)}}
                         placeholder="Type a message (English only)..."
-                        onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
+                        onKeyPress={(e) => (e.key === 'Enter' && sendMessage())}
                         aria-label="Type a message to the patient"
                         disabled={loadingAudio || recording}
                       />
@@ -1263,12 +1263,11 @@ function DoctorChat({ user, role, handleLogout, setError }) {
                         Send
                       </button>
                     </div>
-                  </div>
+                    </div>
                 </div>
               </div>
-            )
-          ) : (
-            <div className="no-patient-selected">
+            ) : (
+              <div className="no-patient-selected">
               <p>Select a patient to start chatting.</p>
             </div>
           )}
@@ -1276,88 +1275,89 @@ function DoctorChat({ user, role, handleLogout, setError }) {
       </div>
       {showActionModal && (
         <div className="action-modal">
-          <div className="modal-content">
-            <h3>{actionType ? `${actionType} Entry` : 'Select an Action'}</h3>
-            <div className="action-type-selection">
-              <select
-                value={actionType}
-                onChange={(e) => setActionType(e.target.value)}
-                aria-label="Select action type (Diagnosis, Prescription, or Combined)"
-              >
-                <option value="">Select an action...</option>
-                <option value="Diagnosis">Diagnosis Only</option>
-                <option value="Prescription">Prescription Only</option>
-                <option value="Combined">Diagnosis and Prescription</option>
-              </select>
-              {(actionType === 'Diagnosis' || actionType === 'Combined') && (
-                <textarea
-                  value={diagnosis}
-                  onChange={(e) => setDiagnosis(e.target.value)}
-                  placeholder="Enter diagnosis..."
-                  aria-label="Enter patient diagnosis"
-                />
-              )}
-              {(actionType === 'Prescription' || actionType === 'Combined') && (
-                <>
-                  {actionType === 'Prescription' && lastDiagnosis && (
-                    <div className="last-diagnosis">
-                      <strong>Last Diagnosis:</strong> {lastDiagnosis}
-                    </div>
-                  )}
-                  <input
+        <div className="modal-content">
+          <h3>{actionType ? `${actionType} Entry` : 'Select an Action'}</h3>
+          <div className="action-type-selection">
+            <select>
+              value={actionType}
+              onChange={(e) => setActionType(e.target.value)}
+              aria-label="Select action type (Diagnosis, Prescription, or Combined)"
+            >
+              <option value="">Select an action...</option>
+              <option value="Diagnosis">Diagnosis Only</option>
+              <option value="Prescription">Prescription Only</option>
+              <option value="Combined">Diagnosis and Prescription</option>
+            </select>
+            {(actionType === 'Diagnosis' || actionType === 'Combined') && (
+              <textarea
+                rows="3"
+                value={diagnosis}
+                onChange={(e) => setDiagnosis(e.target.value)}
+                placeholder="Enter diagnosis..."
+                aria-label="Enter patient diagnosis"
+              />
+            )}
+            {(actionType === 'Prescription' || actionType === 'Combined') && (
+              <>
+                {actionType === 'Prescription' && lastDiagnosis && (
+                  <div className="last-diagnosis">
+                    <strong>Last Diagnosis:</strong> {lastDiagnosis}
+                  </div>
+                )}
+                <input
                     type="text"
                     value={prescription.medicine}
                     onChange={(e) => setPrescription({ ...prescription, medicine: e.target.value })}
                     placeholder="Medicine (e.g., Paracetamol)"
                     aria-label="Enter medicine name"
-                  />
-                  <input
+                />
+                <input
                     type="text"
                     value={prescription.dosage}
                     onChange={(e) => setPrescription({ ...prescription, dosage: e.target.value })}
                     placeholder="Dosage (e.g., 500mg)"
                     aria-label="Enter dosage"
                   />
-                  <input
-                    type="text"
-                    value={prescription.frequency}
-                    onChange={(e) => setPrescription({ ...prescription, frequency: e.target.value })}
-                    placeholder="Frequency (e.g., 08:00 AM or 08:00 AM and 06:00 PM)"
-                    aria-label="Enter dosage frequency"
-                  />
-                  <input
+                <input
+                  type="text"
+                  value={prescription.frequency}
+                  onChange={(e) => setPrescription({ ...prescription, frequency: e.target.value })}
+                  placeholder="Frequency (e.g., 08:00 AM or 08:00 AM and 06:00 PM)"
+                  aria-label="Enter dosage frequency"
+                />
+                <input
                     type="text"
                     value={prescription.duration}
                     onChange={(e) => setPrescription({ ...prescription, duration: e.target.value })}
                     placeholder="Duration in days (e.g., 3)"
                     aria-label="Enter prescription duration"
                   />
-                </>
-              )}
-            </div>
-            <div className="modal-buttons">
-              {actionType && (
-                <button onClick={sendAction} className="submit-button" aria-label={`Submit ${actionType}`}>
-                  Send {actionType}
-                </button>
-              )}
-              <button
-                onClick={() => {
-                  setShowActionModal(false);
-                  setActionType('');
-                  setDiagnosis('');
-                  setPrescription({ medicine: '', dosage: '', frequency: '', duration: '' });
-                  console.log('Modal closed and fields reset');
-                }}
-                className="close-modal"
-                aria-label="Close modal"
-              >
-                Close
+              </>
+            )}
+          </div>
+          <div className="modal-buttons">
+            {actionType && (
+              <button onClick={sendAction} className="submit-button" aria-label={`Submit ${actionType}`}>
+                Send {actionType}
               </button>
-            </div>
+            )}
+            <button
+              onClick={() => {
+                setShowActionModal(false);
+                setActionType('');
+                setDiagnosis('');
+                setPrescription({ medicine: '', dosage: '', frequency: '', duration: '' });
+                console.log('Modal closed and fields reset');
+              }}
+              className="close-modal"
+              aria-label="Close modal"
+            >
+              Close
+            </button>
           </div>
         </div>
-      )}
+      </div>
+    )}
     </div>
   );
 }
