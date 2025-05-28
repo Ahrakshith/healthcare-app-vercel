@@ -142,10 +142,9 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
             phoneNumber: data.phoneNumber || 'N/A',
             aadhaarNumber: data.aadhaarNumber || 'N/A',
           });
-          // Initialize editProfileData with current profile data
           setEditProfileData({
             name: data.name || '',
-            password: '', // Don't pre-fill password for security
+            password: '',
             age: data.age || '',
             sex: data.sex || '',
             address: data.address || '',
@@ -229,34 +228,29 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     try {
       const patientRef = doc(db, 'patients', effectivePatientId);
 
-      // Validate required fields
       if (!editProfileData.name || !editProfileData.age || !editProfileData.sex || !editProfileData.address || !editProfileData.phoneNumber) {
         setError('Please fill in all editable fields.');
         return;
       }
 
-      // Validate phone number format
       const phoneRegex = /^\+?[1-9]\d{1,14}$/;
       if (!phoneRegex.test(editProfileData.phoneNumber)) {
         setError('Invalid phone number format. Please use a valid format (e.g., +918792693974).');
         return;
       }
 
-      // Validate age
       const ageNum = Number(editProfileData.age);
       if (isNaN(ageNum) || ageNum < 0 || ageNum > 150) {
         setError('Please enter a valid age between 0 and 150.');
         return;
       }
 
-      // Validate sex
       const validSexOptions = ['Male', 'Female', 'Other'];
       if (!validSexOptions.includes(editProfileData.sex)) {
         setError('Please select a valid sex: Male, Female, or Other.');
         return;
       }
 
-      // Prepare updated data for Firestore
       const updatedData = {
         name: editProfileData.name,
         age: ageNum,
@@ -265,10 +259,8 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         phoneNumber: editProfileData.phoneNumber,
       };
 
-      // Update Firestore
       await updateDoc(patientRef, updatedData);
 
-      // Update password in Firebase Authentication if provided
       if (editProfileData.password) {
         if (editProfileData.password.length < 6) {
           setError('Password must be at least 6 characters long.');
@@ -277,7 +269,6 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         await updatePassword(firebaseUser, editProfileData.password);
       }
 
-      // Update local profile data
       setProfileData((prev) => ({
         ...prev,
         ...updatedData,
@@ -381,16 +372,14 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
 
         let updatedMessage = { ...message };
 
-        // Translate doctor's message if patient's preferred language is Kannada
         if (message.sender === 'doctor' && languagePreference === 'kn' && !message.diagnosis && !message.prescription) {
           try {
             const idToken = await firebaseUser.getIdToken(true);
-            // Doctor's message is in English, translate it to Kannada
             const kannadaText = await translateText(message.text, 'en-US', 'kn-IN', effectiveUserId, idToken);
             updatedMessage = {
               ...message,
-              text: kannadaText, // Kannada translation
-              translatedText: message.text, // Original English text
+              text: kannadaText,
+              translatedText: message.text,
             };
           } catch (err) {
             console.error('Failed to translate doctor message:', err);
@@ -399,14 +388,13 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         }
 
         setMessages((prev) => {
-          // Enhanced duplicate check: Compare essential fields
           const isDuplicate = prev.some(
             (msg) =>
               msg.sender === updatedMessage.sender &&
               msg.text === updatedMessage.text &&
               msg.audioUrl === updatedMessage.audioUrl &&
               msg.imageUrl === updatedMessage.imageUrl &&
-              Math.abs(new Date(msg.timestamp) - new Date(updatedMessage.timestamp)) < 1000 // Allow 1-second difference for timestamps
+              Math.abs(new Date(msg.timestamp) - new Date(updatedMessage.timestamp)) < 1000
           );
           if (isDuplicate) {
             console.log('PatientChat: Skipped duplicate message from Pusher:', updatedMessage.timestamp, updatedMessage.text);
@@ -416,36 +404,9 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         });
 
         if (updatedMessage.sender === 'doctor') {
-          // Check for diagnosis and prescription in the message
-          const hasDiagnosis = !!updatedMessage.diagnosis;
-          const hasPrescription = !!updatedMessage.prescription;
-
-          // If both diagnosis and prescription are present in the same message, validate them together
-          if (hasDiagnosis && hasPrescription) {
-            validatePrescription(updatedMessage.diagnosis, updatedMessage.prescription, updatedMessage.timestamp);
-            setupMedicationSchedule(updatedMessage.prescription, updatedMessage.timestamp);
-          } else {
-            // Find the most recent diagnosis and prescription from all messages
-            const doctorMessages = [...prev, updatedMessage].filter((msg) => msg.sender === 'doctor');
-            const latestDiagnosis = doctorMessages
-              .filter((msg) => msg.diagnosis)
-              .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0]?.diagnosis || '';
-            const latestPrescription = doctorMessages
-              .filter((msg) => msg.prescription)
-              .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0]?.prescription || '';
-
-            // If the message has a prescription, use the latest diagnosis (if available) for validation and scheduling
-            if (hasPrescription && latestDiagnosis) {
-              validatePrescription(latestDiagnosis, updatedMessage.prescription, updatedMessage.timestamp);
-              setupMedicationSchedule(updatedMessage.prescription, updatedMessage.timestamp);
-            } else if (hasPrescription) {
-              // If no prior diagnosis, still schedule the medication but flag validation issue
-              setupMedicationSchedule(updatedMessage.prescription, updatedMessage.timestamp);
-              setValidationResult((prev) => ({
-                ...prev,
-                [updatedMessage.timestamp]: 'No prior diagnosis available for prescription validation.',
-              }));
-            }
+          if (updatedMessage.diagnosis || updatedMessage.prescription) {
+            validatePrescription(updatedMessage.diagnosis || '', updatedMessage.prescription || '', updatedMessage.timestamp);
+            setupMedicationSchedule(updatedMessage.diagnosis, updatedMessage.prescription, updatedMessage.timestamp);
           }
         }
       });
@@ -469,21 +430,9 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     };
   }, [firebaseUser, effectiveUserId, effectivePatientId, doctorId, languagePreference, apiBaseUrl, pusherKey, pusherCluster]);
 
-  const normalizeLanguageCode = useCallback((code) => {
-    switch (code?.toLowerCase()) {
-      case 'kn':
-      case 'kn-in':
-        return 'kn-IN';
-      case 'en':
-      case 'en-us':
-        return 'en-US';
-      default:
-        return 'en-US';
-    }
-  }, []);
-
-  const setupMedicationSchedule = async (prescription, issuanceTimestamp) => {
-    console.log('setupMedicationSchedule: Received prescription:', prescription, 'at timestamp:', issuanceTimestamp);
+  // Process prescriptions and diagnoses together
+  const setupMedicationSchedule = async (diagnosis, prescription, issuanceTimestamp) => {
+    console.log('setupMedicationSchedule: Received:', { diagnosis, prescription, issuanceTimestamp });
 
     if (!prescription || !issuanceTimestamp) {
       setError('Prescription or issuance timestamp is missing.');
@@ -493,7 +442,6 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
 
     let medicine, dosage, times, durationDays, timesStr;
 
-    // Always use the English version of the prescription for processing
     const prescriptionText = typeof prescription === 'object'
       ? `${prescription.medicine}, ${prescription.dosage}, ${prescription.frequency || ''}, ${prescription.duration || '5'}`
       : prescription;
@@ -575,6 +523,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           snoozeCount: 0,
           createdAt: new Date().toISOString(),
           patientId: effectivePatientId,
+          diagnosis: diagnosis || 'Not specified',
         };
 
         try {
@@ -823,7 +772,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       englishDiagnosis = messages.find(msg => msg.timestamp === timestamp)?.diagnosis || diagnosis;
     }
 
-    const medicine = typeof prescription === 'object' ? prescription.medicine : prescription;
+    const medicine = typeof prescription === 'object' ? prescription.medicine : prescription.split(',')[0].trim();
     console.log('Extracted medicine:', medicine);
 
     try {
@@ -882,6 +831,19 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       );
     }
   };
+
+  const normalizeLanguageCode = useCallback((code) => {
+    switch (code?.toLowerCase()) {
+      case 'kn':
+      case 'kn-in':
+        return 'kn-IN';
+      case 'en':
+      case 'en-us':
+        return 'en-US';
+      default:
+        return 'en-US';
+    }
+  }, []);
 
   const retryUpload = async (audioBlob, language) => {
     if (!firebaseUser || !audioBlob || !language) {
@@ -1280,10 +1242,9 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       recordingLanguage: 'en',
       doctorId,
       userId: effectivePatientId,
-      tempMessageId, // Temporary ID to track the message before server response
+      tempMessageId,
     };
 
-    // Add the message optimistically with a temporary ID
     setMessages((prev) => [...prev, message].sort((a, b) => a.timestamp.localeCompare(b.timestamp)));
     setTextInput('');
 
@@ -1308,16 +1269,13 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       const data = await response.json();
       const newMessage = data.newMessage;
 
-      // Replace the optimistic message with the server-confirmed message
       setMessages((prev) => {
-        // Remove the temporary message
         const filteredMessages = prev.filter((msg) => msg.tempMessageId !== tempMessageId);
-        // Check for duplicates based on essential fields
         const isDuplicate = filteredMessages.some(
           (msg) =>
             msg.sender === newMessage.sender &&
             msg.text === newMessage.text &&
-            Math.abs(new Date(msg.timestamp) - new Date(newMessage.timestamp)) < 1000 // Allow 1-second difference
+            Math.abs(new Date(msg.timestamp) - new Date(newMessage.timestamp)) < 1000
         );
         if (isDuplicate) {
           console.log('PatientChat: Skipped duplicate text message from server:', newMessage.timestamp, newMessage.text);
@@ -1328,7 +1286,6 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     } catch (err) {
       console.error('Failed to save text message:', err);
       setError(`Failed to save text message: ${err.message}`);
-      // Remove the optimistic message on failure
       setMessages((prev) => prev.filter((msg) => msg.tempMessageId !== tempMessageId));
       if (err.message.includes('404')) {
         setTimeout(() => handleSendText(), 2000);
@@ -1358,7 +1315,6 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       tempMessageId,
     };
 
-    // Add the message optimistically with a temporary ID
     setMessages((prev) => [...prev, message].sort((a, b) => a.timestamp.localeCompare(b.timestamp)));
 
     try {
@@ -1382,7 +1338,6 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       const data = await response.json();
       const newMessage = data.newMessage;
 
-      // Replace the optimistic message with the server-confirmed message
       setMessages((prev) => {
         const filteredMessages = prev.filter((msg) => msg.tempMessageId !== tempMessageId);
         const isDuplicate = filteredMessages.some(
@@ -1492,7 +1447,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         <button className="hamburger-button" onClick={() => setMenuOpen(!menuOpen)}>
           ☰
         </button>
-        <h2>Patient Chat with {doctorName}</h2>
+        <h2>Patient Chat with Dr. {doctorName}</h2>
         <div className="header-actions">
           <button onClick={handleLogoutClick} className="logout-button">
             Logout
@@ -1602,7 +1557,6 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                       onChange={(e) => setEditProfileData({ ...editProfileData, phoneNumber: e.target.value })}
                     />
                   </div>
-                  {/* Non-editable fields */}
                   <p><strong>Patient ID:</strong> {profileData.patientId}</p>
                   <p><strong>Email:</strong> {profileData.email}</p>
                   <p><strong>Language Preference:</strong> {profileData.languagePreference === 'kn' ? 'Kannada' : 'English'}</p>
@@ -1658,6 +1612,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                   <div className="table-header">
                     <span>Medicine</span>
                     <span>Dosage</span>
+                    <span>Diagnosis</span>
                     <span>Time</span>
                     <span>Status</span>
                     <span>Actions</span>
@@ -1668,6 +1623,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                       <div key={reminder.id} className="table-row">
                         <span>{reminder.medicine}</span>
                         <span>{reminder.dosage}</span>
+                        <span>{reminder.diagnosis}</span>
                         <span>{new Date(reminder.scheduledTime).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) + ' ' + new Date(reminder.scheduledTime).toLocaleTimeString('en-US', { hour12: true })}</span>
                         <span>{reminder.status}</span>
                         <span>
@@ -1890,7 +1846,6 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                                     <button
                                       onClick={() => readAloud(msg.translatedPrescription || (typeof msg.prescription === 'object'
                                         ? `${msg.prescription.medicine}, ${msg.prescription.dosage}, ${msg.prescription.frequency}, ${msg.prescription.duration}`
-
                                         : msg.prescription), 'kn')}
                                       className="read-aloud-button"
                                     >
@@ -1958,6 +1913,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                                 )}
                               </div>
                             ) : (
+
                               <div className="message-block">
                                 <p className="primary-text">{msg.text || 'No message content'}</p>
                                 {msg.translatedText && <p className="translated-text">English: {msg.translatedText}</p>}
