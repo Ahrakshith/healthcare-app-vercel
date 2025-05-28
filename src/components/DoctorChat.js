@@ -113,6 +113,21 @@ function DoctorChat({ user, role, handleLogout, setError }) {
         }));
         setPatients(assignedPatients);
         setLoadingPatients(false);
+
+        // Check if the currently selected patient still exists in the updated list
+        if (selectedPatientId) {
+          const patientExists = assignedPatients.some((patient) => patient.patientId === selectedPatientId);
+          if (!patientExists) {
+            console.log('Selected patient no longer exists, resetting selection');
+            setSelectedPatientId(null);
+            setSelectedPatientName('');
+            setMessages([]); // Clear messages since the patient is no longer assigned
+            setMissedDoseAlerts([]); // Clear alerts since the patient is no longer assigned
+            setDiagnosisPrompt(null); // Clear diagnosis prompt
+          }
+        }
+
+        // If no patient is selected and there are patients available, select the first one
         if (!selectedPatientId && assignedPatients.length > 0) {
           setSelectedPatientId(assignedPatients[0].patientId);
           setSelectedPatientName(assignedPatients[0].patientName);
@@ -506,6 +521,8 @@ function DoctorChat({ user, role, handleLogout, setError }) {
           setPatients((prev) => prev.filter((p) => p.patientId !== selectedPatientId));
           setSelectedPatientId(null);
           setSelectedPatientName('');
+          setMessages([]); // Clear messages since the patient is no longer assigned
+          setMissedDoseAlerts([]); // Clear alerts since the patient is no longer assigned
           setDiagnosisPrompt(null);
           console.log('Patient declined and message sent:', declineMessage);
         }
