@@ -885,9 +885,16 @@ function DoctorChat({ user, role, handleLogout, setError }) {
   );
 
   const readAloud = useCallback(
-    async (text, lang, sender) => {
-      console.log('Reading aloud:', { text, lang, sender });
+    async (text, lang, sender, audioUrl = null) => {
+      console.log('Reading aloud:', { text, lang, sender, audioUrl });
       try {
+        if (audioUrl) {
+          // If an audio URL is provided (e.g., msg.audioUrlEn), play it directly
+          await playAudio(audioUrl);
+          console.log('Played existing audio:', audioUrl);
+          return;
+        }
+
         if (!text || typeof text !== 'string' || text.trim() === '') {
           const errorMsg = 'Cannot read aloud: No valid text provided.';
           setError(errorMsg);
@@ -899,9 +906,9 @@ function DoctorChat({ user, role, handleLogout, setError }) {
         const normalizedLang = lang === 'kn' ? 'kn-IN' : 'en-US';
         console.log(`Generating text-to-speech for text: "${text}" in language: ${normalizedLang}`);
 
-        const audioUrl = await textToSpeechConvert(text.trim(), normalizedLang, user.uid, idToken);
-        await playAudio(audioUrl);
-        console.log('Generated and played text-to-speech audio:', audioUrl);
+        const generatedAudioUrl = await textToSpeechConvert(text.trim(), normalizedLang, user.uid, idToken);
+        await playAudio(generatedAudioUrl);
+        console.log('Generated and played text-to-speech audio:', generatedAudioUrl);
       } catch (err) {
         const errorMsg = `Failed to read aloud: ${err.message}`;
         setError(errorMsg);
@@ -1109,29 +1116,29 @@ function DoctorChat({ user, role, handleLogout, setError }) {
                                   {languagePreference === 'kn' && msg.translatedText && (
                                     <p className="translated-text">Kannada: {msg.translatedText}</p>
                                   )}
-                                  {(msg.audioUrlEn || msg.audioUrlKn) && (
+                                  {(msg.audioUrl || msg.audioUrlEn || msg.audioUrlKn) && (
                                     <div className="audio-container">
                                       <audio controls aria-label="Doctor audio message">
-                                        <source src={msg.audioUrlEn || msg.audioUrlKn} type="audio/webm" />
+                                        <source src={msg.audioUrl || msg.audioUrlEn || msg.audioUrlKn} type="audio/webm" />
                                         Your browser does not support the audio element.
                                       </audio>
                                       <div className="read-aloud-container">
                                         <button
-                                          onClick={() => readAloud(msg.text, 'en', msg.sender)}
+                                          onClick={() => readAloud(msg.text, 'en', msg.sender, msg.audioUrlEn)}
                                           className="read-aloud-button"
                                         >
                                           🔊 English
                                         </button>
                                         {languagePreference === 'kn' && msg.translatedText && (
                                           <button
-                                            onClick={() => readAloud(msg.translatedText, 'kn', msg.sender)}
+                                            onClick={() => readAloud(msg.translatedText, 'kn', msg.sender, msg.audioUrlKn)}
                                             className="read-aloud-button"
                                           >
                                             🔊 Kannada
                                           </button>
                                         )}
                                       </div>
-                                      <a href={msg.audioUrlEn || msg.audioUrlKn} download className="download-link">
+                                      <a href={msg.audioUrl || msg.audioUrlEn || msg.audioUrlKn} download className="download-link">
                                         Download Audio
                                       </a>
                                     </div>
