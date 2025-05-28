@@ -874,7 +874,7 @@ function DoctorChat({ user, role, handleLogout, setError }) {
         setPrescription({ medicine: '', dosage: '', frequency: '', duration: '' });
         setShowActionModal(false);
         setActionType('');
-        console.log('Action completed successfully:', {diagnosis, prescriptionString});
+        console.log('Action completed successfully:', { diagnosis, prescriptionString });
       } catch (err) {
         const errorMsg = err.message || 'An unexpected error occurred while processing the patient decision.';
         setError(errorMsg);
@@ -976,6 +976,14 @@ function DoctorChat({ user, role, handleLogout, setError }) {
         </button>
         <h2>{selectedPatientId ? `Chat with ${selectedPatientName}` : 'Doctor Dashboard'}</h2>
         <div className="header-actions">
+          <button
+            onClick={() => navigate(`/doctor-profile/${doctorId}`)}
+            className="doctor-profile-button"
+            disabled={!doctorId}
+            aria-label="View doctor profile"
+          >
+            Doctor Profile
+          </button>
           <button
             onClick={() => navigate(`/patient-profile/${selectedPatientId}`)}
             className="patient-profile-button"

@@ -10,7 +10,8 @@ import DoctorChat from './components/DoctorChat.js';
 import AdminDashboard from './components/AdminDashboard.js';
 import SelectDoctor from './components/SelectDoctor.js';
 import LanguagePreference from './components/LanguagePreference.js';
-import PatientProfile from './components/PatientProfile.js'; // Added import for PatientProfile
+import PatientProfile from './components/PatientProfile.js';
+import DoctorProfile from './components/DoctorProfile.js'; // Added import for DoctorProfile
 import './components/patient.css';
 
 // Custom 404 Component
@@ -374,8 +375,18 @@ function App() {
         <Route
           path="/patient-profile/:patientId"
           element={
-            user && role === 'doctor' && !isLoggingOut ? (
+            user && (role === 'doctor' || role === 'patient') && !isLoggingOut ? (
               <PatientProfile user={user} setError={setError} />
+            ) : (
+              <Navigate to="/login" replace />
+            )
+          }
+        />
+        <Route
+          path="/doctor-profile/:doctorId"
+          element={
+            user && role === 'doctor' && !isLoggingOut ? (
+              <DoctorProfile user={user} role={role} setError={setError} />
             ) : (
               <Navigate to="/login" replace />
             )
