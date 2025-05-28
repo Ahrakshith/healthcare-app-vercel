@@ -6,7 +6,8 @@ let cachedCsvData = null;
 /**
  * Fetches and parses the medicine_validation.csv file.
  * Caches the result to avoid repeated fetches.
- * @returns {Promise<Array<Array<string>>>} The parsed CSV rows.
+ * Converts all CSV data to lowercase for consistent comparison.
+ * @returns {Promise<Array<Array<string>>>} The parsed CSV rows in lowercase.
  */
 const fetchMedicineValidationCsv = async () => {
   if (cachedCsvData) {
@@ -51,8 +52,14 @@ const fetchMedicineValidationCsv = async () => {
             return;
           }
 
-          cachedCsvData = rows;
-          resolve(rows);
+          // Convert all CSV data to lowercase for consistent comparison
+          const normalizedRows = rows.map(row =>
+            row.map(item => (item && typeof item === 'string' ? item.trim().toLowerCase() : item))
+          );
+
+          cachedCsvData = normalizedRows;
+          console.log('medicineVerify.js: Normalized CSV data to lowercase:', normalizedRows);
+          resolve(normalizedRows);
         },
         error: (error) => {
           console.error('medicineVerify.js: PapaParse error while parsing CSV:', error.message);
@@ -69,6 +76,7 @@ const fetchMedicineValidationCsv = async () => {
 /**
  * Verifies if a medicine is valid for a given disease based on the CSV data.
  * If verification fails, notifies the admin.
+ * Assumes CSV data is already in lowercase.
  * @param {string} disease - The disease to verify.
  * @param {string} medicine - The medicine to verify (can be a full prescription string or just the medicine name).
  * @param {string} userId - The user ID for authentication.
@@ -102,6 +110,7 @@ async function verifyMedicine(disease, medicine, userId, idToken, profileData = 
       };
     }
 
+    // Normalize inputs to lowercase
     const normalizedDisease = disease.trim().toLowerCase();
     // Extract just the medicine name if the input is a full prescription string (e.g., "Paracetamol, 100mg, 3.00PM, 2 days")
     const medicineName = medicine.split(',')[0].trim().toLowerCase();
@@ -110,10 +119,10 @@ async function verifyMedicine(disease, medicine, userId, idToken, profileData = 
 
     // Iterate through each row in the CSV
     for (const row of rows) {
-      if (row[0].trim().toLowerCase() === normalizedDisease) {
+      if (row[0] === normalizedDisease) {
         // Check if medicine exists in the row (columns 1 and beyond)
         for (const item of row.slice(1)) {
-          if (item && item.trim().toLowerCase() === medicineName) {
+          if (item === medicineName) {
             console.log(`medicineVerify.js: Verification successful: disease=${disease}, medicine=${medicineName}`);
             return {
               success: true,
