@@ -124,6 +124,16 @@ function DoctorChat({ user, role, handleLogout, setError }) {
             setMessages([]); // Clear messages since the patient is no longer assigned
             setMissedDoseAlerts([]); // Clear alerts since the patient is no longer assigned
             setDiagnosisPrompt(null); // Clear diagnosis prompt
+
+            // Remove the deleted patient from acceptedPatients to keep state consistent
+            setAcceptedPatients((prev) => {
+              const updatedAccepted = { ...prev };
+              if (updatedAccepted[selectedPatientId]) {
+                console.log(`Removing deleted patient ${selectedPatientId} from accepted patients`);
+                delete updatedAccepted[selectedPatientId];
+              }
+              return updatedAccepted;
+            });
           }
         }
 
