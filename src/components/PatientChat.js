@@ -9,7 +9,7 @@ import {
   playAudio,
 } from '../services/speech.js';
 import { verifyMedicine, notifyAdmin } from '../services/medicineVerify.js';
-import { doc, getDoc, collection, getDocs, updateDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, collection, getDocs, updateDoc, setDoc, onSnapshot } from 'firebase/firestore';
 import { db, auth } from '../services/firebase.js';
 import { signOut, updatePassword } from 'firebase/auth';
 import '../components/patient.css';
@@ -36,7 +36,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   const [doctorName, setDoctorName] = useState('Unknown Doctor');
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [editProfileData, setEditProfileData] = useState(null);
-  const [latestDiagnosis, setLatestDiagnosis] = useState(''); // Track the latest diagnosis
+  const [latestDiagnosis, setLatestDiagnosis] = useState('');
   const audioChunksRef = useRef([]);
   const streamRef = useRef(null);
   const pusherRef = useRef(null);
@@ -44,6 +44,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   const reminderTimeoutsRef = useRef(new Map());
   const errorTimeoutRef = useRef(null);
   const retryTimeoutRef = useRef(null);
+  const schedulingIntervalRef = useRef(null);
   const navigate = useNavigate();
 
   const effectiveUserId = user?.uid || '';
@@ -177,24 +178,29 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       }
     };
 
-    const fetchReminders = async () => {
+    const setupRemindersListener = () => {
       try {
         const remindersRef = collection(db, `patients/${effectivePatientId}/reminders`);
-        const snapshot = await getDocs(remindersRef);
-        const fetchedReminders = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-          status: doc.data().status || 'pending',
-          snoozeCount: doc.data().snoozeCount || 0,
-          scheduledTime: doc.data().scheduledTime,
-        }));
-        setReminders(fetchedReminders);
-        scheduleReminders(fetchedReminders);
-        calculateAdherenceRate(fetchedReminders);
-        checkMissedDoses(fetchedReminders);
+        const unsubscribe = onSnapshot(remindersRef, (snapshot) => {
+          const fetchedReminders = snapshot.docs.map((doc) => ({
+            id: doc.id,
+            ...doc.data(),
+            status: doc.data().status || 'pending',
+            snoozeCount: doc.data().snoozeCount || 0,
+            scheduledTime: doc.data().scheduledTime,
+          }));
+          setReminders(fetchedReminders);
+          calculateAdherenceRate(fetchedReminders);
+          checkMissedDoses(fetchedReminders);
+          console.log('Reminders updated in real-time:', fetchedReminders);
+        }, (err) => {
+          console.error('PatientChat: Failed to listen to reminders:', err.message);
+          setError(`Failed to listen to reminders: ${err.message}`);
+        });
+        return unsubscribe;
       } catch (err) {
-        console.error('PatientChat: Failed to fetch reminders:', err.message);
-        setError(`Failed to fetch reminders: ${err.message}`);
+        console.error('PatientChat: Failed to set up reminders listener:', err.message);
+        setError(`Failed to set up reminders listener: ${err.message}`);
       }
     };
 
@@ -208,15 +214,70 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
 
     fetchPatientData();
     fetchDoctorData();
-    fetchReminders();
+    const unsubscribeReminders = setupRemindersListener();
     checkDoctorPrompt();
 
     return () => {
+      if (unsubscribeReminders) unsubscribeReminders();
       reminderTimeoutsRef.current.forEach((timeoutId) => clearTimeout(timeoutId));
       reminderTimeoutsRef.current.clear();
       clearTimeout(retryTimeoutRef.current);
+      if (schedulingIntervalRef.current) clearInterval(schedulingIntervalRef.current);
     };
   }, [firebaseUser, effectiveUserId, effectivePatientId, doctorId, role, navigate]);
+
+  // Schedule reminders with a persistent loop
+  useEffect(() => {
+    const scheduleRemindersLoop = () => {
+      reminderTimeoutsRef.current.forEach((timeoutId) => clearTimeout(timeoutId));
+      reminderTimeoutsRef.current.clear();
+
+      const now = new Date();
+      reminders.forEach((reminder) => {
+        if (reminder.status !== 'pending' && reminder.status !== 'snoozed') return;
+
+        const scheduledTime = new Date(reminder.scheduledTime);
+        const delayMs = scheduledTime - now;
+
+        if (delayMs <= 0 && reminder.status === 'pending') {
+          handleMissedReminder(reminder.id);
+          return;
+        }
+
+        if (delayMs > 0) {
+          const timeoutId = setTimeout(() => {
+            if ('Notification' in window && Notification.permission === 'granted') {
+              const notification = new Notification('Medication Reminder', {
+                body: `Time to take ${reminder.dosage} of ${reminder.medicine} at ${new Date(reminder.scheduledTime).toLocaleTimeString('en-US', { hour12: true })}. Tap to confirm or snooze.`,
+                tag: `reminder-${reminder.id}`,
+              });
+
+              notification.onclick = () => {
+                handleConfirmReminder(reminder.id);
+                notification.close();
+              };
+
+              setTimeout(() => {
+                if (reminder.status === 'pending') handleSnoozeReminder(reminder.id);
+              }, 30000);
+            }
+          }, delayMs);
+
+          reminderTimeoutsRef.current.set(reminder.id, timeoutId);
+        }
+      });
+    };
+
+    // Run the scheduling loop every 30 seconds to ensure reminders are up-to-date
+    schedulingIntervalRef.current = setInterval(scheduleRemindersLoop, 30000);
+    scheduleRemindersLoop(); // Run immediately on mount or reminders update
+
+    return () => {
+      if (schedulingIntervalRef.current) clearInterval(schedulingIntervalRef.current);
+      reminderTimeoutsRef.current.forEach((timeoutId) => clearTimeout(timeoutId));
+      reminderTimeoutsRef.current.clear();
+    };
+  }, [reminders]);
 
   // Handle profile update
   const handleProfileUpdate = async () => {
@@ -553,10 +614,10 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           const reminderSnap = await getDoc(reminderRef);
           if (reminderSnap.exists()) {
             console.log(`setupMedicationSchedule: Reminder ${reminderId} exists, updating`);
-            await setDoc(reminderRef, reminder, { merge: true });
+            await writeWithRetry(reminderRef, reminder, { merge: true });
           } else {
             console.log(`setupMedicationSchedule: Creating reminder ${reminderId}`);
-            await setDoc(reminderRef, reminder);
+            await writeWithRetry(reminderRef, reminder, {});
           }
           newReminders.push({ id: reminderId, ...reminder });
           dosesScheduled++;
@@ -568,52 +629,12 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     }
 
     if (newReminders.length > 0) {
-      setReminders((prev) => {
-        const otherReminders = prev.filter((r) => !r.id.startsWith(medicine));
-        const updatedReminders = [...otherReminders, ...newReminders];
-        return updatedReminders.sort((a, b) => new Date(a.scheduledTime) - new Date(b.scheduledTime));
-      });
-      scheduleReminders(newReminders);
       console.log('setupMedicationSchedule: Added reminders:', newReminders);
     } else {
       console.warn('setupMedicationSchedule: No new reminders added (all scheduled times in the past)');
       setError('No future reminders scheduled.');
     }
   };
-
-  const scheduleReminders = useCallback((remindersToSchedule) => {
-    remindersToSchedule.forEach((reminder) => {
-      if (reminder.status !== 'pending' && reminder.status !== 'snoozed') return;
-
-      const scheduledTime = new Date(reminder.scheduledTime);
-      const now = new Date();
-      const delayMs = scheduledTime - now;
-
-      if (delayMs > 0) {
-        const timeoutId = setTimeout(() => {
-          if ('Notification' in window && Notification.permission === 'granted') {
-            const notification = new Notification('Medication Reminder', {
-              body: `Time to take ${reminder.dosage} of ${reminder.medicine} at ${new Date(reminder.scheduledTime).toLocaleTimeString('en-US', { hour12: true })}. Tap to confirm or snooze.`,
-              tag: `reminder-${reminder.id}`,
-            });
-
-            notification.onclick = () => {
-              handleConfirmReminder(reminder.id);
-              notification.close();
-            };
-
-            setTimeout(() => {
-              if (reminder.status === 'pending') handleSnoozeReminder(reminder.id);
-            }, 30000);
-          }
-        }, delayMs);
-
-        reminderTimeoutsRef.current.set(reminder.id, timeoutId);
-      } else if (scheduledTime < now && reminder.status === 'pending') {
-        handleMissedReminder(reminder.id);
-      }
-    });
-  }, []);
 
   const calculateAdherenceRate = useCallback((remindersList) => {
     if (remindersList.length === 0) {
@@ -708,16 +729,9 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
 
   const handleConfirmReminder = async (id) => {
     try {
-      const updatedReminders = reminders.map((reminder) =>
-        reminder.id === id ? { ...reminder, status: 'taken', confirmedAt: new Date().toISOString() } : reminder
-      );
-      setReminders(updatedReminders);
-
       const reminderRef = doc(db, `patients/${effectivePatientId}/reminders`, id);
-      await updateDoc(reminderRef, { status: 'taken', confirmedAt: new Date().toISOString() });
-
-      calculateAdherenceRate(updatedReminders);
-      checkMissedDoses(updatedReminders);
+      const updatedData = { status: 'taken', confirmedAt: new Date().toISOString() };
+      await updateDoc(reminderRef, updatedData);
       clearTimeout(reminderTimeoutsRef.current.get(id));
       reminderTimeoutsRef.current.delete(id);
     } catch (err) {
@@ -733,13 +747,6 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       const newSnoozeCount = (reminder.snoozeCount || 0) + 1;
       const snoozeTime = new Date(new Date(reminder.scheduledTime).getTime() + 10 * 60 * 1000);
 
-      const updatedReminders = reminders.map((r) =>
-        r.id === id
-          ? { ...r, status: 'snoozed', snoozeCount: newSnoozeCount, scheduledTime: snoozeTime.toISOString() }
-          : r
-      );
-      setReminders(updatedReminders);
-
       const reminderRef = doc(db, `patients/${effectivePatientId}/reminders`, id);
       await updateDoc(reminderRef, {
         status: 'snoozed',
@@ -747,7 +754,6 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         scheduledTime: snoozeTime.toISOString(),
       });
 
-      scheduleReminders(updatedReminders.filter((r) => r.id === id));
       clearTimeout(reminderTimeoutsRef.current.get(id));
       reminderTimeoutsRef.current.delete(id);
     } catch (err) {
@@ -757,15 +763,9 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
 
   const handleMissedReminder = async (id) => {
     try {
-      const updatedReminders = reminders.map((reminder) =>
-        reminder.id === id ? { ...reminder, status: 'missed' } : reminder
-      );
-      setReminders(updatedReminders);
-
       const reminderRef = doc(db, `patients/${effectivePatientId}/reminders`, id);
       await updateDoc(reminderRef, { status: 'missed' });
 
-      checkMissedDoses(updatedReminders);
       clearTimeout(reminderTimeoutsRef.current.get(id));
       reminderTimeoutsRef.current.delete(id);
     } catch (err) {
