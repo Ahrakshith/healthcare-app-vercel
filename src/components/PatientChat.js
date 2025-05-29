@@ -501,34 +501,37 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   }, [firebaseUser, effectiveUserId, effectivePatientId, doctorId, languagePreference, apiBaseUrl, pusherKey, pusherCluster]);
 
   const isValidDiagnosis = (diagnosis) => {
-    // Simple check to exclude invalid diagnoses like "time 12.32"
-    const invalidPattern = /^time\s+\d{1,2}[.:]\d{2}$/i;
-    return !invalidPattern.test(diagnosis);
+    if (!diagnosis || typeof diagnosis !== 'string') return false;
+    // Enhanced check to exclude invalid diagnoses like "time 12.32"
+    const invalidPattern = /^(time\s+\d{1,2}[.:]\d{2})$|^(test\d*)$/i;
+    return !invalidPattern.test(diagnosis.trim());
   };
 
   const validatePrescription = async (diagnosis, prescription, timestamp) => {
     if (!firebaseUser) {
       setError('User authentication failed. Cannot validate prescription.');
-      return false;
+      return { isValid: false, message: 'User authentication failed.' };
     }
 
     console.log('Validating prescription:', { diagnosis, prescription, timestamp });
 
     if (!diagnosis || !prescription) {
       console.warn('Diagnosis or prescription missing:', { diagnosis, prescription });
+      const message = 'Diagnosis or prescription is missing.';
       setValidationResults((prev) => ({
         ...prev,
-        [timestamp]: 'Diagnosis or prescription is missing.',
+        [timestamp]: message,
       }));
-      return false;
+      return { isValid: false, message };
     }
 
     // Check for invalid diagnoses
     if (!isValidDiagnosis(diagnosis)) {
       console.warn('Invalid diagnosis format:', diagnosis);
+      const message = `Invalid diagnosis format: "${diagnosis}".`;
       setValidationResults((prev) => ({
         ...prev,
-        [timestamp]: `Invalid diagnosis format: "${diagnosis}".`,
+        [timestamp]: message,
       }));
       const prescriptionKey = `${diagnosis}-${prescription.medicine || prescription}-${timestamp}`;
       if (!notifiedPrescriptions.has(prescriptionKey)) {
@@ -543,7 +546,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         );
         setNotifiedPrescriptions((prev) => new Set(prev).add(prescriptionKey));
       }
-      return false;
+      return { isValid: false, message };
     }
 
     let englishDiagnosis = diagnosis;
@@ -558,7 +561,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
 
     try {
       const idToken = await firebaseUser.getIdToken(true);
-      const isValid = await verifyMedicine(
+      const verificationResult = await verifyMedicine(
         englishDiagnosis,
         medicine,
         effectiveUserId,
@@ -567,18 +570,20 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         doctorId,
         doctorName
       );
-      console.log('verifyMedicine response:', isValid);
+      console.log('verifyMedicine response:', verificationResult);
 
-      if (isValid.success) {
+      if (verificationResult.success) {
+        const message = `Prescription "${medicine}" is valid for diagnosis "${englishDiagnosis}".`;
         setValidationResults((prev) => ({
           ...prev,
-          [timestamp]: `Prescription "${medicine}" is valid for diagnosis "${englishDiagnosis}".`,
+          [timestamp]: message,
         }));
-        return true;
+        return { isValid: true, message };
       } else {
+        const message = `Invalid prescription "${medicine}" for diagnosis "${englishDiagnosis}".`;
         setValidationResults((prev) => ({
           ...prev,
-          [timestamp]: `Invalid prescription "${medicine}" for diagnosis "${englishDiagnosis}".`,
+          [timestamp]: message,
         }));
 
         if (!notifiedPrescriptions.has(prescriptionKey)) {
@@ -597,13 +602,14 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           }
           setNotifiedPrescriptions((prev) => new Set(prev).add(prescriptionKey));
         }
-        return false;
+        return { isValid: false, message };
       }
     } catch (error) {
       console.error('Error in validatePrescription:', error.message);
+      const message = `Error validating prescription: ${error.message}. Retrying in 5 seconds...`;
       setValidationResults((prev) => ({
         ...prev,
-        [timestamp]: `Error validating prescription: ${error.message}. Retrying in 5 seconds...`,
+        [timestamp]: message,
       }));
 
       if (!notifiedPrescriptions.has(prescriptionKey)) {
@@ -620,8 +626,9 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         setNotifiedPrescriptions((prev) => new Set(prev).add(prescriptionKey));
       }
 
-      setTimeout(() => validatePrescription(englishDiagnosis, prescription, timestamp), 5000);
-      return false;
+      // Retry after 5 seconds
+      await new Promise(resolve => setTimeout(resolve, 5000));
+      return validatePrescription(englishDiagnosis, prescription, timestamp);
     }
   };
 
@@ -633,11 +640,11 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     }
 
     const validationPromise = new Promise(async (resolve) => {
-      const isValid = await validatePrescription(diagnosis, prescription, timestamp);
-      if (isValid) {
-        await setupMedicationSchedule(diagnosis, prescription, timestamp);
+      const validationResult = await validatePrescription(diagnosis, prescription, timestamp);
+      if (validationResult.isValid) {
+        await setupMedicationSchedule(diagnosis, prescription, timestamp, validationResult.message);
       }
-      resolve(isValid);
+      resolve(validationResult);
     });
 
     validationPromisesRef.current.set(validationKey, validationPromise);
@@ -649,8 +656,8 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     }
   };
 
-  const setupMedicationSchedule = async (diagnosis, prescription, issuanceTimestamp) => {
-    console.log('setupMedicationSchedule: Received:', { diagnosis, prescription, issuanceTimestamp });
+  const setupMedicationSchedule = async (diagnosis, prescription, issuanceTimestamp, validationMessage) => {
+    console.log('setupMedicationSchedule: Received:', { diagnosis, prescription, issuanceTimestamp, validationMessage });
 
     if (!prescription || !issuanceTimestamp) {
       setError('Prescription or issuance timestamp is missing.');
@@ -658,17 +665,10 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       return;
     }
 
-    // Ensure the prescription has been validated
-    const validationMessage = validationResults[issuanceTimestamp];
-    if (!validationMessage) {
-      console.error('setupMedicationSchedule: Validation result missing for timestamp:', issuanceTimestamp);
-      setError('Validation result missing. Please ensure the prescription is validated.');
-      return;
-    }
-
-    if (!validationMessage.includes('valid')) {
-      console.log('setupMedicationSchedule: Skipping reminder setup due to invalid prescription:', validationMessage);
-      setError('Cannot schedule reminders: Prescription is invalid.');
+    // Check if the validation message indicates a valid prescription
+    if (!validationMessage || !validationMessage.includes('is valid')) {
+      console.log('setupMedicationSchedule: Skipping reminder setup due to invalid or missing validation:', validationMessage);
+      setError('Cannot schedule reminders: Prescription validation failed or is missing.');
       return;
     }
 
