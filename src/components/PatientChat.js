@@ -682,14 +682,15 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       medicine = prescriptionText.medicine;
       dosage = prescriptionText.dosage;
       const frequency = prescriptionText.frequency || '';
-      durationDays = prescriptionText.duration || '5';
+      durationDays = prescriptionText.duration || '5YOU';
       timesStr = frequency;
       times = frequency.split(' and ').map((t) => t.trim());
     } else if (typeof prescriptionText === 'string') {
-      const regex = /(.+?),\s*(\d+mg),\s*(\d{1,2}[:.]\d{2}\s*(?:AM|PM)(?:\s*and\s*\d{1,2}[:.]\d{2}\s*(?:AM|PM))?),?\s*(\d+)\s*days?/i;
+      // Updated regex to handle time formats with dots (e.g., "7.00AM") and make "days" optional in duration
+      const regex = /(.+?),\s*(\d+mg),\s*(\d{1,2}[.:]\d{2}\s*(?:AM|PM)(?:\s*and\s*\d{1,2}[.:]\d{2}\s*(?:AM|PM))?),?\s*(\d+)(?:\s*days?)?/i;
       const match = prescriptionText.match(regex);
       if (!match) {
-        setError('Invalid prescription string format.');
+        setError(`Invalid prescription string format: "${prescriptionText}". Expected format: "medicine, dosage, time(s), duration [days]".`);
         console.error('setupMedicationSchedule: Invalid prescription string:', prescriptionText);
         return;
       }
@@ -712,12 +713,22 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       const cleanTimeStr = timeStr.replace('.', ':');
       const [time, period] = cleanTimeStr.split(/\s*(AM|PM)/i);
       let [hours, minutes] = time.split(':').map(Number);
+      if (isNaN(hours) || isNaN(minutes)) {
+        throw new Error(`Invalid time format in "${timeStr}". Expected format: "HH:MM AM/PM".`);
+      }
       if (period.toUpperCase() === 'PM' && hours !== 12) hours += 12;
       if (period.toUpperCase() === 'AM' && hours === 12) hours = 0;
       return { hours, minutes, original: timeStr };
     };
 
-    const timeSchedules = times.map(parseTime);
+    let timeSchedules;
+    try {
+      timeSchedules = times.map(parseTime);
+    } catch (error) {
+      setError(error.message);
+      console.error('setupMedicationSchedule: Time parsing error:', error.message);
+      return;
+    }
 
     const issuanceTime = new Date(issuanceTimestamp);
     let startDate = new Date(issuanceTime);
@@ -1193,7 +1204,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     const postUrl = `${apiBaseUrl}/chats/${effectivePatientId}/${doctorId}`;
     console.log('Uploading image:', { url: postUrl, message, file: { name: file.name, type: file.type, size: file.size } });
 
-    try {
+    try mutants {
       const idToken = await firebaseUser.getIdToken(true);
       const response = await fetch(postUrl, {
         method: 'POST',
