@@ -154,6 +154,10 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
             address: data.address || '',
             phoneNumber: data.phoneNumber || '',
           });
+
+          // Fetch notified prescriptions from Firestore
+          const notifiedPrescriptionsData = data.notifiedPrescriptions || [];
+          setNotifiedPrescriptions(new Set(notifiedPrescriptionsData));
         } else {
           setError('Patient not found or unauthorized.');
           navigate('/login');
@@ -535,7 +539,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       }));
       const prescriptionKey = `${diagnosis}-${prescription.medicine || prescription}-${timestamp}`;
       if (!notifiedPrescriptions.has(prescriptionKey)) {
-        await notifyAdmin(
+        const notificationResponse = await notifyAdmin(
           profileData?.name || 'Unknown Patient',
           doctorName,
           `Invalid diagnosis format: "${diagnosis}" for prescription.`,
@@ -544,7 +548,16 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           effectiveUserId,
           await firebaseUser.getIdToken(true)
         );
-        setNotifiedPrescriptions((prev) => new Set(prev).add(prescriptionKey));
+        if (!notificationResponse.success) {
+          throw new Error(notificationResponse.message || 'Failed to notify admin about invalid prescription.');
+        }
+        setNotifiedPrescriptions((prev) => {
+          const updatedSet = new Set(prev).add(prescriptionKey);
+          // Update Firestore with the new set
+          const patientRef = doc(db, 'patients', effectivePatientId);
+          updateDoc(patientRef, { notifiedPrescriptions: Array.from(updatedSet) });
+          return updatedSet;
+        });
       }
       return { isValid: false, message };
     }
@@ -600,7 +613,13 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           if (!notificationResponse.success) {
             throw new Error(notificationResponse.message || 'Failed to notify admin about invalid prescription.');
           }
-          setNotifiedPrescriptions((prev) => new Set(prev).add(prescriptionKey));
+          setNotifiedPrescriptions((prev) => {
+            const updatedSet = new Set(prev).add(prescriptionKey);
+            // Update Firestore with the new set
+            const patientRef = doc(db, 'patients', effectivePatientId);
+            updateDoc(patientRef, { notifiedPrescriptions: Array.from(updatedSet) });
+            return updatedSet;
+          });
         }
         return { isValid: false, message };
       }
@@ -614,7 +633,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
 
       if (!notifiedPrescriptions.has(prescriptionKey)) {
         const notificationMessage = `Error validating prescription: ${error.message} (Diagnosis: ${englishDiagnosis}, Medicine: ${medicine}, Patient: ${profileData?.name || 'Unknown Patient'}, Doctor: ${doctorName})`;
-        await notifyAdmin(
+        const notificationResponse = await notifyAdmin(
           profileData?.name || 'Unknown Patient',
           doctorName,
           notificationMessage,
@@ -623,7 +642,16 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           effectiveUserId,
           await firebaseUser.getIdToken(true)
         );
-        setNotifiedPrescriptions((prev) => new Set(prev).add(prescriptionKey));
+        if (!notificationResponse.success) {
+          throw new Error(notificationResponse.message || 'Failed to notify admin about invalid prescription.');
+        }
+        setNotifiedPrescriptions((prev) => {
+          const updatedSet = new Set(prev).add(prescriptionKey);
+          // Update Firestore with the new set
+          const patientRef = doc(db, 'patients', effectivePatientId);
+          updateDoc(patientRef, { notifiedPrescriptions: Array.from(updatedSet) });
+          return updatedSet;
+        });
       }
 
       // Retry after 5 seconds
