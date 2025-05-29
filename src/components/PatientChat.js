@@ -23,8 +23,8 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   const [transcriptionLanguage, setTranscriptionLanguage] = useState(null);
   const [languagePreference, setLanguagePreference] = useState(null);
   const [textInput, setTextInput] = useState('');
-  const [validationResult, setValidationResult] = useState({});
-  const [notifiedPrescriptions, setNotifiedPrescriptions] = useState(new Set()); // Track notified invalid prescriptions
+  const [validationResults, setValidationResults] = useState({});
+  const [notifiedPrescriptions, setNotifiedPrescriptions] = useState(new Set());
   const [failedUpload, setFailedUpload] = useState(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [activeMenuOption, setActiveMenuOption] = useState(null);
@@ -46,6 +46,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   const errorTimeoutRef = useRef(null);
   const retryTimeoutRef = useRef(null);
   const schedulingIntervalRef = useRef(null);
+  const validationPromisesRef = useRef(new Map());
   const navigate = useNavigate();
 
   const effectiveUserId = user?.uid || '';
@@ -269,9 +270,8 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       });
     };
 
-    // Run the scheduling loop every 30 seconds to ensure reminders are up-to-date
     schedulingIntervalRef.current = setInterval(scheduleRemindersLoop, 30000);
-    scheduleRemindersLoop(); // Run immediately on mount or reminders update
+    scheduleRemindersLoop();
 
     return () => {
       if (schedulingIntervalRef.current) clearInterval(schedulingIntervalRef.current);
@@ -345,7 +345,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     }
   };
 
-  // Handle Pusher and message fetching with session handling
+  // Handle Pusher and message fetching
   useEffect(() => {
     if (!firebaseUser || !languagePreference) return;
 
@@ -383,8 +383,8 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
             setLatestDiagnosis(latestDiagnosisForFetch);
           }
           if (msg.prescription) {
-            validatePrescription(latestDiagnosisForFetch || msg.diagnosis || 'Not specified', msg.prescription, msg.timestamp);
-            setupMedicationSchedule(latestDiagnosisForFetch || msg.diagnosis || 'Not specified', msg.prescription, msg.timestamp);
+            const diagnosisToUse = latestDiagnosisForFetch || msg.diagnosis || 'Not specified';
+            validateAndSchedulePrescription(diagnosisToUse, msg.prescription, msg.timestamp);
           }
         }
       } catch (err) {
@@ -476,8 +476,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           }
           if (updatedMessage.prescription) {
             const diagnosisToUse = updatedMessage.diagnosis || latestDiagnosis || 'Not specified';
-            validatePrescription(diagnosisToUse, updatedMessage.prescription, updatedMessage.timestamp);
-            setupMedicationSchedule(diagnosisToUse, updatedMessage.prescription, updatedMessage.timestamp);
+            validateAndSchedulePrescription(diagnosisToUse, updatedMessage.prescription, updatedMessage.timestamp);
           }
         }
       });
@@ -501,7 +500,155 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     };
   }, [firebaseUser, effectiveUserId, effectivePatientId, doctorId, languagePreference, apiBaseUrl, pusherKey, pusherCluster]);
 
-  // Process prescriptions and diagnoses together
+  const isValidDiagnosis = (diagnosis) => {
+    // Simple check to exclude invalid diagnoses like "time 12.32"
+    const invalidPattern = /^time\s+\d{1,2}[.:]\d{2}$/i;
+    return !invalidPattern.test(diagnosis);
+  };
+
+  const validatePrescription = async (diagnosis, prescription, timestamp) => {
+    if (!firebaseUser) {
+      setError('User authentication failed. Cannot validate prescription.');
+      return false;
+    }
+
+    console.log('Validating prescription:', { diagnosis, prescription, timestamp });
+
+    if (!diagnosis || !prescription) {
+      console.warn('Diagnosis or prescription missing:', { diagnosis, prescription });
+      setValidationResults((prev) => ({
+        ...prev,
+        [timestamp]: 'Diagnosis or prescription is missing.',
+      }));
+      return false;
+    }
+
+    // Check for invalid diagnoses
+    if (!isValidDiagnosis(diagnosis)) {
+      console.warn('Invalid diagnosis format:', diagnosis);
+      setValidationResults((prev) => ({
+        ...prev,
+        [timestamp]: `Invalid diagnosis format: "${diagnosis}".`,
+      }));
+      const prescriptionKey = `${diagnosis}-${prescription.medicine || prescription}-${timestamp}`;
+      if (!notifiedPrescriptions.has(prescriptionKey)) {
+        await notifyAdmin(
+          profileData?.name || 'Unknown Patient',
+          doctorName,
+          `Invalid diagnosis format: "${diagnosis}" for prescription.`,
+          effectivePatientId,
+          doctorId,
+          effectiveUserId,
+          await firebaseUser.getIdToken(true)
+        );
+        setNotifiedPrescriptions((prev) => new Set(prev).add(prescriptionKey));
+      }
+      return false;
+    }
+
+    let englishDiagnosis = diagnosis;
+    if (languagePreference === 'kn' && messages.find(msg => msg.timestamp === timestamp)?.translatedDiagnosis) {
+      englishDiagnosis = messages.find(msg => msg.timestamp === timestamp)?.diagnosis || diagnosis;
+    }
+
+    const medicine = typeof prescription === 'object' ? prescription.medicine : prescription.split(',')[0].trim();
+    console.log('Extracted medicine:', medicine);
+
+    const prescriptionKey = `${englishDiagnosis}-${medicine}-${timestamp}`;
+
+    try {
+      const idToken = await firebaseUser.getIdToken(true);
+      const isValid = await verifyMedicine(
+        englishDiagnosis,
+        medicine,
+        effectiveUserId,
+        idToken,
+        profileData || {},
+        doctorId,
+        doctorName
+      );
+      console.log('verifyMedicine response:', isValid);
+
+      if (isValid.success) {
+        setValidationResults((prev) => ({
+          ...prev,
+          [timestamp]: `Prescription "${medicine}" is valid for diagnosis "${englishDiagnosis}".`,
+        }));
+        return true;
+      } else {
+        setValidationResults((prev) => ({
+          ...prev,
+          [timestamp]: `Invalid prescription "${medicine}" for diagnosis "${englishDiagnosis}".`,
+        }));
+
+        if (!notifiedPrescriptions.has(prescriptionKey)) {
+          const notificationMessage = `Invalid prescription: "${medicine}" for diagnosis "${englishDiagnosis}" (Patient: ${profileData?.name || 'Unknown Patient'}, Doctor: ${doctorName})`;
+          const notificationResponse = await notifyAdmin(
+            profileData?.name || 'Unknown Patient',
+            doctorName,
+            notificationMessage,
+            effectivePatientId,
+            doctorId,
+            effectiveUserId,
+            idToken
+          );
+          if (!notificationResponse.success) {
+            throw new Error(notificationResponse.message || 'Failed to notify admin about invalid prescription.');
+          }
+          setNotifiedPrescriptions((prev) => new Set(prev).add(prescriptionKey));
+        }
+        return false;
+      }
+    } catch (error) {
+      console.error('Error in validatePrescription:', error.message);
+      setValidationResults((prev) => ({
+        ...prev,
+        [timestamp]: `Error validating prescription: ${error.message}. Retrying in 5 seconds...`,
+      }));
+
+      if (!notifiedPrescriptions.has(prescriptionKey)) {
+        const notificationMessage = `Error validating prescription: ${error.message} (Diagnosis: ${englishDiagnosis}, Medicine: ${medicine}, Patient: ${profileData?.name || 'Unknown Patient'}, Doctor: ${doctorName})`;
+        await notifyAdmin(
+          profileData?.name || 'Unknown Patient',
+          doctorName,
+          notificationMessage,
+          effectivePatientId,
+          doctorId,
+          effectiveUserId,
+          await firebaseUser.getIdToken(true)
+        );
+        setNotifiedPrescriptions((prev) => new Set(prev).add(prescriptionKey));
+      }
+
+      setTimeout(() => validatePrescription(englishDiagnosis, prescription, timestamp), 5000);
+      return false;
+    }
+  };
+
+  const validateAndSchedulePrescription = async (diagnosis, prescription, timestamp) => {
+    const validationKey = `${diagnosis}-${timestamp}`;
+    if (validationPromisesRef.current.has(validationKey)) {
+      console.log('Validation already in progress for:', validationKey);
+      return;
+    }
+
+    const validationPromise = new Promise(async (resolve) => {
+      const isValid = await validatePrescription(diagnosis, prescription, timestamp);
+      if (isValid) {
+        await setupMedicationSchedule(diagnosis, prescription, timestamp);
+      }
+      resolve(isValid);
+    });
+
+    validationPromisesRef.current.set(validationKey, validationPromise);
+
+    try {
+      await validationPromise;
+    } finally {
+      validationPromisesRef.current.delete(validationKey);
+    }
+  };
+
   const setupMedicationSchedule = async (diagnosis, prescription, issuanceTimestamp) => {
     console.log('setupMedicationSchedule: Received:', { diagnosis, prescription, issuanceTimestamp });
 
@@ -511,23 +658,17 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       return;
     }
 
-    // Check if the prescription is valid before proceeding
-    const validationMessage = validationResult[issuanceTimestamp];
+    // Ensure the prescription has been validated
+    const validationMessage = validationResults[issuanceTimestamp];
     if (!validationMessage) {
-      console.log('setupMedicationSchedule: Validation not yet complete for this prescription.');
-      setError('Validation not complete. Please ensure the prescription is validated.');
-      return;
-    }
-
-    if (validationMessage.includes('Invalid prescription')) {
-      console.log('setupMedicationSchedule: Skipping reminder setup due to invalid prescription:', validationMessage);
-      setError('Cannot schedule reminders: Prescription is invalid.');
+      console.error('setupMedicationSchedule: Validation result missing for timestamp:', issuanceTimestamp);
+      setError('Validation result missing. Please ensure the prescription is validated.');
       return;
     }
 
     if (!validationMessage.includes('valid')) {
-      console.log('setupMedicationSchedule: Validation failed or not successful:', validationMessage);
-      setError('Cannot schedule reminders: Prescription validation failed.');
+      console.log('setupMedicationSchedule: Skipping reminder setup due to invalid prescription:', validationMessage);
+      setError('Cannot schedule reminders: Prescription is invalid.');
       return;
     }
 
@@ -632,7 +773,6 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     if (newReminders.length > 0) {
       console.log('setupMedicationSchedule: Added reminders:', newReminders);
       setError('Reminders scheduled successfully.');
-      // Ensure reminders are added to the state properly
       setReminders((prev) => {
         const existingIds = new Set(prev.map(r => r.id));
         const filteredNewReminders = newReminders.filter(r => !existingIds.has(r.id));
@@ -779,104 +919,6 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       reminderTimeoutsRef.current.delete(id);
     } catch (err) {
       setError(`Failed to mark reminder as missed: ${err.message}`);
-    }
-  };
-
-  const validatePrescription = async (diagnosis, prescription, timestamp) => {
-    if (!firebaseUser) {
-      setError('User authentication failed. Cannot validate prescription.');
-      return;
-    }
-
-    console.log('Validating prescription:', { diagnosis, prescription, timestamp });
-
-    if (!diagnosis || !prescription) {
-      console.warn('Diagnosis or prescription missing:', { diagnosis, prescription });
-      setValidationResult((prev) => ({
-        ...prev,
-        [timestamp]: 'Diagnosis or prescription is missing.',
-      }));
-      return;
-    }
-
-    let englishDiagnosis = diagnosis;
-    if (languagePreference === 'kn' && messages.find(msg => msg.timestamp === timestamp)?.translatedDiagnosis) {
-      englishDiagnosis = messages.find(msg => msg.timestamp === timestamp)?.diagnosis || diagnosis;
-    }
-
-    const medicine = typeof prescription === 'object' ? prescription.medicine : prescription.split(',')[0].trim();
-    console.log('Extracted medicine:', medicine);
-
-    // Create a unique key for this prescription to track notifications
-    const prescriptionKey = `${englishDiagnosis}-${medicine}-${timestamp}`;
-
-    try {
-      const idToken = await firebaseUser.getIdToken(true);
-      const isValid = await verifyMedicine(
-        englishDiagnosis,
-        medicine,
-        effectiveUserId,
-        idToken,
-        profileData || {},
-        doctorId,
-        doctorName
-      );
-      console.log('verifyMedicine response:', isValid);
-
-      if (isValid.success) {
-        setValidationResult((prev) => ({
-          ...prev,
-          [timestamp]: `Prescription "${medicine}" is valid for diagnosis "${englishDiagnosis}".`,
-        }));
-        // Schedule reminders for valid prescriptions
-        await setupMedicationSchedule(englishDiagnosis, prescription, timestamp);
-      } else {
-        setValidationResult((prev) => ({
-          ...prev,
-          [timestamp]: `Invalid prescription "${medicine}" for diagnosis "${englishDiagnosis}".`,
-        }));
-
-        // Only notify admin if we haven't already for this specific prescription
-        if (!notifiedPrescriptions.has(prescriptionKey)) {
-          const notificationMessage = `Invalid prescription: "${medicine}" for diagnosis "${englishDiagnosis}" (Patient: ${profileData?.name || 'Unknown Patient'}, Doctor: ${doctorName})`;
-          const notificationResponse = await notifyAdmin(
-            profileData?.name || 'Unknown Patient',
-            doctorName,
-            notificationMessage,
-            effectivePatientId,
-            doctorId,
-            effectiveUserId,
-            idToken
-          );
-          if (!notificationResponse.success) {
-            throw new Error(notificationResponse.message || 'Failed to notify admin about invalid prescription.');
-          }
-          setNotifiedPrescriptions((prev) => new Set(prev).add(prescriptionKey));
-        }
-      }
-    } catch (error) {
-      console.error('Error in validatePrescription:', error.message);
-      setValidationResult((prev) => ({
-        ...prev,
-        [timestamp]: `Error validating prescription: ${error.message}. Retrying in 5 seconds...`,
-      }));
-
-      // Only notify admin on error if we haven't already
-      if (!notifiedPrescriptions.has(prescriptionKey)) {
-        const notificationMessage = `Error validating prescription: ${error.message} (Diagnosis: ${englishDiagnosis}, Medicine: ${medicine}, Patient: ${profileData?.name || 'Unknown Patient'}, Doctor: ${doctorName})`;
-        await notifyAdmin(
-          profileData?.name || 'Unknown Patient',
-          doctorName,
-          notificationMessage,
-          effectivePatientId,
-          doctorId,
-          effectiveUserId,
-          await firebaseUser.getIdToken(true)
-        );
-        setNotifiedPrescriptions((prev) => new Set(prev).add(prescriptionKey));
-      }
-
-      setTimeout(() => validatePrescription(englishDiagnosis, prescription, timestamp), 5000);
     }
   };
 
@@ -1437,7 +1479,6 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     }
   };
 
-  // Translate doctor's messages (diagnosis and prescription) to patient's preferred language
   const translateDoctorMessages = async () => {
     if (!firebaseUser || !languagePreference || languagePreference !== 'kn') return;
 
@@ -1768,20 +1809,20 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                       </div>
                       <div className="recommendation-actions">
                         <button
-                          onClick={() => validatePrescription(entry.diagnosis, entry.prescription, entry.timestamp)}
+                          onClick={() => validateAndSchedulePrescription(entry.diagnosis, entry.prescription, entry.timestamp)}
                           className="validate-button"
                         >
                           ✅ Validate
                         </button>
-                        {validationResult[entry.timestamp] && (
+                        {validationResults[entry.timestamp] && (
                           <span
                             className={
-                              validationResult[entry.timestamp].includes('valid')
+                              validationResults[entry.timestamp].includes('valid')
                                 ? 'validation-success'
                                 : 'validation-error'
                             }
                           >
-                            {validationResult[entry.timestamp]}
+                            {validationResults[entry.timestamp]}
                           </span>
                         )}
                       </div>
