@@ -377,7 +377,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         const fetchedMessages = data.messages || [];
         setMessages(fetchedMessages.sort((a, b) => a.timestamp.localeCompare(b.timestamp)));
 
-        // Process initial messages for diagnosis and prescription
+        // Process initial messages for diagnosis only (no validation here)
         const doctorMessages = fetchedMessages.filter((msg) => msg.sender === 'doctor');
         const sortedDoctorMessages = doctorMessages.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
         let latestDiagnosisForFetch = '';
@@ -385,10 +385,6 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           if (msg.diagnosis) {
             latestDiagnosisForFetch = msg.diagnosis;
             setLatestDiagnosis(latestDiagnosisForFetch);
-          }
-          if (msg.prescription) {
-            const diagnosisToUse = latestDiagnosisForFetch || msg.diagnosis || 'Not specified';
-            validateAndSchedulePrescription(diagnosisToUse, msg.prescription, msg.timestamp);
           }
         }
       } catch (err) {
@@ -474,13 +470,10 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           return [...prev, updatedMessage].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
         });
 
+        // Only update diagnosis, do not validate prescription here
         if (updatedMessage.sender === 'doctor') {
           if (updatedMessage.diagnosis) {
             setLatestDiagnosis(updatedMessage.diagnosis);
-          }
-          if (updatedMessage.prescription) {
-            const diagnosisToUse = updatedMessage.diagnosis || latestDiagnosis || 'Not specified';
-            validateAndSchedulePrescription(diagnosisToUse, updatedMessage.prescription, updatedMessage.timestamp);
           }
         }
       });
