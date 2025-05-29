@@ -637,6 +637,20 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     if (newReminders.length > 0) {
       console.log('setupMedicationSchedule: Added reminders:', newReminders);
       setError('Reminders scheduled successfully.');
+      // Update the local reminders state immediately to ensure UI updates
+      setReminders((prev) => {
+        // Avoid duplicates by filtering out existing reminders with the same ID
+        const updatedReminders = [...prev];
+        newReminders.forEach((newReminder) => {
+          const existingIndex = updatedReminders.findIndex((r) => r.id === newReminder.id);
+          if (existingIndex !== -1) {
+            updatedReminders[existingIndex] = newReminder; // Update existing reminder
+          } else {
+            updatedReminders.push(newReminder); // Add new reminder
+          }
+        });
+        return updatedReminders.sort((a, b) => new Date(a.scheduledTime) - new Date(b.scheduledTime));
+      });
     } else {
       console.warn('setupMedicationSchedule: No new reminders added (all scheduled times in the past)');
       setError('No future reminders scheduled.');
