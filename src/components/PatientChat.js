@@ -1872,7 +1872,6 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                                       : msg.prescription)}
                                     <button
                                       onClick={() => readAloud(msg.translatedPrescription || (typeof msg.prescription === 'object'
-
                                       ? `${msg.prescription.medicine}, ${msg.prescription.dosage}, ${msg.prescription.frequency}, ${msg.prescription.duration}`
                                       : msg.prescription)}
                                     <button
