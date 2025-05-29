@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { signInWithEmailAndPassword, onAuthStateChanged } from 'firebase/auth';
+import { signInWithEmailAndPassword } from 'firebase/auth';
 import { doc, getDoc, query, collection, where, getDocs } from 'firebase/firestore';
 import { auth, db } from '../services/firebase.js';
 
@@ -33,95 +33,6 @@ function Login({ setUser, setRole, setPatientId, user, setError: setParentError 
       setShowWelcomeAlert(true);
     }
   }, [initialUsername, initialPassword, initialPatientName, initialPatientId]);
-
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (firebaseUser) {
-        console.log('User already authenticated:', { uid: firebaseUser.uid, email: firebaseUser.email });
-
-        try {
-          const idToken = await firebaseUser.getIdToken(true);
-          const apiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app/api';
-          const response = await fetch(`${apiUrl}/users/${firebaseUser.uid}`, {
-            method: 'GET',
-            headers: {
-              'Authorization': `Bearer ${idToken}`,
-              'x-user-uid': firebaseUser.uid,
-              'Content-Type': 'application/json',
-              'Accept': 'application/json',
-            },
-            credentials: 'include',
-          });
-
-          const responseText = await response.text();
-          console.log('API response for auth state:', {
-            status: response.status,
-            ok: response.ok,
-            rawResponse: responseText.substring(0, 100) + (responseText.length > 100 ? '...' : ''),
-          });
-
-          let userData;
-          if (response.ok) {
-            try {
-              userData = JSON.parse(responseText);
-              if (!userData || typeof userData !== 'object' || !userData.role) {
-                throw new Error('Invalid user data structure or missing role');
-              }
-            } catch (parseError) {
-              console.error('JSON parsing failed during auth state change:', parseError.message, 'Raw response:', responseText);
-              throw new Error('Invalid JSON response from server');
-            }
-          } else {
-            console.warn('API request failed, falling back to Firestore', { status: response.status });
-            const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
-            if (!userDoc.exists()) {
-              throw new Error('User not found in Firestore');
-            }
-            userData = userDoc.data();
-            if (!userData.role) {
-              throw new Error('Missing role in Firestore user data');
-            }
-          }
-
-          const updatedUser = {
-            uid: firebaseUser.uid,
-            email: firebaseUser.email,
-            role: userData.role,
-            patientId: userData.patientId || null,
-            name: userData.name || null,
-            sex: userData.sex || null,
-            age: userData.age || null,
-          };
-
-          setUser(updatedUser);
-          setRole(userData.role);
-          if (userData.role === 'patient' && userData.patientId) {
-            setPatientId(userData.patientId);
-            localStorage.setItem('patientId', userData.patientId);
-          }
-          localStorage.setItem('userId', firebaseUser.uid);
-        } catch (error) {
-          console.error('Error during auth state change:', error.message);
-          setError(`Authentication error: ${error.message}`);
-          setParentError(`Authentication error: ${error.message}`);
-          setUser(null);
-          setRole(null);
-          setPatientId(null);
-          localStorage.removeItem('userId');
-          localStorage.removeItem('patientId');
-          navigate('/login');
-        }
-      } else {
-        setUser(null);
-        setRole(null);
-        setPatientId(null);
-        localStorage.removeItem('userId');
-        localStorage.removeItem('patientId');
-      }
-    });
-
-    return () => unsubscribe();
-  }, [navigate, setUser, setRole, setPatientId]);
 
   const handleInputChange = (setter) => (e) => {
     if (error) {

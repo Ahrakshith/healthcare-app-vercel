@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { SPECIALTIES } from '../constants/specialties.js';
-import { getAuth } from 'firebase/auth';
 
 function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout, isLoggingOut }) {
   const [specialty, setSpecialty] = useState('All');
@@ -11,13 +10,11 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout, isLog
   const [loadingDoctorId, setLoadingDoctorId] = useState(null);
   const [error, setError] = useState('');
   const navigate = useNavigate();
-  const isMounted = useRef(true); // Track component mount state
+  const isMounted = useRef(true);
 
   const baseApiUrl = process.env.REACT_APP_API_URL || 'https://healthcare-app-vercel.vercel.app';
   const apiBaseUrl = baseApiUrl.endsWith('/api') ? baseApiUrl.replace(/\/api$/, '') : baseApiUrl;
-  const auth = getAuth();
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
       isMounted.current = false;
@@ -25,7 +22,6 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout, isLog
     };
   }, []);
 
-  // Authentication check with cleanup
   useEffect(() => {
     const authTimeout = setTimeout(() => {
       if (!firebaseUser || !user || role !== 'patient' || !patientId || isLoggingOut) {
@@ -202,29 +198,10 @@ function SelectDoctor({ firebaseUser, user, role, patientId, handleLogout, isLog
   const handleLogoutClick = async () => {
     if (!isMounted.current) return;
 
-    console.log('SelectDoctor: Initiating logout');
+    console.log('SelectDoctor: Initiating logout via App.js handleLogout');
     try {
-      // Sign out from Firebase
-      await auth.signOut();
-
-      // Backend logout request
-      await fetch(`${apiBaseUrl}/api/misc/logout`, {
-        method: 'POST',
-        headers: {
-          'x-user-uid': user?.uid,
-          'Content-Type': 'application/json',
-        },
-        credentials: 'include',
-      });
-
-      // Call parent logout handler if provided
-      if (handleLogout) await handleLogout();
-
-      // Navigate to login
-      if (isMounted.current) {
-        navigate('/login', { replace: true });
-        console.log('SelectDoctor: Logged out successfully');
-      }
+      await handleLogout();
+      console.log('SelectDoctor: Logged out successfully');
     } catch (err) {
       console.error('SelectDoctor: Logout error:', err.message);
       if (isMounted.current) {
