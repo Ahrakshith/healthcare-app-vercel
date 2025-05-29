@@ -44,6 +44,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   const errorTimeoutRef = useRef(null);
   const retryTimeoutRef = useRef(null);
   const navigate = useNavigate();
+  const lastDiagnosisRef = useRef(''); // To store the latest diagnosis
 
   const effectiveUserId = user?.uid || '';
   const effectivePatientId = urlPatientId || patientId || '';
@@ -310,10 +311,15 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         const fetchedMessages = data.messages || [];
         setMessages(fetchedMessages.sort((a, b) => a.timestamp.localeCompare(b.timestamp)));
 
+        // Update lastDiagnosisRef with the latest diagnosis
         const doctorMessages = fetchedMessages.filter((msg) => msg.sender === 'doctor');
         const latestDiagnosis = doctorMessages
           .filter((msg) => msg.diagnosis)
           .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0]?.diagnosis || '';
+        if (latestDiagnosis) {
+          lastDiagnosisRef.current = latestDiagnosis;
+        }
+
         const latestPrescription = doctorMessages
           .filter((msg) => msg.prescription)
           .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0]?.prescription || '';
@@ -404,9 +410,28 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         });
 
         if (updatedMessage.sender === 'doctor') {
-          if (updatedMessage.diagnosis || updatedMessage.prescription) {
-            validatePrescription(updatedMessage.diagnosis || '', updatedMessage.prescription || '', updatedMessage.timestamp);
-            setupMedicationSchedule(updatedMessage.diagnosis, updatedMessage.prescription, updatedMessage.timestamp);
+          // Update lastDiagnosisRef if the message contains a diagnosis
+          if (updatedMessage.diagnosis) {
+            lastDiagnosisRef.current = updatedMessage.diagnosis;
+          }
+          if (updatedMessage.prescription) {
+            const diagnosisToUse = updatedMessage.diagnosis || lastDiagnosisRef.current || 'Not specified';
+            validatePrescription(diagnosisToUse, updatedMessage.prescription, updatedMessage.timestamp);
+            // Only proceed to setup medication schedule if the prescription is valid
+            const isValid = await verifyMedicine(
+              diagnosisToUse,
+              updatedMessage.prescription.split(',')[0].trim(),
+              effectiveUserId,
+              await firebaseUser.getIdToken(true),
+              profileData || {},
+              doctorId,
+              doctorName
+            );
+            if (isValid.success) {
+              setupMedicationSchedule(diagnosisToUse, updatedMessage.prescription, updatedMessage.timestamp);
+            } else {
+              console.log('Skipping reminder setup due to invalid prescription:', updatedMessage.prescription);
+            }
           }
         }
       });
@@ -454,10 +479,11 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       timesStr = frequency;
       times = frequency.split(' and ').map((t) => t.trim());
     } else if (typeof prescriptionText === 'string') {
-      const regex = /(.+?),\s*(\d+mg),\s*(\d{1,2}[:.]\d{2}\s*(?:AM|PM)(?:\s*and\s*\d{1,2}[:.]\d{2}\s*(?:AM|PM))?),?\s*(\d+)\s*days?/i;
+      // Updated regex to handle various formats more flexibly
+      const regex = /(.+?),\s*(\d+\s*mg),\s*([\d:.]+\s*(?:AM|PM|am|pm)(?:\s*and\s*[\d:.]+\s*(?:AM|PM|am|pm))?),?\s*(\d+)\s*(?:day|days)?/i;
       const match = prescriptionText.match(regex);
       if (!match) {
-        setError('Invalid prescription string format.');
+        setError('Invalid prescription string format. Expected format: medicine, dosage (e.g., 100 mg), time (e.g., 4:00PM and 8:00PM), duration (e.g., 5 days)');
         console.error('setupMedicationSchedule: Invalid prescription string:', prescriptionText);
         return;
       }
@@ -477,11 +503,12 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     }
 
     const parseTime = (timeStr) => {
-      const cleanTimeStr = timeStr.replace('.', ':');
-      const [time, period] = cleanTimeStr.split(/\s*(AM|PM)/i);
+      const cleanTimeStr = timeStr.replace('.', ':').trim();
+      const [time, period] = cleanTimeStr.split(/\s*(AM|PM|am|pm)/i);
       let [hours, minutes] = time.split(':').map(Number);
-      if (period.toUpperCase() === 'PM' && hours !== 12) hours += 12;
-      if (period.toUpperCase() === 'AM' && hours === 12) hours = 0;
+      const periodUpper = period.toUpperCase();
+      if (periodUpper === 'PM' && hours !== 12) hours += 12;
+      if (periodUpper === 'AM' && hours === 12) hours = 0;
       return { hours, minutes, original: timeStr };
     };
 
@@ -1841,6 +1868,11 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                                   <p className="primary-text">
                                     <strong>Prescription:</strong>{' '}
                                     {msg.translatedPrescription || (typeof msg.prescription === 'object'
+                                      ? `${msg.prescription.medicine}, ${msg.prescription.dosage}, ${msg.prescription.frequency}, ${msg.prescription.duration}`
+                                      : msg.prescription)}
+                                    <button
+                                      onClick={() => readAloud(msg.translatedPrescription || (typeof msg.prescription === 'object'
+
                                       ? `${msg.prescription.medicine}, ${msg.prescription.dosage}, ${msg.prescription.frequency}, ${msg.prescription.duration}`
                                       : msg.prescription)}
                                     <button
