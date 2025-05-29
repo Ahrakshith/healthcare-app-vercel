@@ -512,15 +512,21 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
 
     // Check if the prescription is valid before proceeding
     const validationMessage = validationResult[issuanceTimestamp];
-    if (validationMessage && validationMessage.includes('Invalid prescription')) {
+    if (!validationMessage) {
+      console.log('setupMedicationSchedule: Validation not yet complete for this prescription.');
+      setError('Validation not complete. Please ensure the prescription is validated.');
+      return;
+    }
+
+    if (validationMessage.includes('Invalid prescription')) {
       console.log('setupMedicationSchedule: Skipping reminder setup due to invalid prescription:', validationMessage);
       setError('Cannot schedule reminders: Prescription is invalid.');
       return;
     }
 
-    if (!validationMessage || !validationMessage.includes('valid')) {
-      console.log('setupMedicationSchedule: Validation not yet complete, waiting...');
-      setTimeout(() => setupMedicationSchedule(diagnosis, prescription, issuanceTimestamp), 2000);
+    if (!validationMessage.includes('valid')) {
+      console.log('setupMedicationSchedule: Validation failed or not successful:', validationMessage);
+      setError('Cannot schedule reminders: Prescription validation failed.');
       return;
     }
 
@@ -630,6 +636,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
 
     if (newReminders.length > 0) {
       console.log('setupMedicationSchedule: Added reminders:', newReminders);
+      setError('Reminders scheduled successfully.');
     } else {
       console.warn('setupMedicationSchedule: No new reminders added (all scheduled times in the past)');
       setError('No future reminders scheduled.');
