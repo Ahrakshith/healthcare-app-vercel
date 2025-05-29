@@ -24,6 +24,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   const [languagePreference, setLanguagePreference] = useState(null);
   const [textInput, setTextInput] = useState('');
   const [validationResult, setValidationResult] = useState({});
+  const [notifiedPrescriptions, setNotifiedPrescriptions] = useState(new Set()); // Track notified invalid prescriptions
   const [failedUpload, setFailedUpload] = useState(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [activeMenuOption, setActiveMenuOption] = useState(null);
@@ -46,7 +47,6 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
   const retryTimeoutRef = useRef(null);
   const schedulingIntervalRef = useRef(null);
   const navigate = useNavigate();
-  const notifiedPrescriptionsRef = useRef(new Set()); // Track notified prescriptions to prevent duplicates
 
   const effectiveUserId = user?.uid || '';
   const effectivePatientId = urlPatientId || patientId || '';
@@ -384,7 +384,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           }
           if (msg.prescription) {
             validatePrescription(latestDiagnosisForFetch || msg.diagnosis || 'Not specified', msg.prescription, msg.timestamp);
-            // setupMedicationSchedule will be called after validation
+            setupMedicationSchedule(latestDiagnosisForFetch || msg.diagnosis || 'Not specified', msg.prescription, msg.timestamp);
           }
         }
       } catch (err) {
@@ -477,7 +477,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           if (updatedMessage.prescription) {
             const diagnosisToUse = updatedMessage.diagnosis || latestDiagnosis || 'Not specified';
             validatePrescription(diagnosisToUse, updatedMessage.prescription, updatedMessage.timestamp);
-            // setupMedicationSchedule will be called after validation
+            setupMedicationSchedule(diagnosisToUse, updatedMessage.prescription, updatedMessage.timestamp);
           }
         }
       });
@@ -511,7 +511,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       return;
     }
 
-    // Check if the prescription is validated
+    // Check if the prescription is valid before proceeding
     const validationMessage = validationResult[issuanceTimestamp];
     if (!validationMessage) {
       console.log('setupMedicationSchedule: Validation not yet complete for this prescription.');
@@ -519,10 +519,15 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
       return;
     }
 
-    // Only proceed if the prescription is explicitly valid
-    if (!validationMessage.includes('is valid')) {
-      console.log('setupMedicationSchedule: Skipping reminder setup due to invalid or failed validation:', validationMessage);
-      setError('Cannot schedule reminders: Prescription is not valid.');
+    if (validationMessage.includes('Invalid prescription')) {
+      console.log('setupMedicationSchedule: Skipping reminder setup due to invalid prescription:', validationMessage);
+      setError('Cannot schedule reminders: Prescription is invalid.');
+      return;
+    }
+
+    if (!validationMessage.includes('valid')) {
+      console.log('setupMedicationSchedule: Validation failed or not successful:', validationMessage);
+      setError('Cannot schedule reminders: Prescription validation failed.');
       return;
     }
 
@@ -613,14 +618,8 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         };
 
         try {
-          const reminderSnap = await getDoc(reminderRef);
-          if (reminderSnap.exists()) {
-            console.log(`setupMedicationSchedule: Reminder ${reminderId} exists, updating`);
-            await writeWithRetry(reminderRef, reminder, { merge: true });
-          } else {
-            console.log(`setupMedicationSchedule: Creating reminder ${reminderId}`);
-            await writeWithRetry(reminderRef, reminder, {});
-          }
+          console.log(`setupMedicationSchedule: Adding reminder ${reminderId}`);
+          await writeWithRetry(reminderRef, reminder, { merge: true });
           newReminders.push({ id: reminderId, ...reminder });
           dosesScheduled++;
         } catch (err) {
@@ -633,18 +632,11 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     if (newReminders.length > 0) {
       console.log('setupMedicationSchedule: Added reminders:', newReminders);
       setError('Reminders scheduled successfully.');
-      // Update the local reminders state immediately to ensure UI updates
+      // Ensure reminders are added to the state properly
       setReminders((prev) => {
-        // Avoid duplicates by filtering out existing reminders with the same ID
-        const updatedReminders = [...prev];
-        newReminders.forEach((newReminder) => {
-          const existingIndex = updatedReminders.findIndex((r) => r.id === newReminder.id);
-          if (existingIndex !== -1) {
-            updatedReminders[existingIndex] = newReminder; // Update existing reminder
-          } else {
-            updatedReminders.push(newReminder); // Add new reminder
-          }
-        });
+        const existingIds = new Set(prev.map(r => r.id));
+        const filteredNewReminders = newReminders.filter(r => !existingIds.has(r.id));
+        const updatedReminders = [...prev, ...filteredNewReminders];
         return updatedReminders.sort((a, b) => new Date(a.scheduledTime) - new Date(b.scheduledTime));
       });
     } else {
@@ -816,7 +808,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
     console.log('Extracted medicine:', medicine);
 
     // Create a unique key for this prescription to track notifications
-    const prescriptionKey = `${timestamp}-${medicine}-${englishDiagnosis}`;
+    const prescriptionKey = `${englishDiagnosis}-${medicine}-${timestamp}`;
 
     try {
       const idToken = await firebaseUser.getIdToken(true);
@@ -836,15 +828,16 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           ...prev,
           [timestamp]: `Prescription "${medicine}" is valid for diagnosis "${englishDiagnosis}".`,
         }));
-        // If valid, setup medication schedule
+        // Schedule reminders for valid prescriptions
         await setupMedicationSchedule(englishDiagnosis, prescription, timestamp);
       } else {
         setValidationResult((prev) => ({
           ...prev,
           [timestamp]: `Invalid prescription "${medicine}" for diagnosis "${englishDiagnosis}".`,
         }));
-        // Only notify admin if this prescription hasn't been notified before
-        if (!notifiedPrescriptionsRef.current.has(prescriptionKey)) {
+
+        // Only notify admin if we haven't already for this specific prescription
+        if (!notifiedPrescriptions.has(prescriptionKey)) {
           const notificationMessage = `Invalid prescription: "${medicine}" for diagnosis "${englishDiagnosis}" (Patient: ${profileData?.name || 'Unknown Patient'}, Doctor: ${doctorName})`;
           const notificationResponse = await notifyAdmin(
             profileData?.name || 'Unknown Patient',
@@ -858,10 +851,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           if (!notificationResponse.success) {
             throw new Error(notificationResponse.message || 'Failed to notify admin about invalid prescription.');
           }
-          notifiedPrescriptionsRef.current.add(prescriptionKey);
-          console.log('Admin notified about invalid prescription:', prescriptionKey);
-        } else {
-          console.log('Admin already notified for this invalid prescription, skipping:', prescriptionKey);
+          setNotifiedPrescriptions((prev) => new Set(prev).add(prescriptionKey));
         }
       }
     } catch (error) {
@@ -870,8 +860,9 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
         ...prev,
         [timestamp]: `Error validating prescription: ${error.message}. Retrying in 5 seconds...`,
       }));
-      // Only notify admin if this error hasn't been notified before
-      if (!notifiedPrescriptionsRef.current.has(prescriptionKey)) {
+
+      // Only notify admin on error if we haven't already
+      if (!notifiedPrescriptions.has(prescriptionKey)) {
         const notificationMessage = `Error validating prescription: ${error.message} (Diagnosis: ${englishDiagnosis}, Medicine: ${medicine}, Patient: ${profileData?.name || 'Unknown Patient'}, Doctor: ${doctorName})`;
         await notifyAdmin(
           profileData?.name || 'Unknown Patient',
@@ -882,11 +873,9 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
           effectiveUserId,
           await firebaseUser.getIdToken(true)
         );
-        notifiedPrescriptionsRef.current.add(prescriptionKey);
-        console.log('Admin notified about validation error:', prescriptionKey);
-      } else {
-        console.log('Admin already notified for this validation error, skipping:', prescriptionKey);
+        setNotifiedPrescriptions((prev) => new Set(prev).add(prescriptionKey));
       }
+
       setTimeout(() => validatePrescription(englishDiagnosis, prescription, timestamp), 5000);
     }
   };
@@ -1872,11 +1861,6 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                           </div>
                         )}
                       </>
-                    )}
-                    {msg.sender === 'patient' && !msg.audioUrl && (
-                      <div className="message-block">
-                        <p className="primary-text">{msg.text || 'No transcription'}</p>
-                      </div>
                     )}
                     {msg.sender === 'patient' && !msg.audioUrl && (
                       <div className="message-block">
