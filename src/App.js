@@ -73,9 +73,16 @@ function App() {
 
     const unsubscribeAuth = firebaseAuth.onAuthStateChanged(async (authUser) => {
       console.log('App: Auth state changed, authUser:', authUser ? authUser.uid : null);
+
+      // If we're in the process of logging out, ignore any auth state changes
+      if (isLoggingOut) {
+        console.log('App: Ignoring auth state change because isLoggingOut is true');
+        return;
+      }
+
       setFirebaseUser(authUser);
 
-      if (authUser && !isLoggingOut) {
+      if (authUser) {
         console.log('App: Authenticated user detected, UID:', authUser.uid);
         const userId = authUser.uid;
         console.log('App: Fetching user data for UID:', userId);
@@ -124,7 +131,7 @@ function App() {
           }
         );
       } else {
-        console.log('App: No authenticated user detected or logging out');
+        console.log('App: No authenticated user detected');
         unsubscribeFirestoreRef.current();
         handleAuthFailure();
       }
@@ -223,6 +230,8 @@ function App() {
         console.error('App: Firebase sign-out failed:', signOutErr.message);
       });
       handleAuthFailure();
+    } finally {
+      setIsLoggingOut(false); // Ensure flag is reset even on error
     }
   };
 
@@ -255,7 +264,7 @@ function App() {
       case 'patient':
         return '/patient/select-doctor';
       case 'doctor':
-        return '/doctor/chat'; // Doctor's dashboard route
+        return '/doctor/chat';
       case 'admin':
         return '/admin';
       default:
