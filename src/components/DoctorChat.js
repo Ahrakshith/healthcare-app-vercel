@@ -717,27 +717,19 @@ function DoctorChat({ user, role, handleLogout, setError }) {
       return;
     }
 
-    setLoadingAudio(true);
     let translatedText = null;
-    let audioUrlEn;
-    let audioUrlKn = null;
 
     try {
       const idToken = await getIdToken();
       if (languagePreference === 'kn') {
         translatedText = await translateText(newMessage, 'en-US', 'kn-IN', user.uid, idToken);
-        audioUrlKn = await textToSpeechConvert(translatedText, 'kn-IN', user.uid, idToken);
       }
-      audioUrlEn = await textToSpeechConvert(newMessage, 'en-US', user.uid, idToken);
 
       const message = {
         sender: 'doctor',
         text: newMessage,
         translatedText,
         language: 'en-US',
-        recordingLanguage: 'en-US',
-        audioUrlEn,
-        audioUrlKn,
         timestamp: new Date().toISOString(),
         doctorId,
         patientId: selectedPatientId,
@@ -761,9 +753,6 @@ function DoctorChat({ user, role, handleLogout, setError }) {
       const errorMsg = `Failed to send message: ${err.message}`;
       setError(errorMsg);
       console.error('Send message error:', err);
-    } finally {
-      setLoadingAudio(false);
-      console.log('Finished sending message');
     }
   }, [newMessage, selectedPatientId, user?.uid, doctorId, languagePreference, apiBaseUrl, setError]);
 
