@@ -1621,15 +1621,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                       type="text"
                       value={editProfileData.name}
                       onChange={(e) => setEditProfileData({ ...editProfileData, name: e.target.value })}
-                    />
-                  </div>
-                  <div className="profile-field">
-                    <strong>Password:</strong>
-                    <input
-                      type="password"
-                      value={editProfileData.password}
-                      onChange={(e) => setEditProfileData({ ...editProfileData, password: e.target.value })}
-                      placeholder="Leave blank to keep unchanged"
+                      className="editable-field"
                     />
                   </div>
                   <div className="profile-field">
@@ -1638,6 +1630,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                       type="number"
                       value={editProfileData.age}
                       onChange={(e) => setEditProfileData({ ...editProfileData, age: e.target.value })}
+                      className="editable-field"
                     />
                   </div>
                   <div className="profile-field">
@@ -1645,6 +1638,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                     <select
                       value={editProfileData.sex}
                       onChange={(e) => setEditProfileData({ ...editProfileData, sex: e.target.value })}
+                      className="editable-field"
                     >
                       <option value="Male">Male</option>
                       <option value="Female">Female</option>
@@ -1657,6 +1651,7 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                       type="text"
                       value={editProfileData.address}
                       onChange={(e) => setEditProfileData({ ...editProfileData, address: e.target.value })}
+                      className="editable-field"
                     />
                   </div>
                   <div className="profile-field">
@@ -1665,12 +1660,55 @@ function PatientChat({ user, firebaseUser, role, patientId, handleLogout }) {
                       type="text"
                       value={editProfileData.phoneNumber}
                       onChange={(e) => setEditProfileData({ ...editProfileData, phoneNumber: e.target.value })}
+                      className="editable-field"
                     />
                   </div>
-                  <p><strong>Patient ID:</strong> {profileData.patientId}</p>
-                  <p><strong>Email:</strong> {profileData.email}</p>
-                  <p><strong>Language Preference:</strong> {profileData.languagePreference === 'kn' ? 'Kannada' : 'English'}</p>
-                  <p><strong>Aadhaar Number:</strong> {profileData.aadhaarNumber}</p>
+                  <div className="profile-field non-editable">
+                    <strong>Patient ID:</strong>
+                    <input
+                      type="text"
+                      value={profileData.patientId}
+                      disabled
+                      className="non-editable-field"
+                    />
+                  </div>
+                  <div className="profile-field non-editable">
+                    <strong>Email:</strong>
+                    <input
+                      type="text"
+                      value={profileData.email}
+                      disabled
+                      className="non-editable-field"
+                    />
+                  </div>
+                  <div className="profile-field non-editable">
+                    <strong>Language Preference:</strong>
+                    <input
+                      type="text"
+                      value={profileData.languagePreference === 'kn' ? 'Kannada' : 'English'}
+                      disabled
+                      className="non-editable-field"
+                    />
+                  </div>
+                  <div className="profile-field non-editable">
+                    <strong>Aadhaar Number:</strong>
+                    <input
+                      type="text"
+                      value={profileData.aadhaarNumber}
+                      disabled
+                      className="non-editable-field"
+                    />
+                  </div>
+                  <div className="profile-field non-editable">
+                    <strong>Password:</strong>
+                    <input
+                      type="password"
+                      value={editProfileData.password}
+                      disabled
+                      className="non-editable-field"
+                      placeholder="Cannot be edited"
+                    />
+                  </div>
                   <div className="profile-actions">
                     <button onClick={handleProfileUpdate} className="save-button">
                       Save Changes
