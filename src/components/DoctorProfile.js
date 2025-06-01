@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { doc, getDoc, setDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { db, auth } from '../services/firebase.js';
-import { updatePassword } from 'firebase/auth';
+import { updatePassword, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 import './DoctorChat.css';
 
 function DoctorProfile({ user, role, setError }) {
@@ -14,6 +14,8 @@ function DoctorProfile({ user, role, setError }) {
   const [updatedData, setUpdatedData] = useState({});
   const [updateError, setUpdateError] = useState('');
   const [updateSuccess, setUpdateSuccess] = useState('');
+  const [showReauthModal, setShowReauthModal] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState('');
 
   useEffect(() => {
     console.log('DoctorProfile: Checking role and user authentication:', { role, userUid: user?.uid });
@@ -96,6 +98,15 @@ function DoctorProfile({ user, role, setError }) {
     return password.length >= 6; // Firebase requires passwords to be at least 6 characters
   };
 
+  const updateDoctorPassword = async () => {
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      throw new Error('No authenticated user found');
+    }
+    await updatePassword(currentUser, updatedData.password);
+    console.log('DoctorProfile: Password updated successfully');
+  };
+
   const handleUpdateSubmit = async (e) => {
     e.preventDefault();
     console.log('DoctorProfile: Submitting updated doctor profile:', updatedData);
@@ -167,17 +178,18 @@ function DoctorProfile({ user, role, setError }) {
       // Update password if provided
       if (updatedData.password) {
         try {
-          const currentUser = auth.currentUser;
-          await updatePassword(currentUser, updatedData.password);
-          console.log('DoctorProfile: Password updated successfully');
+          await updateDoctorPassword();
         } catch (passwordErr) {
-          // Note: In a production app, updating the password requires recent authentication.
-          // Firebase will throw an error if the user hasn't recently signed in.
-          // To handle this properly, you should re-authenticate the user before updating the password.
-          const errorMsg = `Failed to update password: ${passwordErr.message}. You may need to re-login to update your password.`;
-          setUpdateError(errorMsg);
-          console.error('DoctorProfile: Password update error:', passwordErr);
-          return; // Exit to prevent closing the edit form
+          if (passwordErr.code === 'auth/requires-recent-login') {
+            console.log('DoctorProfile: Requires recent login, prompting re-authentication');
+            setShowReauthModal(true);
+            return;
+          } else {
+            const errorMsg = `Failed to update password: ${passwordErr.message}. You may need to re-login to update your password.`;
+            setUpdateError(errorMsg);
+            console.error('DoctorProfile: Password update error:', passwordErr);
+            return; // Exit to prevent closing the edit form
+          }
         }
       }
 
@@ -199,6 +211,39 @@ function DoctorProfile({ user, role, setError }) {
       const errorMsg = `Failed to update profile: ${err.message}`;
       setUpdateError(errorMsg);
       console.error('DoctorProfile: Update profile error:', err);
+    }
+  };
+
+  const handleReauthentication = async (e) => {
+    e.preventDefault();
+    console.log('DoctorProfile: Attempting re-authentication with current password');
+
+    try {
+      const currentUser = auth.currentUser;
+      if (!currentUser || !currentUser.email) {
+        throw new Error('No authenticated user found');
+      }
+
+      const credential = EmailAuthProvider.credential(currentUser.email, currentPassword);
+      await reauthenticateWithCredential(currentUser, credential);
+      console.log('DoctorProfile: Re-authentication successful');
+
+      // Retry password update after successful re-authentication
+      await updateDoctorPassword();
+      setShowReauthModal(false);
+      setCurrentPassword('');
+      setUpdatedData((prev) => ({ ...prev, password: '' }));
+      setEditing(false);
+      setUpdateSuccess('Profile and password updated successfully!');
+    } catch (err) {
+      const errorMsg = `Re-authentication failed: ${err.message}`;
+      setUpdateError(errorMsg);
+      console.error('DoctorProfile: Re-authentication error:', err);
+      if (err.code === 'auth/wrong-password') {
+        setUpdateError('Incorrect current password. Please try again.');
+      } else if (err.code === 'auth/too-many-requests') {
+        setUpdateError('Too many failed attempts. Please try again later.');
+      }
     }
   };
 
@@ -388,6 +433,42 @@ function DoctorProfile({ user, role, setError }) {
           </div>
         )}
       </div>
+
+      {showReauthModal && (
+        <div className="reauth-modal">
+          <div className="modal-content">
+            <h3>Re-authentication Required</h3>
+            <p>Please enter your current password to update your profile.</p>
+            <div className="edit-profile-form">
+              <label>
+                Current Password:
+                <input
+                  type="password"
+                  value={currentPassword}
+                  onChange={(e) => setCurrentPassword(e.target.value)}
+                  placeholder="Enter current password"
+                  required
+                />
+              </label>
+              <div className="form-buttons">
+                <button onClick={handleReauthentication} className="save-button">
+                  Verify
+                </button>
+                <button
+                  onClick={() => {
+                    setShowReauthModal(false);
+                    setCurrentPassword('');
+                    setUpdatedData((prev) => ({ ...prev, password: '' }));
+                  }}
+                  className="cancel-button"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
