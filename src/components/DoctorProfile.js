@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { doc, getDoc, setDoc, collection, query, where, getDocs } from 'firebase/firestore';
+import { doc, getDoc, setDoc, collection, query, where, getDocs, writeBatch } from 'firebase/firestore';
 import { db, auth } from '../services/firebase.js';
 import { updatePassword, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 import './DoctorChat.css';
@@ -197,7 +197,7 @@ function DoctorProfile({ user, role, setError }) {
       const doctorAssignmentsRef = collection(db, 'doctor_assignments');
       const q = query(doctorAssignmentsRef, where('doctorId', '==', doctorId));
       const querySnapshot = await getDocs(q);
-      const batch = db.batch();
+      const batch = writeBatch(db);
       querySnapshot.forEach((doc) => {
         batch.update(doc.ref, { doctorName: updatedData.name });
       });
