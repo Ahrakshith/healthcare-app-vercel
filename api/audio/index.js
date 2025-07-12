@@ -235,7 +235,8 @@ export default async function handler(req, res) {
 
   if (req.method !== 'POST') {
     console.error('Method not allowed:', req.method);
-    res.setHeader('Allow', ['POST']);
+    res.setHeader('
+    ', ['POST']);
     return res.status(405).json({ error: { code: 405, message: 'Method not allowed. Use POST.' } });
   }
 
