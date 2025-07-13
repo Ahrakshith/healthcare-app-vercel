@@ -235,8 +235,7 @@ export default async function handler(req, res) {
 
   if (req.method !== 'POST') {
     console.error('Method not allowed:', req.method);
-    res.setHeader('
-    ', ['POST']);
+    res.setHeader('Allow', ['POST']);
     return res.status(405).json({ error: { code: 405, message: 'Method not allowed. Use POST.' } });
   }
 
@@ -323,7 +322,10 @@ export default async function handler(req, res) {
         const config = { encoding: 'WEBM_OPUS', sampleRateHertz: 48000, languageCode: language, enableAutomaticLanguageDetection: true };
         const request = { audio: { content: req.file.buffer.toString('base64') }, config };
         console.log('Sending transcription request:', JSON.stringify(config));
-        const [response] = await speechClient.recognize(request);
+        const [response] = await speechClient.recognize(request).catch((error) => {
+          console.error('Speech recognition failed:', error.message, error.stack);
+          throw new Error(`Speech recognition failed: ${error.message}`);
+        });
         console.log('Transcription response:', JSON.stringify(response));
         transcriptionText = response.results?.length > 0 ? response.results.map((result) => result.alternatives[0].transcript).join('\n') : 'No transcription available';
         detectedLanguage = response.results?.[0]?.languageCode || language.split('-')[0];
@@ -337,7 +339,10 @@ export default async function handler(req, res) {
       let translatedText = transcriptionText;
       if (await initTranslateClient() && detectedLanguage !== 'en') {
         console.log('Translate client available, translating to English...');
-        const [translation] = await translateClient.translate(transcriptionText, { from: detectedLanguage, to: 'en' });
+        const [translation] = await translateClient.translate(transcriptionText, { from: detectedLanguage, to: 'en' }).catch((error) => {
+          console.error('Translation failed:', error.message, error.stack);
+          throw new Error(`Translation failed: ${error.message}`);
+        });
         translatedText = translation;
         console.log('Translated text:', translatedText);
       } else {
